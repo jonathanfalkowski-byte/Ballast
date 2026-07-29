@@ -29,6 +29,8 @@ export default function SessionConsole() {
   const [draft, setDraft] = useState<Trade>({ id: 0, symbol: "ES", direction: "long", contracts: 1, pnl: 0, tag: "plan" });
   // P&L kept as a string so a leading "-" can be typed (a number-coerced input drops it).
   const [pnlStr, setPnlStr] = useState("-200");
+  const [playing, setPlaying] = useState(false);
+  const [caption, setCaption] = useState("");
 
   // Derive session state from the log
   const dailyPnl = trades.reduce((s, t) => s + t.pnl, 0);
@@ -63,10 +65,50 @@ export default function SessionConsole() {
     setTrades((t) => [...t, { ...draft, pnl, id: Date.now() }]);
     setMins(0); // just traded — cooldown clock resets
   }
-  function reset() { setTrades([]); setPnlStr("-200"); setMins(10); }
+  function reset() { setTrades([]); setPnlStr("-200"); setMins(10); setCaption(""); }
+
+  // Auto-play a realistic give-back spiral so a visitor watches the engine work, hands-free.
+  const DEMO: Array<Trade & { note: string }> = [
+    { id: 1, symbol: "ES", direction: "long", contracts: 1, pnl: 250, tag: "a_plus", note: "A clean A+ setup — up early." },
+    { id: 2, symbol: "NQ", direction: "long", contracts: 1, pnl: 150, tag: "plan", note: "Another by the plan. Up $400, feeling good." },
+    { id: 3, symbol: "ES", direction: "short", contracts: 1, pnl: -200, tag: "plan", note: "First loss — the 5-minute tilt window opens." },
+    { id: 4, symbol: "NQ", direction: "long", contracts: 2, pnl: -250, tag: "revenge", note: "Sizing up to get it back — the revenge trade. Second loss." },
+  ];
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  async function playDemo() {
+    if (playing) return;
+    setPlaying(true);
+    setTrades([]); setMins(10); setNow(600); setDdType("intraday");
+    setCaption("Watch the next-action card react as the session unfolds…");
+    await sleep(1400);
+    const acc: Trade[] = [];
+    for (let i = 0; i < DEMO.length; i++) {
+      const step = DEMO[i];
+      acc.push({ id: Date.now() + i, symbol: step.symbol, direction: step.direction, contracts: step.contracts, pnl: step.pnl, tag: step.tag });
+      setTrades([...acc]);
+      setMins(step.pnl < 0 ? 0 : 12); // a fresh loss opens the cooldown window
+      setCaption(step.note);
+      await sleep(2100);
+    }
+    setCaption("Stopped at two losses — before the third trade that does the real damage.");
+    setPlaying(false);
+  }
 
   return (
     <div className="space-y-6">
+      {/* Auto-play: let a visitor watch the engine work without typing anything. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={playDemo}
+          disabled={playing}
+          className="rounded-lg bg-[#3fb950] px-5 py-2.5 text-[15px] font-semibold text-[#08240f] disabled:opacity-60"
+        >
+          {playing ? "▶ Playing…" : "▶ Play a live session"}
+        </button>
+        {caption && <span className="text-[14px] text-[#c7d1db]">{caption}</span>}
+      </div>
+
       {/* The next-action card — the product's core surface */}
       <div className="rounded-2xl border p-6" style={{ borderColor: color, background: "#12161c" }}>
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em]" style={{ color }}>
@@ -119,8 +161,8 @@ export default function SessionConsole() {
           </select>
         </div>
         <div className="mt-3 flex gap-2">
-          <button onClick={addTrade} className="rounded-lg bg-[#4da3ff] px-4 py-2 text-[14px] font-semibold text-[#04121f]">Add trade</button>
-          <button onClick={reset} className="rounded-lg border border-[#2a333f] px-4 py-2 text-[14px] text-[#9aa7b4]">Reset day</button>
+          <button onClick={addTrade} disabled={playing} className="rounded-lg bg-[#4da3ff] px-4 py-2 text-[14px] font-semibold text-[#04121f] disabled:opacity-60">Add trade</button>
+          <button onClick={reset} disabled={playing} className="rounded-lg border border-[#2a333f] px-4 py-2 text-[14px] text-[#9aa7b4] disabled:opacity-60">Reset day</button>
         </div>
 
         {trades.length > 0 && (
