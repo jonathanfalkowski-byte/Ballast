@@ -27,6 +27,8 @@ export default function SessionConsole() {
   // Trade log (in-memory demo)
   const [trades, setTrades] = useState<Trade[]>([]);
   const [draft, setDraft] = useState<Trade>({ id: 0, symbol: "ES", direction: "long", contracts: 1, pnl: 0, tag: "plan" });
+  // P&L kept as a string so a leading "-" can be typed (a number-coerced input drops it).
+  const [pnlStr, setPnlStr] = useState("-200");
 
   // Derive session state from the log
   const dailyPnl = trades.reduce((s, t) => s + t.pnl, 0);
@@ -57,10 +59,11 @@ export default function SessionConsole() {
   const color = URGENCY_COLOR[decision.urgency];
 
   function addTrade() {
-    setTrades((t) => [...t, { ...draft, id: Date.now() }]);
+    const pnl = parseFloat(pnlStr) || 0;
+    setTrades((t) => [...t, { ...draft, pnl, id: Date.now() }]);
     setMins(0); // just traded — cooldown clock resets
   }
-  function reset() { setTrades([]); setMins(10); }
+  function reset() { setTrades([]); setPnlStr("-200"); setMins(10); }
 
   return (
     <div className="space-y-6">
@@ -110,7 +113,7 @@ export default function SessionConsole() {
             <option value="long">Long</option><option value="short">Short</option>
           </select>
           <input type="number" value={draft.contracts} onChange={(e) => setDraft({ ...draft, contracts: +e.target.value })} placeholder="Contracts" className={inputCls} />
-          <input type="number" value={draft.pnl} onChange={(e) => setDraft({ ...draft, pnl: +e.target.value })} placeholder="P&L $" className={inputCls} />
+          <input inputMode="text" value={pnlStr} onChange={(e) => setPnlStr(e.target.value)} placeholder="P&L $ (e.g. -200)" className={inputCls} />
           <select value={draft.tag} onChange={(e) => setDraft({ ...draft, tag: e.target.value })} className={inputCls}>
             {TAGS.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>

@@ -23,6 +23,15 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Self-provision the table so a fresh database works with no separate migration step.
+    await getPool().query(
+      `CREATE TABLE IF NOT EXISTS waitlist_signups (
+         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         email text NOT NULL UNIQUE,
+         source text,
+         created_at timestamptz NOT NULL DEFAULT now()
+       )`,
+    );
     await getPool().query(
       `INSERT INTO waitlist_signups (email, source)
        VALUES ($1, $2)
