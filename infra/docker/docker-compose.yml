@@ -1,0 +1,14 @@
+services:
+  ballast-postgres:
+    image: postgres:16
+    container_name: ballast-postgres
+    environment:
+      POSTGRES_USER: ballast_user
+      POSTGRES_PASSWORD: ballast_password
+      POSTGRES_DB: ballast_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ballast_pgdata:/var/lib/postgresql/data
+volumes:
+  ballast_pgdata:

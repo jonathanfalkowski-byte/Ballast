@@ -1,0 +1,23 @@
+{
+  "name": "ballast",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "build:web": "npm --workspace apps/web run build",
+    "db:up": "cd infra/docker && docker compose up -d",
+    "db:migrate": "node infra/runMigrations.js"
+  },
+  "dependencies": {
+    "openai": "^6.25.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.6.1",
+    "node-pg-migrate": "^8.0.4"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@ballast/db",
+  "private": true,
+  "version": "0.0.1",
+  "type": "commonjs",
+  "main": "index.js",
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "node-pg-migrate": "^8.0.4",
+    "pg": "^8.20.0"
+  }
+}
