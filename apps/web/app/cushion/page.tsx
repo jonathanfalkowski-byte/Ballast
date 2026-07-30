@@ -1,5 +1,19 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import CushionCalculator from "@/components/CushionCalculator";
+
+export const metadata: Metadata = {
+  title: "Trailing drawdown calculator (Apex, Topstep, intraday & EOD)",
+  description:
+    "Free trailing-drawdown calculator for prop futures accounts. See your real cushion to the floor, your safe position size, and what a full stop costs as a share of your remaining buffer. No signup.",
+  alternates: { canonical: "https://tradeballast.com/cushion" },
+  openGraph: {
+    title: "Free trailing drawdown calculator for prop traders",
+    description:
+      "How much room do you actually have to your trailing floor — and what size can you take without threatening it?",
+    url: "https://tradeballast.com/cushion",
+  },
+};
 
 export default function CushionPage() {
   return (

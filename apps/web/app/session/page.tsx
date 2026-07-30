@@ -1,5 +1,19 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import SessionConsole from "@/components/SessionConsole";
+
+export const metadata: Metadata = {
+  title: "Live trading discipline engine — stop rules, tilt window, cushion",
+  description:
+    "Watch a discipline engine react to a trading session in real time: it flags the revenge-trade window after a loss, warns when your drawdown cushion gets thin, and calls a hard stop at your max losses. Interactive demo, no signup.",
+  alternates: { canonical: "https://tradeballast.com/session" },
+  openGraph: {
+    title: "A discipline engine that tells you to stop — live demo",
+    description:
+      "Take two losses and watch it flip to Stop. The layer every trading journal is missing.",
+    url: "https://tradeballast.com/session",
+  },
+};
 
 export default function SessionPage() {
   return (

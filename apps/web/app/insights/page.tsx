@@ -1,5 +1,19 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import InsightsTool from "@/components/InsightsTool";
+
+export const metadata: Metadata = {
+  title: "What do revenge trades actually cost you? Free calculator",
+  description:
+    "Tag your trades by what drove them — plan, A+ setup, revenge, FOMO, boredom — and see your expectancy split by behaviour. Most traders find their planned trades are profitable and their emotional ones hand it all back. Free, no signup.",
+  alternates: { canonical: "https://tradeballast.com/insights" },
+  openGraph: {
+    title: "What your revenge trades cost you",
+    description:
+      "Your win rate is an average, and averages hide what's killing the account. See your edge broken out by behaviour.",
+    url: "https://tradeballast.com/insights",
+  },
+};
 
 export default function InsightsPage() {
   return (

@@ -103,6 +103,22 @@ export default function Home() {
         </Link>
       </section>
 
+      {/* Explainer — also the SEO entry point for people searching the mechanics */}
+      <section className="mt-6 rounded-2xl border border-[#2a333f] bg-[#161b22] p-8">
+        <h2 className="text-2xl font-bold tracking-tight">New to trailing drawdowns?</h2>
+        <p className="mt-3 text-[#9aa7b4]">
+          The rule that ends most prop accounts, explained plainly — what intraday vs end-of-day trailing
+          actually means, why a floating winner that round-trips can still cost you the account, and the
+          number you should be watching instead of your account size.
+        </p>
+        <Link
+          href="/trailing-drawdown"
+          className="mt-5 inline-block rounded-lg border border-[#9aa7b4] px-5 py-3 text-[15px] font-semibold text-[#c7d1db] hover:bg-[#c7d1db] hover:text-[#0e1116]"
+        >
+          Read the explainer →
+        </Link>
+      </section>
+
       <footer className="mt-16 border-t border-[#2a333f] pt-6 text-sm text-[#7f8b98]">
         Ballast · early access · not financial advice.
       </footer>
