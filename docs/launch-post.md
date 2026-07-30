@@ -1,46 +1,101 @@
-# Build-in-public launch post (draft)
+# Launch posts
 
-> Your Phase 0 distribution move. Post it where prop traders already are — r/FuturesTrading,
-> r/Daytrading, prop-firm Discords, X, wherever you're comfortable. Lead with the story, not the pitch.
-> Edit it into your own voice; it should sound like you, not a marketer. Two versions below.
+Live links to use:
 
----
+- Site: **https://tradeballast.com**
+- Readiness check: **https://tradeballast.com/readiness**
+- Cushion calculator: **https://tradeballast.com/cushion**
+- Live engine demo: **https://tradeballast.com/session**
 
-## Long version (Reddit / blog / LinkedIn)
-
-**I traded futures for 10 years and mostly lost. I finally figured out it was never the strategy — so I'm building the tool I needed.**
-
-Ten years. Prop evals passed and failed like a coin flip. I'd string together two good weeks and then hand it all back in a single afternoon. Every new strategy worked right up until the moment it met the same thing that always got me: I'd take a loss, tilt, size up to "get it back," and torch the account.
-
-Here's what took me way too long to accept: the problem was never the setup. I've seen thousands of setups. The problem was me, five minutes after a loss. And no journal I tried actually helped, because journals are all about *last night* — they tell you what you did after you already blew up. None of them said anything in the moment that mattered.
-
-So I'm building the thing I actually needed. Working name: **Ballast**. It's not another journal. It's a discipline layer that:
-
-- watches your **trailing-drawdown cushion** live (and knows intraday vs end-of-day — the difference that quietly kills prop accounts),
-- catches the **revenge trade in the moment** — inside the five minutes after a loss where accounts die,
-- and grades you on the one thing that actually compounds: **did you follow your own rules**, not whether the day was green.
-
-The core is a little engine that looks at your live state and gives you one clear call: *Clear to trade. Size down. Step away. Stop — you've hit your second loss.* Said out loud, in the moment, not the next morning.
-
-I'm building it in public, and I want it shaped by traders who fight the same fight I do. If "up early, gave it back" is your story too, I'd love for you to follow along — and there's a free trailing-drawdown cushion calculator up already, no signup.
-
-[link] — tear it apart, tell me what's missing.
+Read these out loud before posting. If a line doesn't sound like something you'd
+actually say, cut it. Understated beats polished — your credibility is that you lost,
+not that you're a good writer.
 
 ---
 
-## Short version (X / threads)
+## 1. Reddit (r/FuturesTrading, r/Daytrading, prop-firm subs)
 
-10 years trading futures. Mostly losing. Finally admitted the problem was never the strategy — it was me, 5 minutes after a loss.
+*Reddit punishes anything that smells like marketing. Lead with the story, put the link at
+the bottom, and don't bold anything. Title matters more than the body.*
 
-Every journal tells you what you did *after* you blew up. So I'm building the opposite: a discipline layer that catches the revenge trade *in the moment* and grades you on whether you followed your rules, not your P&L.
+**Title:** I traded futures for 10 years and mostly lost. It was never the strategy.
 
-Building it in public. Free cushion calculator's already live 👇
-[link]
+Ten years. I'd pass an eval, then fail the next one. Coin flip. I'd string together two
+decent weeks and give it all back in one afternoon.
+
+What took me way too long to admit is that the setups were never the problem. I've seen
+thousands of setups. The problem was me, about five minutes after a loss — I'd take the
+loss, size up to get it back, and that was the account.
+
+Every journal I tried was about last night. They tell you what you did after you already
+blew up. Nothing ever said anything in the moment that actually mattered.
+
+So I started building the thing I needed instead. It watches how much room you actually
+have left to your trailing drawdown, flags the revenge trade while you're in the window
+where it happens, and scores whether you followed your own rules instead of whether the
+day was green.
+
+There's a free part I think is more useful than the rest of it: you paste your last 30-50
+trades and it runs the numbers against your firm's drawdown and target, then tells you
+what your odds actually are. If your edge isn't there yet, it says so and tells you not to
+buy the evaluation. It told me that about some of my own stretches, which was not fun to
+read.
+
+No signup on any of it. I'd genuinely like people who've fought this same thing to tell me
+what's wrong with it.
+
+https://tradeballast.com/readiness
+
+---
+
+## 2. X / short form
+
+10 years trading futures. Mostly losing.
+
+Took me way too long to admit the setups were never the problem. It was me, 5 minutes
+after a loss.
+
+So I built a tool that checks your trades and tells you whether to buy that prop
+challenge — including "no, your edge isn't there yet, keep the money."
+
+Free, no signup:
+https://tradeballast.com/readiness
+
+---
+
+## 3. The honest-hook version (use where self-promo is fine)
+
+**I built a prop-trading tool that tells you not to buy a prop challenge.**
+
+Every prop tool out there is incentivised to get you to buy another eval. I've bought
+plenty. Passed some, failed some, gave most of it back.
+
+So the first thing I built does the opposite. Paste your last 30-50 trades, set your
+firm's drawdown and profit target, and it runs a few thousand simulations using your own
+results to estimate how often you'd hit the target before breaching.
+
+If your average trade is negative, it tells you straight out: no edge demonstrated, don't
+buy an evaluation yet, keep the money.
+
+That's the whole point. A tool can't give you an edge you don't have — but it can stop you
+paying to find out the expensive way.
+
+https://tradeballast.com/readiness
 
 ---
 
 ## Posting notes
-- Be useful first. In each community, answer questions and share the free calculator before ever mentioning the paid product.
-- The "revenge trades cost me $X" angle is your most shareable hook once the app has data — lean into it later.
-- Don't oversell or promise profits. Your credibility is the scarred-insider honesty. Protect it.
-- Reply to every comment for the first few weeks. Early relationships are the audience that becomes the moat.
+
+- **Be useful before you promote.** Spend a week answering questions in a sub before you
+  post a link. Reddit will bury you otherwise, and rightly.
+- **Lead with the readiness tool, not the product.** "A tool that tells you not to buy"
+  is the most shareable thing you have, and it's true.
+- **Never promise profits.** Not in a post, not in a reply. The moment you do, you're
+  every other prop-adjacent marketer.
+- **Reply to every single comment** for the first few weeks. The people who argue with you
+  early are the ones who end up shaping the product.
+- **Expect some hostility.** Some people have been burned by prop-tool marketing and will
+  assume you're the same. Don't get defensive — agree with them, then show the thing that
+  tells people not to spend money.
+- Once the app has real data, "your revenge trades cost you $X this month" becomes the
+  screenshot people share. Save that for when it's real.

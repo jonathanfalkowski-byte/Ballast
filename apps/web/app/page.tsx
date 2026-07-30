@@ -87,6 +87,22 @@ export default function Home() {
         </Link>
       </section>
 
+      {/* Behavioural insights */}
+      <section className="mt-6 rounded-2xl border border-[#2a333f] bg-[#161b22] p-8">
+        <h2 className="text-2xl font-bold tracking-tight">Free: what your revenge trades cost you</h2>
+        <p className="mt-3 text-[#9aa7b4]">
+          Your overall win rate is an average, and averages hide what&apos;s actually killing the account.
+          Tag your trades by what drove them and the damage separates out — the planned trades that make
+          money, and the emotional ones that hand it back.
+        </p>
+        <Link
+          href="/insights"
+          className="mt-5 inline-block rounded-lg border border-[#f4523b] px-5 py-3 text-[15px] font-semibold text-[#f4523b] hover:bg-[#f4523b] hover:text-[#1a0805]"
+        >
+          See the damage →
+        </Link>
+      </section>
+
       <footer className="mt-16 border-t border-[#2a333f] pt-6 text-sm text-[#7f8b98]">
         Ballast · early access · not financial advice.
       </footer>
