@@ -71,6 +71,22 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Challenge readiness */}
+      <section className="mt-6 rounded-2xl border border-[#2a333f] bg-[#161b22] p-8">
+        <h2 className="text-2xl font-bold tracking-tight">Free: should you even buy that evaluation?</h2>
+        <p className="mt-3 text-[#9aa7b4]">
+          Paste your recent trades and Ballast runs thousands of rule-aware simulations from your own numbers to estimate
+          your odds of reaching a payout before you breach. If the edge isn&apos;t there yet, it says so — and saves you the fee.
+          The most honest tool in prop trading.
+        </p>
+        <Link
+          href="/readiness"
+          className="mt-5 inline-block rounded-lg border border-[#3fb950] px-5 py-3 text-[15px] font-semibold text-[#3fb950] hover:bg-[#3fb950] hover:text-[#08240f]"
+        >
+          Check your challenge readiness →
+        </Link>
+      </section>
+
       <footer className="mt-16 border-t border-[#2a333f] pt-6 text-sm text-[#7f8b98]">
         Ballast · early access · not financial advice.
       </footer>
