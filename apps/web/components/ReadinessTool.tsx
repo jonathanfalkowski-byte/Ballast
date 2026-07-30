@@ -43,6 +43,7 @@ export default function ReadinessTool() {
   const [daily, setDaily] = useState(0);
   const [tpd, setTpd] = useState(4);
   const [result, setResult] = useState<{ stats: TradeStats; mc: MonteCarloResult; v: Verdict } | null>(null);
+  const [running, setRunning] = useState(false);
 
   function applyPreset(key: string) {
     setPresetKey(key);
@@ -64,17 +65,28 @@ export default function ReadinessTool() {
   }
 
   function assess() {
-    const pnls = parsePnls(raw);
-    const rules: AccountRules = {
-      trailingDrawdown: dd,
-      profitTarget: target,
-      dailyLossLimit: daily,
-      tradesPerDay: tpd,
-      maxTrades: 500,
-    };
-    const stats = computeStats(pnls);
-    const mc = monteCarlo(pnls, rules, 5000);
-    setResult({ stats, mc, v: verdict(stats, mc) });
+    if (running) return;
+    setRunning(true);
+    setResult(null);
+    // Yield to the browser first so the "Running…" state paints before the
+    // simulation loop occupies the main thread (otherwise the page appears frozen).
+    setTimeout(() => {
+      try {
+        const pnls = parsePnls(raw);
+        const rules: AccountRules = {
+          trailingDrawdown: dd,
+          profitTarget: target,
+          dailyLossLimit: daily,
+          tradesPerDay: tpd,
+          maxTrades: 500,
+        };
+        const stats = computeStats(pnls);
+        const mc = monteCarlo(pnls, rules, 5000);
+        setResult({ stats, mc, v: verdict(stats, mc) });
+      } finally {
+        setRunning(false);
+      }
+    }, 50);
   }
 
   const parsedCount = parsePnls(raw).length;
@@ -119,8 +131,12 @@ export default function ReadinessTool() {
           <Field label="Daily loss limit ($, 0 = none)" value={daily} onChange={(v) => { setDaily(v); setPresetKey("custom"); }} />
           <Field label="Typical trades per day" value={tpd} onChange={(v) => { setTpd(v); setPresetKey("custom"); }} />
         </div>
-        <button onClick={assess} className="mt-4 rounded-lg bg-[#3fb950] px-5 py-2.5 text-[15px] font-semibold text-[#08240f]">
-          Assess my readiness
+        <button
+          onClick={assess}
+          disabled={running || parsedCount === 0}
+          className="mt-4 rounded-lg bg-[#3fb950] px-5 py-2.5 text-[15px] font-semibold text-[#08240f] disabled:opacity-60"
+        >
+          {running ? "Running 5,000 simulations…" : "Assess my readiness"}
         </button>
       </div>
 
