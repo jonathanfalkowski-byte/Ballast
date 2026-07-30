@@ -15,16 +15,21 @@ import {
 
 type Preset = { label: string; rules: Omit<AccountRules, "maxTrades"> };
 
-// Approximate, illustrative presets — rules change often, so ALWAYS verify with the firm.
+// Presets mirror lib/propFirmRules.ts, the same rule book the NinjaTrader
+// add-on downloads. Apex 4.0 (from 1 Mar 2026) cut the 50K drawdown from
+// $2,500 to $2,000 and the 150K from $5,000 to $4,000 - the old figures made
+// the cushion look several hundred dollars roomier than it is, which is the
+// exact direction that blows an account. Verify against your own dashboard.
 const PRESETS: Record<string, Preset> = {
-  custom: { label: "Custom", rules: { trailingDrawdown: 2500, profitTarget: 3000, dailyLossLimit: 0, tradesPerDay: 4 } },
-  apex50: { label: "Apex 50K (approx)", rules: { trailingDrawdown: 2500, profitTarget: 3000, dailyLossLimit: 0, tradesPerDay: 4 } },
-  apex100: { label: "Apex 100K (approx)", rules: { trailingDrawdown: 3000, profitTarget: 6000, dailyLossLimit: 0, tradesPerDay: 4 } },
-  apex150: { label: "Apex 150K (approx)", rules: { trailingDrawdown: 5000, profitTarget: 9000, dailyLossLimit: 0, tradesPerDay: 4 } },
-  topstep50: { label: "Topstep 50K (approx)", rules: { trailingDrawdown: 2000, profitTarget: 3000, dailyLossLimit: 1000, tradesPerDay: 4 } },
-  topstep100: { label: "Topstep 100K (approx)", rules: { trailingDrawdown: 3000, profitTarget: 6000, dailyLossLimit: 2000, tradesPerDay: 4 } },
+  custom: { label: "Custom", rules: { trailingDrawdown: 2000, profitTarget: 3000, dailyLossLimit: 0, tradesPerDay: 4 } },
+  apex25: { label: "Apex 25K", rules: { trailingDrawdown: 1000, profitTarget: 1500, dailyLossLimit: 0, tradesPerDay: 4 } },
+  apex50: { label: "Apex 50K", rules: { trailingDrawdown: 2000, profitTarget: 3000, dailyLossLimit: 0, tradesPerDay: 4 } },
+  apex100: { label: "Apex 100K", rules: { trailingDrawdown: 3000, profitTarget: 6000, dailyLossLimit: 0, tradesPerDay: 4 } },
+  apex150: { label: "Apex 150K", rules: { trailingDrawdown: 4000, profitTarget: 9000, dailyLossLimit: 0, tradesPerDay: 4 } },
+  topstep50: { label: "Topstep 50K", rules: { trailingDrawdown: 2000, profitTarget: 3000, dailyLossLimit: 1000, tradesPerDay: 4 } },
+  topstep100: { label: "Topstep 100K", rules: { trailingDrawdown: 3000, profitTarget: 6000, dailyLossLimit: 2000, tradesPerDay: 4 } },
+  topstep150: { label: "Topstep 150K", rules: { trailingDrawdown: 4500, profitTarget: 9000, dailyLossLimit: 3000, tradesPerDay: 4 } },
 };
-
 const VERDICT_COLOR: Record<Verdict["level"], string> = {
   ready: "#3fb950",
   borderline: "#e3b341",
@@ -38,7 +43,7 @@ const inputCls = "rounded-lg border border-[#2a333f] bg-[#0e141b] px-3 py-2.5 te
 export default function ReadinessTool() {
   const [raw, setRaw] = useState("");
   const [presetKey, setPresetKey] = useState("custom");
-  const [dd, setDd] = useState(2500);
+  const [dd, setDd] = useState(2000);
   const [target, setTarget] = useState(3000);
   const [daily, setDaily] = useState(0);
   const [tpd, setTpd] = useState(4);

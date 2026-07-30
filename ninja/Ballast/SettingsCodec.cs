@@ -1,0 +1,132 @@
+﻿// ─────────────────────────────────────────────────────────────────────────────
+// Ballast — SettingsCodec.cs
+//
+// Reading and writing ballast-settings.txt. This lived inside the window until
+// the config grew to fifteen fields, at which point it became the most likely
+// place for a silent, expensive bug: a settings file that half-loads leaves a
+// trader with somebody else's drawdown figure and a cushion that lies to them.
+//
+// It is out here, with no NinjaTrader or WPF dependency, purely so it can be
+// tested. Two properties matter and both are covered by tests:
+//
+//   1. Round-trip fidelity. What goes in comes back out, exactly.
+//   2. Forward compatibility. A file written by an older build must still load,
+//      with the fields it never knew about left at their defaults rather than
+//      zeroed. An upgrade must never silently change somebody's position size.
+// ─────────────────────────────────────────────────────────────────────────────
+
+using System;
+using System.Globalization;
+
+namespace Ballast
+{
+    public static class SettingsCodec
+    {
+        /// <summary>
+        /// Field count as of this build. Older files are shorter and that is fine;
+        /// each block below checks the length it needs before reading.
+        /// </summary>
+        public const int CurrentFieldCount = 17;
+
+        public static string Serialise(string key, TrackerConfig c)
+        {
+            if (c == null) c = new TrackerConfig();
+
+            return string.Join("|", new string[] {
+                Clean(key),                                                        // 0
+                D(c.StartingBalance),                                              // 1
+                D(c.TrailingDrawdown),                                             // 2
+                ((int)c.DrawdownType).ToString(CultureInfo.InvariantCulture),      // 3
+                I(c.MaxLossesBeforeStop),                                          // 4
+                D(c.DailyLossLimit),                                               // 5
+                D(c.DailyTarget),                                                  // 6
+                I(c.MaxTrades),                                                    // 7
+                I(c.MaxContracts),                                                 // 8
+                D(c.LockFloorAt),                                                  // 9
+                Clean(c.ProfileKey),                                               // 10
+                D(c.RiskPctOfDrawdown),                                            // 11
+                D(c.ThrottleStepPct),                                              // 12
+                D(c.ThrottleCutPct),                                               // 13
+                I(c.BaseMaxContracts),                                             // 14
+                c.IsAutomated ? "1" : "0",                                         // 15
+                ((int)c.Generation).ToString(CultureInfo.InvariantCulture)         // 16
+            });
+        }
+
+        /// <summary>
+        /// Parse one line. Returns null - never a half-built config - when the
+        /// line is unusable, so a corrupt file drops the bad rows instead of
+        /// loading garbage figures that would produce a wrong cushion.
+        /// </summary>
+        public static TrackerConfig Deserialise(string line, out string key)
+        {
+            key = null;
+            if (string.IsNullOrEmpty(line)) return null;
+
+            string[] f = line.Split('|');
+            if (f.Length < 9) return null;
+
+            TrackerConfig c = new TrackerConfig();
+            double d; int n;
+
+            if (double.TryParse(f[1], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.StartingBalance = d;
+            if (double.TryParse(f[2], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.TrailingDrawdown = d;
+            if (int.TryParse(f[3], out n)) c.DrawdownType = n == 1 ? DrawdownType.EndOfDay : DrawdownType.Intraday;
+            if (int.TryParse(f[4], out n)) c.MaxLossesBeforeStop = n;
+            if (double.TryParse(f[5], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.DailyLossLimit = d;
+            if (double.TryParse(f[6], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.DailyTarget = d;
+            if (int.TryParse(f[7], out n)) c.MaxTrades = n;
+            if (int.TryParse(f[8], out n)) c.MaxContracts = n;
+
+            // Field 10 (lock level) arrived with the floor-lock work. Absent means
+            // 0, which trails forever and understates the cushion - the safe way
+            // to be wrong.
+            if (f.Length >= 10 && double.TryParse(f[9], NumberStyles.Any, CultureInfo.InvariantCulture, out d))
+                c.LockFloorAt = d;
+
+            // Fields 11-15 arrived with risk profiles. An older file stops short
+            // and keeps the no-throttle defaults, so upgrading never silently
+            // changes what size a trader is being advised to take.
+            if (f.Length >= CurrentFieldCount)
+            {
+                c.ProfileKey = f[10];
+                if (double.TryParse(f[11], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.RiskPctOfDrawdown = d;
+                if (double.TryParse(f[12], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.ThrottleStepPct = d;
+                if (double.TryParse(f[13], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.ThrottleCutPct = d;
+                if (int.TryParse(f[14], out n)) c.BaseMaxContracts = n;
+            }
+
+            // Field 16 marks a bot-traded account. Older files predate the idea,
+            // so everything they describe is treated as hand-traded - which is
+            // what it was when they were written.
+            if (f.Length >= 16) c.IsAutomated = f[15] == "1";
+
+            // Field 17 records which generation this account belongs to. Older
+            // files predate the distinction and stay on Auto, which picks the
+            // tighter drawdown - the safe way to be wrong.
+            if (f.Length >= 17 && int.TryParse(f[16], out n) && n >= 0 && n <= 2)
+                c.Generation = (AccountGeneration)n;
+
+            // A throttle with no base size to count down from would cut against
+            // the already-throttled number every tick, ratcheting size to 1.
+            if (c.BaseMaxContracts <= 0) c.BaseMaxContracts = c.MaxContracts;
+
+            key = f[0];
+            return c;
+        }
+
+        private static string D(double v) { return v.ToString(CultureInfo.InvariantCulture); }
+        private static string I(int v) { return v.ToString(CultureInfo.InvariantCulture); }
+
+        /// <summary>
+        /// The separator must never appear inside a field. Account names come from
+        /// the broker and a pipe in one would shift every later field along by one,
+        /// quietly loading the drawdown into the wrong slot.
+        /// </summary>
+        private static string Clean(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("|", "/");
+        }
+    }
+}

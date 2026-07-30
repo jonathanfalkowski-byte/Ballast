@@ -5,6 +5,7 @@ const SITE = "https://tradeballast.com";
 export default function sitemap(): MetadataRoute.Sitemap {
   const pages = [
     { path: "", priority: 1.0 },
+    { path: "/addon", priority: 0.95 },
     { path: "/readiness", priority: 0.9 },
     { path: "/cushion", priority: 0.9 },
     { path: "/trailing-drawdown", priority: 0.9 },

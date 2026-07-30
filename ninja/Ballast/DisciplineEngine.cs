@@ -1,0 +1,415 @@
+﻿// ─────────────────────────────────────────────────────────────────────────────
+// Ballast — DisciplineEngine.cs
+//
+// Pure C# port of the tested TypeScript discipline engine. NO NinjaTrader
+// dependencies live in this file on purpose: it can be compiled and unit-tested
+// on its own, and the NinjaTrader AddOn simply feeds it live account state.
+//
+// Targets the conservative C# subset NinjaTrader 8 (.NET Framework 4.8) accepts —
+// no records, no switch expressions, no nullable reference types.
+//
+// Philosophy (unchanged from the web version): every recommendation traces to an
+// explicit signal. No hidden magic. A trader has to trust this in the tilt moment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+using System;
+using System.Collections.Generic;
+
+namespace Ballast
+{
+    public enum Severity { Low, Medium, High }
+
+    public enum DisciplineAction
+    {
+        Trade,          // conditions clean
+        SizeDown,       // proceed smaller
+        Cooldown,       // hands off, tilt window
+        ProtectGreen,   // you're up — bank it or free-roll
+        StopForDay,     // done
+        Lockout,        // hit the daily loss limit
+        None            // nothing to act on
+    }
+
+    public enum Urgency { Calm, Caution, Alert }
+
+    public enum DrawdownType { Intraday, EndOfDay }
+
+    public class RiskSignal
+    {
+        public string Key;
+        public Severity Severity;
+        public string Summary;
+
+        public RiskSignal(string key, Severity severity, string summary)
+        {
+            Key = key;
+            Severity = severity;
+            Summary = summary;
+        }
+    }
+
+    /// <summary>Everything the engine needs to decide, flat and explicit.</summary>
+    public class DisciplineInput
+    {
+        public int LossesToday;
+        public int TradesToday;
+        public double DailyPnl;
+        public double PeakDailyPnl;
+
+        public double DailyLossLimit;
+        public double DailyTarget;
+        public int MaxLossesBeforeStop;
+        public int MaxTrades;
+        public int MaxContracts;
+        public int OpenContracts;
+
+        public double CushionToFloor;
+        public double FloorLevel;        // the actual dollar level the account dies at
+        public double CurrentEquity;
+        public bool FloorLocked;         // true once the drawdown has stopped trailing
+        public int BaseMaxContracts;     // size before the drawdown throttle
+        public bool SizeThrottled;       // true when the throttle has cut the advised size
+
+        /// <summary>
+        /// True when the balance is already at or below the floor. Either the
+        /// account is finished, or - far more likely on a sim or long-running
+        /// account - the configured account size does not match reality.
+        /// </summary>
+        public bool PastFloor { get { return HasValidEquity && CushionToFloor <= 0; } }
+        public bool HasValidEquity = true;
+        public DrawdownType DrawdownType = DrawdownType.Intraday;
+
+        public bool LastTradeWasLoss;
+        public int MinutesSinceLastLoss = -1;   // -1 == no loss yet today
+        public int CooldownMinutes = 5;
+
+        public int NowMinuteEt;                 // minutes since midnight, exchange time
+        public int SessionStartMinute = 570;    // 09:30
+        public int SessionEndMinute = 690;      // 11:30
+    }
+
+    public class DisciplineDecision
+    {
+        public DisciplineAction Action;
+        public Urgency Urgency;
+        public string Reason;
+        public string Headline;
+        public List<string> Bullets = new List<string>();
+        public List<RiskSignal> Signals = new List<RiskSignal>();
+    }
+
+    public static class DisciplineEngine
+    {
+        /// <summary>
+        /// The one line this account most needs to say, short enough to sit on a
+        /// row. The headline is written for the whole window; this is written for
+        /// a single account among several.
+        ///
+        /// Every account gets its own, because a trader running six accounts was
+        /// previously told about one of them and left to guess about the rest -
+        /// and the account quietly handing back a green day is exactly the one
+        /// that does not shout.
+        /// </summary>
+        public static string RowWarning(DisciplineInput i, DisciplineDecision d)
+        {
+            if (i == null || d == null) return "";
+
+            if (!i.HasValidEquity) return "no balance yet";
+            if (i.PastFloor) return "at or below its floor";
+
+            if (Has(d.Signals, "daily_loss_limit"))
+                return "past the daily loss limit - done for the day";
+
+            if (Has(d.Signals, "loss_streak"))
+                return i.LossesToday + " losses - this is your stop line";
+
+            if (Has(d.Signals, "give_back"))
+                return "was up " + Money(i.PeakDailyPnl) + ", handed back "
+                     + Money(i.PeakDailyPnl - i.DailyPnl) + " - do not trade back your profits";
+
+            if (Has(d.Signals, "revenge_window"))
+                return "only " + i.MinutesSinceLastLoss + " min since a loss - wait it out";
+
+            if (Has(d.Signals, "thin_cushion"))
+                return "only " + Money(i.CushionToFloor) + " left - one stop could end it";
+
+            if (Has(d.Signals, "over_size"))
+                return "holding " + i.OpenContracts + " over a cap of " + i.MaxContracts;
+
+            if (Has(d.Signals, "over_trading"))
+                return i.TradesToday + " trades - at your limit";
+
+            if (d.Action == DisciplineAction.ProtectGreen)
+                return "target hit - bank it or free-roll, do not give it back";
+
+            if (Has(d.Signals, "size_throttled"))
+                return "size down to " + i.MaxContracts + " while this account is down";
+
+            if (Has(d.Signals, "out_of_window"))
+                return "outside your trading window";
+
+            if (i.DailyPnl > 0) return "green " + Money(i.DailyPnl) + " - protect it";
+            return "clear";
+        }
+
+        private static string Money(double n)
+        {
+            double r = Math.Round(n);
+            string s = Math.Abs(r).ToString("N0");
+            return (r < 0 ? "-$" : "$") + s;
+        }
+
+        public static List<RiskSignal> DetectRiskSignals(DisciplineInput i)
+        {
+            List<RiskSignal> signals = new List<RiskSignal>();
+
+            if (i.LossesToday >= i.MaxLossesBeforeStop && i.MaxLossesBeforeStop > 0)
+            {
+                signals.Add(new RiskSignal("loss_streak", Severity.High,
+                    "You've taken " + i.LossesToday + " losses - your stop-after-" + i.MaxLossesBeforeStop + " line."));
+            }
+
+            if (i.DailyLossLimit > 0 && i.DailyPnl <= -Math.Abs(i.DailyLossLimit))
+            {
+                signals.Add(new RiskSignal("daily_loss_limit", Severity.High,
+                    "Down " + Money(-i.DailyPnl) + " - at or past your " + Money(i.DailyLossLimit) + " daily limit."));
+            }
+
+            if (i.LastTradeWasLoss && i.MinutesSinceLastLoss >= 0 && i.MinutesSinceLastLoss < i.CooldownMinutes)
+            {
+                signals.Add(new RiskSignal("revenge_window", Severity.High,
+                    "Only " + i.MinutesSinceLastLoss + " min since a loss - inside the " + i.CooldownMinutes +
+                    "-min cooldown. This is where revenge trades live."));
+            }
+
+            // Thin cushion matters most on intraday-trailing accounts, where floating
+            // gains ratchet the floor up and never give it back.
+            double cushionThreshold = Math.Max(i.DailyLossLimit, 400.0);
+
+            // At or below the floor is a STATE, not a small cushion. Showing it as
+            // a negative "can lose" figure is meaningless - you cannot lose minus
+            // twelve thousand dollars - and it hides the far likelier cause, which
+            // is that the configured account size does not match this account.
+            if (i.HasValidEquity && i.CushionToFloor <= 0)
+            {
+                signals.Add(new RiskSignal("past_floor", Severity.High,
+                    "Balance " + Money(i.CurrentEquity) + " is at or below the floor of "
+                  + Money(i.FloorLevel) + ". If this is a live funded account it is finished. "
+                  + "If that looks wrong, the account size in Setup does not match this account - "
+                  + "fix it there, because every figure Ballast shows is worked out from it."));
+            }
+            else if (i.CushionToFloor > 0 && i.CushionToFloor < cushionThreshold)
+            {
+                signals.Add(new RiskSignal("thin_cushion",
+                    i.DrawdownType == DrawdownType.Intraday ? Severity.High : Severity.Medium,
+                    "Only " + Money(i.CushionToFloor) + " to your trailing floor. One full stop could end the account."));
+            }
+
+            if (i.DailyTarget > 0 && i.PeakDailyPnl >= i.DailyTarget && i.DailyPnl <= i.PeakDailyPnl * 0.6)
+            {
+                signals.Add(new RiskSignal("give_back", Severity.High,
+                    "You were up " + Money(i.PeakDailyPnl) + " and have handed back " +
+                    Money(i.PeakDailyPnl - i.DailyPnl) + ". Protect the green."));
+            }
+
+            if (i.MaxContracts > 0 && i.OpenContracts > i.MaxContracts)
+            {
+                string why = i.SizeThrottled
+                    ? " cap - throttled down from " + i.BaseMaxContracts + " because of what this "
+                      + "account has already lost. Sizing up to win it back is how the blowup starts."
+                    : " cap. Sizing up is how the blowup starts.";
+
+                signals.Add(new RiskSignal("over_size", Severity.Medium,
+                    "You're holding " + i.OpenContracts + " contracts - over your " + i.MaxContracts + why));
+            }
+
+            // Fires before any position is on, so the size is known BEFORE the
+            // order goes in rather than being criticised afterwards.
+            if (i.SizeThrottled && i.OpenContracts <= i.MaxContracts)
+            {
+                signals.Add(new RiskSignal("size_throttled", Severity.Low,
+                    "Max size is " + i.MaxContracts + " right now, down from " + i.BaseMaxContracts +
+                    ". This account has spent enough of its drawdown that full size is no longer safe."));
+            }
+
+            if (i.MaxTrades > 0 && i.TradesToday >= i.MaxTrades)
+            {
+                signals.Add(new RiskSignal("over_trading", Severity.Medium,
+                    "That's " + i.TradesToday + " trades - at your max of " + i.MaxTrades + "."));
+            }
+
+            if (i.NowMinuteEt < i.SessionStartMinute || i.NowMinuteEt > i.SessionEndMinute)
+            {
+                signals.Add(new RiskSignal("out_of_window", Severity.Low,
+                    "Outside your trading window. This is where afternoon revenge trades happen."));
+            }
+
+            return signals;
+        }
+
+        private static bool Has(List<RiskSignal> signals, string key)
+        {
+            for (int n = 0; n < signals.Count; n++)
+                if (signals[n].Key == key) return true;
+            return false;
+        }
+
+        private static string Verb(DisciplineAction a)
+        {
+            switch (a)
+            {
+                case DisciplineAction.StopForDay:  return "Stop";
+                case DisciplineAction.Lockout:     return "Lock out";
+                case DisciplineAction.Cooldown:    return "Step away";
+                case DisciplineAction.SizeDown:    return "Size down";
+                case DisciplineAction.ProtectGreen:return "Protect it";
+                case DisciplineAction.Trade:       return "Clear to trade";
+                default:                           return "Hold";
+            }
+        }
+
+        /// <summary>
+        /// Evaluate current state and return the single most important next action.
+        /// Checked in priority order — the first hard breaker wins, because in a
+        /// give-back/revenge profile the job is to stop the worst thing first.
+        /// </summary>
+        public static DisciplineDecision Evaluate(DisciplineInput i)
+        {
+            DisciplineDecision d = new DisciplineDecision();
+            d.Signals = DetectRiskSignals(i);
+
+            DisciplineAction action = DisciplineAction.Trade;
+            Urgency urgency = Urgency.Calm;
+            // Reads as "Clear to trade - <reason>", so the reason must not carry
+            // its own dash or the headline stutters.
+            string reason = "conditions are clean, trade your plan";
+
+            if (Has(d.Signals, "past_floor"))
+            {
+                action = DisciplineAction.Lockout; urgency = Urgency.Alert;
+                reason = "this account is at or below its floor";
+            }
+            else if (Has(d.Signals, "daily_loss_limit"))
+            {
+                action = DisciplineAction.Lockout; urgency = Urgency.Alert;
+                reason = "you've hit your daily loss limit";
+            }
+            else if (Has(d.Signals, "loss_streak"))
+            {
+                action = DisciplineAction.StopForDay; urgency = Urgency.Alert;
+                reason = "you've taken your max losses for the day";
+            }
+            else if (Has(d.Signals, "give_back"))
+            {
+                action = DisciplineAction.ProtectGreen; urgency = Urgency.Alert;
+                reason = "you're handing back a green day";
+            }
+            else if (Has(d.Signals, "revenge_window"))
+            {
+                action = DisciplineAction.Cooldown; urgency = Urgency.Alert;
+                reason = "you just took a loss - wait out the tilt window";
+            }
+            else if (Has(d.Signals, "thin_cushion"))
+            {
+                action = DisciplineAction.SizeDown; urgency = Urgency.Caution;
+                reason = "your cushion to the trailing floor is thin";
+            }
+            else if (Has(d.Signals, "over_trading"))
+            {
+                action = DisciplineAction.StopForDay; urgency = Urgency.Caution;
+                reason = "you're at your max trades for the day";
+            }
+            else if (Has(d.Signals, "over_size"))
+            {
+                action = DisciplineAction.SizeDown; urgency = Urgency.Caution;
+                reason = "you're over your contract cap";
+            }
+            else if (Has(d.Signals, "out_of_window"))
+            {
+                action = DisciplineAction.None; urgency = Urgency.Caution;
+                reason = "you're outside your trading window";
+            }
+            else if (Has(d.Signals, "size_throttled"))
+            {
+                // Lowest priority on purpose. It is not a warning that something
+                // has gone wrong - it is a smaller size being handed to a trader
+                // who is otherwise clear to trade.
+                action = DisciplineAction.SizeDown; urgency = Urgency.Calm;
+                reason = "clear to trade, but at " + i.MaxContracts
+                       + (i.MaxContracts == 1 ? " contract" : " contracts") + " while this account is down";
+            }
+
+            // Hit the target cleanly with no warnings — celebrate the discipline.
+            if (action == DisciplineAction.Trade && i.DailyTarget > 0 && i.DailyPnl >= i.DailyTarget)
+            {
+                action = DisciplineAction.ProtectGreen; urgency = Urgency.Caution;
+                reason = "you've hit your daily target - bank it or free-roll";
+            }
+
+            d.Action = action;
+            d.Urgency = urgency;
+            d.Reason = reason;
+            d.Headline = Verb(action) + " - " + reason;
+
+            // Worst first, so the most important line reads first.
+            d.Signals.Sort(delegate(RiskSignal a, RiskSignal b) { return ((int)b.Severity).CompareTo((int)a.Severity); });
+            for (int n = 0; n < d.Signals.Count; n++) d.Bullets.Add(d.Signals[n].Summary);
+
+            return d;
+        }
+
+        /// <summary>
+        /// The actual dollar level the account dies at.
+        ///
+        /// The floor starts at (startingBalance - trailingDrawdown) and ratchets up
+        /// behind new highs, never down. On intraday-trailing accounts it follows the
+        /// PEAK — including unrealised profit — so a winner that round-trips still
+        /// moves the floor up permanently.
+        ///
+        /// lockFloorAt: most firms STOP the trailing once the floor would reach a set
+        /// level (Apex ~ starting + $100, Topstep ~ the original starting balance).
+        /// Past that point there is no trailing drawdown at all, just a fixed floor.
+        /// Pass 0 for accounts that trail forever.
+        /// </summary>
+        public static double FloorLevel(double startingBalance, double trailingDrawdown,
+                                        double currentBalance, double peakBalance,
+                                        DrawdownType type, double lockFloorAt)
+        {
+            double anchor = (type == DrawdownType.Intraday)
+                ? Math.Max(peakBalance, currentBalance)
+                : currentBalance;
+
+            double trailed = anchor - trailingDrawdown;
+
+            // Never below where it started.
+            double floor = Math.Max(trailed, startingBalance - trailingDrawdown);
+
+            // Once it reaches the lock level it stops trailing for good.
+            if (lockFloorAt > 0 && floor >= lockFloorAt) floor = lockFloorAt;
+
+            return floor;
+        }
+
+        /// <summary>Dollars of room between the current balance and the floor.</summary>
+        public static double CushionToFloor(double startingBalance, double trailingDrawdown,
+                                            double currentBalance, double peakBalance,
+                                            DrawdownType type, double lockFloorAt)
+        {
+            double floor = FloorLevel(startingBalance, trailingDrawdown, currentBalance,
+                                      peakBalance, type, lockFloorAt);
+            return currentBalance - floor;
+        }
+
+        /// <summary>True once the floor has locked and no longer trails.</summary>
+        public static bool FloorIsLocked(double startingBalance, double trailingDrawdown,
+                                         double currentBalance, double peakBalance,
+                                         DrawdownType type, double lockFloorAt)
+        {
+            if (lockFloorAt <= 0) return false;
+            double anchor = (type == DrawdownType.Intraday)
+                ? Math.Max(peakBalance, currentBalance)
+                : currentBalance;
+            return (anchor - trailingDrawdown) >= lockFloorAt;
+        }
+    }
+}
