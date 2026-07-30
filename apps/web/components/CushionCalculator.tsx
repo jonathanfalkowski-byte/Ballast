@@ -40,6 +40,15 @@ export default function CushionCalculator() {
   const actualRisk = contracts * riskPerContract;
   const cushionAfterStop = cushion - actualRisk;
 
+  // The number that actually matters: risk as a share of the REMAINING FAILURE BUFFER,
+  // not of the advertised account size. A $1,000 stop on a "$100k" account with a $3k
+  // trailing drawdown is not 1% risk — it's ~33% of everything standing between you
+  // and a blown account.
+  const bufferPct = cushion > 0 ? (actualRisk / cushion) * 100 : Infinity;
+  const accountPct = startingBalance > 0 ? (actualRisk / startingBalance) * 100 : 0;
+  const fullStopsLeft = actualRisk > 0 ? Math.floor(cushion / actualRisk) : Infinity;
+  const bufferTone = bufferPct >= 33 ? "#f4523b" : bufferPct >= 15 ? "#e3b341" : "#3fb950";
+
   return (
     <div className="space-y-6">
       {/* Trailing drawdown */}
@@ -112,6 +121,30 @@ export default function CushionCalculator() {
               </div>
             </div>
           </div>
+
+          {/* The headline number: risk vs the real failure buffer, not the advertised size. */}
+          {contracts >= 1 && cushion > 0 && (
+            <div className="mt-4 rounded-lg border border-[#2a333f] bg-[#12161c] p-4">
+              <div className="text-[12px] uppercase tracking-[0.1em] text-[#9aa7b4]">
+                Risk as a share of your remaining failure buffer
+              </div>
+              <div className="mt-1 flex items-end gap-3">
+                <div className="text-3xl font-extrabold" style={{ color: bufferTone }}>
+                  {bufferPct.toFixed(1)}%
+                </div>
+                <div className="pb-1 text-[13px] text-[#9aa7b4]">
+                  of the {money(cushion)} standing between you and a blown account
+                </div>
+              </div>
+              <p className="mt-2 text-[13px] text-[#9aa7b4]">
+                The same trade is only <b className="text-[#e8edf3]">{accountPct.toFixed(2)}%</b> of your{" "}
+                {money(startingBalance)} headline account — which is why that number misleads. You have{" "}
+                <b style={{ color: bufferTone }}>{isFinite(fullStopsLeft) ? fullStopsLeft : "∞"}</b> full stops
+                left before breach.
+              </p>
+            </div>
+          )}
+
           {contracts < 1 && (
             <p className="mt-2 text-[13px] text-[#f4523b]">
               One contract risks {money(riskPerContract)} — more than your max. Use a micro or a
