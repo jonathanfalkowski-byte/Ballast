@@ -28,7 +28,7 @@ export default function Home() {
           >
             See the NinjaTrader add-on &rarr;
           </Link>
-          <span className="ml-2 text-[#7f8b98]">Real screenshots. Not on sale yet.</span>
+          <span className="ml-2 text-[#7f8b98]">See every screen. Not on sale yet.</span>
         </p>
         <p className="mt-4 text-sm text-[#7f8b98]">
           Built by a trader who spent ten years learning this the hard way.

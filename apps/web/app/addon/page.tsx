@@ -6,12 +6,12 @@ import WaitlistForm from "@/components/WaitlistForm";
 export const metadata: Metadata = {
   title: "The Ballast NinjaTrader add-on — see it before you buy it",
   description:
-    "Ballast is a NinjaTrader 8 add-on that watches your prop account's trailing drawdown live, records every trade with a photograph of the chart, and warns you on the chart itself. Not on sale yet — this is what it does.",
+    "Ballast is a NinjaTrader 8 add-on that watches your prop account's trailing drawdown live, records every trade with a photograph of the chart, warns you on the chart itself, and puts a wall on the screen when you start trading to get even. Not on sale yet — this is what it does.",
   alternates: { canonical: "https://tradeballast.com/addon" },
   openGraph: {
     title: "The Ballast NinjaTrader add-on",
     description:
-      "Live trailing-drawdown cushion, a journal that fills itself, and a warning on the chart before you take the trade.",
+      "Live trailing-drawdown cushion, a journal that fills itself, a warning on the chart before you take the trade, and a wall in front of the revenge trade.",
     url: "https://tradeballast.com/addon",
     type: "website",
   },
@@ -38,7 +38,10 @@ export default function AddonPage() {
           <WaitlistForm />
         </div>
         <p className="mt-3 text-sm text-[#7f8b98]">
-          Everything below is a screenshot of the working add-on, not a mock-up.
+          Every image below is captioned. The Setup image is a photograph of the working add-on;
+          the rest are illustrations rendered from the add-on&apos;s own source, so the layout,
+          the colours and every word in them are the ones it really puts on screen. Nothing here
+          is a concept.
         </p>
       </section>
 
@@ -47,9 +50,10 @@ export default function AddonPage() {
         eyebrow="The Now tab"
         title="One number decides whether the account survives"
         src="/shots/now.png"
-        alt="The Ballast Now tab, showing an alert to step away after a loss, the tightest account's remaining room, and a per-account list with individual warnings."
-        width={838}
-        height={715}
+        alt="The Ballast Now tab, showing an alert to step away after a loss, the tightest account's remaining room, a trade waiting to be tagged with four verdict buttons, and a per-account list with individual warnings."
+        width={1800}
+        height={1500}
+        kind="illustration"
       >
         <p>
           Not your balance — the distance between your balance and the level your firm closes the
@@ -67,14 +71,74 @@ export default function AddonPage() {
         </p>
       </Shot>
 
+
+      {/* The wall */}
+      <section className="mt-16">
+        <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-[#f4523b]">
+          When you are tilting
+        </p>
+        <h2 className="text-2xl font-bold tracking-tight">
+          It takes the screen away. It never touches your orders.
+        </h2>
+        <Frame
+          src="/shots/tilt.png"
+          alt="The Ballast lockout: a full-window red screen reading 'You are done for the day', the account and the exact amount it is down, the trader's own record of previous overrides, a large 'I'm done for the day' button, and below it a text box where the release sentence must be typed out."
+          width={1580}
+          height={1456}
+          kind="illustration"
+        />
+        <div className="mt-5 space-y-4 text-[#9aa7b4]">
+          <p>
+            Every trader knows the feeling. You are down, and the next trade stops being a trade
+            and becomes an attempt to get the money back. Nothing on a dashboard has ever stopped
+            that, because in that state you are not reading dashboards.
+          </p>
+          <p>
+            So when an account goes past its floor, past your daily loss limit, or past the number
+            of losses you set as your line, Ballast covers its own window &mdash; every tab, all of
+            it &mdash; and says the thing in your own numbers.{" "}
+            <em className="not-italic text-white">
+              &ldquo;Nothing from here is a setup. It is a bet to get even, and it is being placed
+              by the part of you that just lost $1,240.&rdquo;
+            </em>
+          </p>
+          <p>
+            <strong className="text-white">
+              &ldquo;I&apos;m done for the day&rdquo; is one click.
+            </strong>{" "}
+            Carrying on means typing out{" "}
+            <em className="not-italic text-[#e3b341]">
+              &ldquo;I am trading outside my plan and I accept I may lose this account.&rdquo;
+            </em>{" "}
+            That is about ten seconds, and you cannot paste it. Ten seconds is roughly how long it
+            takes for an impulse to stop being automatic and start being a decision &mdash; which is
+            the entire mechanism. The right choice is easy on purpose and the wrong one is slow on
+            purpose.
+          </p>
+          <p>
+            Then it is written down. Every override is logged with your P&amp;L at that moment and
+            what the rest of the day actually did, so the next time the wall appears it stops
+            arguing and shows you your own record:{" "}
+            <em className="not-italic text-[#f4523b]">
+              &ldquo;You went past this 4 times in the last 30 days. 3 of those sessions went on to
+              lose a further $2,300; 1 recovered $500.&rdquo;
+            </em>{" "}
+            It counts the times carrying on worked out, because a record that only ever reported
+            losses would be worthless the first time you checked it. It counts the times you
+            stopped, too.
+          </p>
+        </div>
+      </section>
+
       {/* Journal */}
       <Shot
         eyebrow="The Journal tab"
         title="The journal fills itself in"
         src="/shots/journal.png"
-        alt="The Ballast Journal tab, showing today's plan, what the trades show so far, and a list of trades grouped by account."
-        width={1080}
-        height={616}
+        alt="The Ballast Journal tab, showing today's plan, what the trades show so far including the cost of overriding the lockout, and trades grouped under collapsible account headings."
+        width={2000}
+        height={1284}
+        kind="illustration"
       >
         <p>
           Every round trip is recorded the moment you go flat: instrument, direction, size, entry and
@@ -102,6 +166,7 @@ export default function AddonPage() {
         alt="The Ballast Setup tab, showing the account watch list with each account's saved rules, firm and account type selection, and recommended settings."
         width={1270}
         height={1049}
+        kind="photo"
       >
         <p>
           Tick an account and Ballast reads the firm from the account name and the size from the
@@ -138,7 +203,19 @@ export default function AddonPage() {
             worth nothing on the day it matters. And it draws nothing at all if the data is stale,
             rather than confidently showing you an hour-old &ldquo;you are fine&rdquo;.
           </p>
+          <p>
+            A hard breaker is the one thing it will not stay quiet about. Turning the lockout off,
+            or typing past it, buys you silence inside Ballast &mdash; it does not buy a
+            clean-looking chart.
+          </p>
         </div>
+        <Frame
+          src="/shots/chart.png"
+          alt="A chart with the Ballast indicator painting STOP - YOU ARE DONE FOR THE DAY in large red letters across the top."
+          width={2400}
+          height={780}
+          kind="illustration"
+        />
       </section>
 
       {/* Charts */}
@@ -167,9 +244,10 @@ export default function AddonPage() {
         <h2 className="text-2xl font-bold tracking-tight">What it deliberately does not do</h2>
         <div className="mt-6 space-y-4">
           <Point title="It never touches your orders.">
-            Ballast does not place, modify or cancel an order, and never flattens a position. It is
-            advisory. Software that closes positions costs real money when it is wrong, and this has
-            not earned that trust yet.
+            Ballast does not place, modify or cancel an order, and never flattens a position
+            &mdash; not even behind the lockout. The wall covers Ballast&apos;s own window; your
+            platform is one Alt-Tab away and always will be. Software that closes positions costs
+            real money when it is wrong, and this has not earned that trust yet.
           </Point>
           <Point title="It does not tell you what to trade.">
             No signals, no setups, no entries. It watches how you behave around the trades you
@@ -212,6 +290,7 @@ function Shot({
   alt,
   width,
   height,
+  kind,
   children,
 }: {
   eyebrow: string;
@@ -220,13 +299,35 @@ function Shot({
   alt: string;
   width: number;
   height: number;
+  kind: "photo" | "illustration";
   children: React.ReactNode;
 }) {
   return (
     <section className="mt-16">
       <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8b97a5]">{eyebrow}</p>
       <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
-      <div className="mt-5 overflow-hidden rounded-xl border border-[#2a333f] bg-[#0e1116]">
+      <Frame src={src} alt={alt} width={width} height={height} kind={kind} />
+      <div className="mt-5 space-y-4 text-[#9aa7b4]">{children}</div>
+    </section>
+  );
+}
+
+function Frame({
+  src,
+  alt,
+  width,
+  height,
+  kind,
+}: {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  kind: "photo" | "illustration";
+}) {
+  return (
+    <figure className="mt-5">
+      <div className="overflow-hidden rounded-xl border border-[#2a333f] bg-[#0e1116]">
         <Image
           src={src}
           alt={alt}
@@ -236,8 +337,12 @@ function Shot({
           unoptimized
         />
       </div>
-      <div className="mt-5 space-y-4 text-[#9aa7b4]">{children}</div>
-    </section>
+      <figcaption className="mt-2 text-xs text-[#6f7a87]">
+        {kind === "photo"
+          ? "Screenshot of the running add-on."
+          : "Illustration \u2014 rendered from the add-on's source, not a photograph. Same layout, same wording."}
+      </figcaption>
+    </figure>
   );
 }
 

@@ -123,6 +123,28 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly List<string> configuredFromDisk = new List<string>();
         private int lastPendingCount = -1;
 
+        // ── The wall ─────────────────────────────────────────────────────────
+        // Everything here exists for one moment: the trader has stopped trading
+        // and started trying to get even. See TiltLockout.cs for why it is built
+        // the way it is.
+        private readonly TiltLog tiltLog = new TiltLog();
+        private readonly TiltGate tiltGate = new TiltGate();
+        private Border tiltOverlay;
+        private TextBlock tiltTitle, tiltLine, tiltAsk, tiltToday, tiltHistory, tiltStood;
+        private TextBox tiltTypeBox;
+        private ProgressBar tiltProgress;
+        private Button tiltGoOn, tiltFixConfig;
+        private StackPanel tiltConfigRow;
+        private TiltTrigger tiltCurrent;
+        private CheckBox tiltOnBox, tiltGiveBackBox;
+        private bool tiltEnabled = true;
+        private bool tiltOnGiveBack;
+        private TextBlock tiltJournalLine;
+        private StackPanel tiltZoomHost;
+        private bool tiltDirty;
+        private DateTime lastTiltSave = DateTime.MinValue;
+        private string lastTiltRecord = "\u0000";
+
         private Button tabNow, tabJournal, tabSetup;
         private StackPanel pageNow, pageJournal, pageSetup;
         private int activeTab;
@@ -162,8 +184,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Land on Setup when there is nothing to watch yet, because then setup
             // IS the task. Otherwise land on Now, which is what a configured
             // trader opened the window for.
+            LoadTiltLog();
+
             ApplyZoom();
             if (generationBox != null) generationBox.SelectedIndex = (int)generation;
+            if (tiltOnBox != null) tiltOnBox.IsChecked = tiltEnabled;
+            if (tiltGiveBackBox != null) tiltGiveBackBox.IsChecked = tiltOnGiveBack;
             ShowTab(monitor.Count == 0 ? 2 : 0);
 
             // Silent daily check so the trader never maintains rules by hand.
@@ -232,7 +258,542 @@ namespace NinjaTrader.NinjaScript.AddOns
             scroller.Content = pages;
             shell.Children.Add(scroller);
 
+            // Sits on top of everything, including the tab bar, so there is no
+            // clicking around it. It is the last child and has the highest
+            // Z-index for the same reason.
+            tiltOverlay = BuildTiltOverlay();
+            Grid.SetRow(tiltOverlay, 0);
+            Grid.SetRowSpan(tiltOverlay, 2);
+            Panel.SetZIndex(tiltOverlay, 999);
+            shell.Children.Add(tiltOverlay);
+
             return shell;
+        }
+
+        // ── The wall ─────────────────────────────────────────────────────────
+        //
+        // What this is for, in the trader's own words: "i would get so mad
+        // trading sometimes and keep trading saying i would get it back or just
+        // lose it and just trade anyway whether it was planned or not."
+        //
+        // So: the screen goes away. Not the orders - Ballast has never placed,
+        // modified or cancelled one and does not start here. The market is still
+        // one Alt-Tab away, and that is deliberate. Software that genuinely
+        // trapped a trader would be both wrong and, the first time it was wrong
+        // about a configuration, uninstalled.
+        //
+        // The shape of the choice is the whole design:
+        //
+        //   "I'm done for the day"  - one click, big, first, calm colour.
+        //   Carry on anyway         - type a sentence, about ten seconds, small.
+        //
+        // Ten seconds is not a punishment. It is roughly the time it takes for
+        // the impulse to stop being automatic and start being a decision, which
+        // is the only thing standing between "I'll get it back" and a blown
+        // account. And whichever way it goes, it is written down and costed, so
+        // in a month this stops being an opinion about his trading and becomes
+        // his own record of it.
+
+        private Border BuildTiltOverlay()
+        {
+            Border o = new Border();
+            o.Visibility = Visibility.Collapsed;
+            // Near-solid rather than solid: the numbers behind stay faintly
+            // visible, so it reads as Ballast getting in the way rather than as
+            // the platform having crashed.
+            o.Background = new SolidColorBrush(Color.FromArgb(0xF7, 0x1a, 0x06, 0x06));
+
+            ScrollViewer sv = new ScrollViewer();
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+
+            StackPanel p = new StackPanel();
+            p.Margin = new Thickness(26, 30, 26, 30);
+            p.MaxWidth = 620;
+            p.HorizontalAlignment = HorizontalAlignment.Left;
+            // The overlay is outside the zoomed page host, so it has to honour
+            // the text-size setting itself. A trader who sized Ballast up because
+            // they cannot read it at 100% must not be handed this at 100%.
+            tiltZoomHost = p;
+
+            TextBlock kicker = new TextBlock();
+            kicker.Text = "BALLAST";
+            kicker.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xb4, 0xb4));
+            kicker.FontSize = 11;
+            kicker.FontWeight = FontWeights.Bold;
+            p.Children.Add(kicker);
+
+            tiltTitle = new TextBlock();
+            tiltTitle.Foreground = Brushes.White;
+            tiltTitle.FontSize = 34;
+            tiltTitle.FontWeight = FontWeights.Bold;
+            tiltTitle.TextWrapping = TextWrapping.Wrap;
+            tiltTitle.Margin = new Thickness(0, 8, 0, 0);
+            p.Children.Add(tiltTitle);
+
+            tiltLine = new TextBlock();
+            tiltLine.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xdc, 0xdc));
+            tiltLine.FontSize = 16;
+            tiltLine.TextWrapping = TextWrapping.Wrap;
+            tiltLine.Margin = new Thickness(0, 14, 0, 0);
+            p.Children.Add(tiltLine);
+
+            tiltAsk = new TextBlock();
+            tiltAsk.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xdc, 0xdc));
+            tiltAsk.FontSize = 14;
+            tiltAsk.TextWrapping = TextWrapping.Wrap;
+            tiltAsk.Margin = new Thickness(0, 10, 0, 0);
+            p.Children.Add(tiltAsk);
+
+            tiltToday = new TextBlock();
+            tiltToday.Foreground = Brushes.White;
+            tiltToday.FontSize = 15;
+            tiltToday.FontWeight = FontWeights.Bold;
+            tiltToday.TextWrapping = TextWrapping.Wrap;
+            tiltToday.Margin = new Thickness(0, 12, 0, 0);
+            p.Children.Add(tiltToday);
+
+            // His own record. This is the part that has to do the persuading,
+            // because nothing Ballast invents is as convincing as what he has
+            // already done.
+            tiltHistory = new TextBlock();
+            tiltHistory.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            tiltHistory.FontSize = 13;
+            tiltHistory.TextWrapping = TextWrapping.Wrap;
+            tiltHistory.Margin = new Thickness(0, 12, 0, 0);
+            p.Children.Add(tiltHistory);
+
+            tiltStood = new TextBlock();
+            tiltStood.Foreground = new SolidColorBrush(Color.FromRgb(0xb8, 0xf0, 0xc0));
+            tiltStood.FontSize = 13;
+            tiltStood.TextWrapping = TextWrapping.Wrap;
+            tiltStood.Margin = new Thickness(0, 4, 0, 0);
+            p.Children.Add(tiltStood);
+
+            // The right choice: biggest, first, and one click.
+            Button stand = new Button();
+            stand.Content = "I'm done for the day";
+            stand.FontSize = 19;
+            stand.FontWeight = FontWeights.Bold;
+            stand.Padding = new Thickness(26, 14, 26, 14);
+            stand.Margin = new Thickness(0, 24, 0, 0);
+            stand.HorizontalAlignment = HorizontalAlignment.Left;
+            stand.Background = Brushes.White;
+            stand.Foreground = new SolidColorBrush(Color.FromRgb(0x1a, 0x06, 0x06));
+            stand.BorderBrush = Brushes.White;
+            stand.Click += delegate { OnTiltStandDown(); };
+            p.Children.Add(stand);
+
+            TextBlock standNote = new TextBlock();
+            standNote.Text = "Closes this and leaves the account alone until tomorrow. "
+                           + "Ballast keeps watching; it just stops arguing with you.";
+            standNote.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            standNote.FontSize = 11;
+            standNote.TextWrapping = TextWrapping.Wrap;
+            standNote.Margin = new Thickness(0, 8, 0, 0);
+            p.Children.Add(standNote);
+
+            // The configuration escape. Only shown for past-floor, where a wrong
+            // account size in Setup is far more likely than a dead account - and
+            // being accused of revenge trading by a settings bug is exactly how a
+            // feature like this gets switched off forever.
+            tiltConfigRow = new StackPanel();
+            tiltConfigRow.Margin = new Thickness(0, 14, 0, 0);
+            tiltConfigRow.Visibility = Visibility.Collapsed;
+
+            tiltFixConfig = new Button();
+            tiltFixConfig.Content = "That number is wrong - open Setup";
+            tiltFixConfig.FontSize = 13;
+            tiltFixConfig.Padding = new Thickness(16, 8, 16, 8);
+            tiltFixConfig.HorizontalAlignment = HorizontalAlignment.Left;
+            tiltFixConfig.Background = ColTransparent;
+            tiltFixConfig.Foreground = Brushes.White;
+            tiltFixConfig.BorderBrush = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
+            tiltFixConfig.Click += delegate { OnTiltFixConfig(); };
+            tiltConfigRow.Children.Add(tiltFixConfig);
+
+            TextBlock cfgNote = new TextBlock();
+            cfgNote.Text = "Nothing is recorded against you for this one.";
+            cfgNote.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            cfgNote.FontSize = 11;
+            cfgNote.Margin = new Thickness(0, 6, 0, 0);
+            tiltConfigRow.Children.Add(cfgNote);
+
+            p.Children.Add(tiltConfigRow);
+
+            // ── the override ──
+            Border rule = new Border();
+            rule.Height = 1;
+            rule.Background = new SolidColorBrush(Color.FromArgb(0x55, 0xff, 0xff, 0xff));
+            rule.Margin = new Thickness(0, 26, 0, 20);
+            p.Children.Add(rule);
+
+            TextBlock orLabel = new TextBlock();
+            orLabel.Text = "Or carry on trading. Type this out first:";
+            orLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            orLabel.FontSize = 12;
+            orLabel.TextWrapping = TextWrapping.Wrap;
+            p.Children.Add(orLabel);
+
+            TextBlock sentence = new TextBlock();
+            sentence.Text = TiltLockout.ReleaseSentence;
+            sentence.Foreground = Brushes.White;
+            sentence.FontSize = 15;
+            sentence.FontStyle = FontStyles.Italic;
+            sentence.TextWrapping = TextWrapping.Wrap;
+            sentence.Margin = new Thickness(0, 8, 0, 8);
+            p.Children.Add(sentence);
+
+            tiltTypeBox = new TextBox();
+            tiltTypeBox.FontSize = 15;
+            tiltTypeBox.MinHeight = 56;
+            tiltTypeBox.AcceptsReturn = false;
+            tiltTypeBox.TextWrapping = TextWrapping.Wrap;
+            tiltTypeBox.Padding = new Thickness(8, 6, 8, 6);
+            tiltTypeBox.Background = new SolidColorBrush(Color.FromRgb(0x2a, 0x10, 0x10));
+            tiltTypeBox.Foreground = Brushes.White;
+            tiltTypeBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
+            tiltTypeBox.TextChanged += OnTiltTyped;
+
+            // Pasting it defeats the entire mechanism, so pasting is refused.
+            // Ten seconds of typing is the feature; one Ctrl-V is not.
+            DataObject.AddPastingHandler(tiltTypeBox, OnTiltPaste);
+
+            // A text box accepts drops by default, and a drop does NOT raise the
+            // pasting event - so without this the sentence could be dragged in
+            // from Notepad in one gesture and the whole mechanism walks out the
+            // door through a side entrance.
+            tiltTypeBox.AllowDrop = false;
+            p.Children.Add(tiltTypeBox);
+
+            tiltProgress = new ProgressBar();
+            tiltProgress.Minimum = 0;
+            tiltProgress.Maximum = 1;
+            tiltProgress.Value = 0;
+            tiltProgress.Height = 4;
+            tiltProgress.Margin = new Thickness(0, 6, 0, 0);
+            tiltProgress.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
+            tiltProgress.Background = new SolidColorBrush(Color.FromArgb(0x44, 0xff, 0xff, 0xff));
+            tiltProgress.BorderBrush = ColTransparent;
+            p.Children.Add(tiltProgress);
+
+            tiltGoOn = new Button();
+            tiltGoOn.Content = "Carry on anyway";
+            tiltGoOn.FontSize = 12;
+            tiltGoOn.Padding = new Thickness(14, 6, 14, 6);
+            tiltGoOn.Margin = new Thickness(0, 12, 0, 0);
+            tiltGoOn.HorizontalAlignment = HorizontalAlignment.Left;
+            tiltGoOn.IsEnabled = false;
+            tiltGoOn.Background = ColTransparent;
+            tiltGoOn.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            tiltGoOn.BorderBrush = new SolidColorBrush(Color.FromRgb(0x99, 0x55, 0x55));
+            tiltGoOn.Click += delegate { OnTiltOverride(); };
+            p.Children.Add(tiltGoOn);
+
+            TextBlock small = new TextBlock();
+            small.Text = "Buys you " + TiltLockout.DefaultReleaseMinutes
+                       + " minutes. If it is still true after that, this comes back. "
+                       + "Either way it goes in your journal with what the rest of the day did.";
+            small.Foreground = new SolidColorBrush(Color.FromRgb(0xd8, 0x9a, 0x9a));
+            small.FontSize = 11;
+            small.TextWrapping = TextWrapping.Wrap;
+            small.Margin = new Thickness(0, 8, 0, 0);
+            p.Children.Add(small);
+
+            TextBlock foot = new TextBlock();
+            foot.Text = "Ballast has not touched your orders and cannot. Your platform is still there.";
+            foot.Foreground = new SolidColorBrush(Color.FromRgb(0xc0, 0x88, 0x88));
+            foot.FontSize = 10;
+            foot.TextWrapping = TextWrapping.Wrap;
+            foot.Margin = new Thickness(0, 18, 0, 0);
+            p.Children.Add(foot);
+
+            sv.Content = p;
+            o.Child = sv;
+            return o;
+        }
+
+        private void OnTiltPaste(object sender, DataObjectPastingEventArgs e)
+        {
+            e.CancelCommand();
+        }
+
+        private void OnTiltTyped(object sender, TextChangedEventArgs e)
+        {
+            if (tiltTypeBox == null) return;
+
+            string typed = tiltTypeBox.Text;
+            bool ok = TiltLockout.Accepts(typed);
+
+            if (tiltGoOn != null) tiltGoOn.IsEnabled = ok;
+            if (tiltProgress != null) tiltProgress.Value = TiltLockout.Progress(typed);
+
+            // Off-track typing turns the box red rather than throwing an error.
+            // Being told off by a text box while already angry helps nobody.
+            tiltTypeBox.BorderBrush = ok
+                ? new SolidColorBrush(Color.FromRgb(0xb8, 0xf0, 0xc0))
+                : TiltLockout.OnTrack(typed)
+                    ? new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a))
+                    : new SolidColorBrush(Color.FromRgb(0xff, 0x50, 0x50));
+        }
+
+        private void ShowTilt(TiltTrigger t, DateTime now)
+        {
+            if (t == null || tiltOverlay == null) return;
+
+            tiltCurrent = t;
+            tiltMissTicks = 0;
+
+            tiltTitle.Text = t.Title;
+            tiltLine.Text = t.Line;
+            tiltAsk.Text = t.Ask;
+
+            string today = TiltLockout.TodayLine(tiltLog, t.AccountName, now);
+            tiltToday.Text = today;
+            tiltToday.Visibility = today.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            string hist = tiltLog.Summary(now, 30);
+            tiltHistory.Text = hist;
+            tiltHistory.Visibility = hist.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            string stood = tiltLog.StoodSummary(now, 30);
+            tiltStood.Text = stood;
+            tiltStood.Visibility = stood.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            tiltConfigRow.Visibility = t.ConfigSuspect ? Visibility.Visible : Visibility.Collapsed;
+
+            tiltTypeBox.Text = "";
+            tiltProgress.Value = 0;
+            tiltGoOn.IsEnabled = false;
+
+            tiltOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void HideTilt()
+        {
+            tiltCurrent = null;
+            tiltMissTicks = 0;
+            if (tiltOverlay != null) tiltOverlay.Visibility = Visibility.Collapsed;
+            if (tiltTypeBox != null) tiltTypeBox.Text = "";
+        }
+
+        private void OnTiltStandDown()
+        {
+            if (tiltCurrent == null) { HideTilt(); return; }
+
+            DateTime now = Core.Globals.Now;
+            RecordTilt(tiltCurrent, true, now);
+            tiltGate.ReleaseAccountForDay(tiltCurrent.AccountName, now);
+            HideTilt();
+        }
+
+        private void OnTiltFixConfig()
+        {
+            if (tiltCurrent == null) { HideTilt(); return; }
+
+            // No record either way: this is a settings problem, not a discipline
+            // one, and filing it as tilt would poison the numbers that make the
+            // rest of this worth reading.
+            tiltGate.ReleaseForDay(tiltCurrent.AccountName, tiltCurrent.Kind, Core.Globals.Now);
+            string acct = tiltCurrent.AccountName;
+            HideTilt();
+
+            ShowTab(2);
+
+            // Land them on the account in question rather than on a settings page
+            // and a hunt.
+            try
+            {
+                if (editTargetBox != null && editTargetBox.Items.Contains(acct))
+                    editTargetBox.SelectedItem = acct;
+            }
+            catch { }
+        }
+
+        private void OnTiltOverride()
+        {
+            if (tiltCurrent == null) { HideTilt(); return; }
+            if (!TiltLockout.Accepts(tiltTypeBox == null ? "" : tiltTypeBox.Text)) return;
+
+            DateTime now = Core.Globals.Now;
+            RecordTilt(tiltCurrent, false, now);
+            tiltGate.Release(tiltCurrent.AccountName, tiltCurrent.Kind, now);
+            HideTilt();
+        }
+
+        private void RecordTilt(TiltTrigger t, bool stood, DateTime now)
+        {
+            TiltEvent e = new TiltEvent();
+            e.At = now;
+            e.AccountName = t.AccountName;
+            e.Kind = t.Kind;
+            e.Stood = stood;
+            e.PnlAtEvent = t.DailyPnl;
+            tiltLog.Add(e);
+            tiltLog.Save(TiltPath());
+        }
+
+        private void RenderTiltRecord()
+        {
+            if (tiltJournalLine == null) return;
+
+            DateTime now;
+            try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+            string over = tiltLog.Summary(now, 30);
+            string stood = tiltLog.StoodSummary(now, 30);
+
+            string text = over;
+            if (stood.Length > 0) text = text.Length > 0 ? text + "  " + stood : stood;
+
+            // This runs every second. Only touch the visual tree when the words
+            // have actually changed.
+            if (text == lastTiltRecord) return;
+            lastTiltRecord = text;
+
+            tiltJournalLine.Text = text;
+            tiltJournalLine.Foreground = over.Length > 0 ? ColAmber : ColGreen;
+            tiltJournalLine.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void LoadTiltLog()
+        {
+            try
+            {
+                tiltLog.Load(TiltPath());
+
+                // Anything from a previous date is frozen at whatever figure it
+                // held. Without this, a crash mid-session would leave yesterday's
+                // override quietly tracking today's P&L and reporting a number
+                // that never happened.
+                tiltLog.SettleStale(Core.Globals.Now);
+            }
+            catch { }
+        }
+
+        private string TiltPath()
+        {
+            try { return Path.Combine(Core.Globals.UserDataDir, "ballast-overrides.csv"); }
+            catch { return "ballast-overrides.csv"; }
+        }
+
+        /// <summary>
+        /// Runs every tick. Keeps the cost of past overrides current, decides
+        /// whether a wall belongs on the screen, and tells the chart indicator
+        /// either way.
+        /// </summary>
+        /// <summary>
+        /// A hard breaker has to stop being true for this many consecutive ticks
+        /// before the wall comes down or the chart banner clears.
+        ///
+        /// Without it these signals strobe. Cushion is worked out from equity
+        /// INCLUDING unrealised P&L, so an account sitting on its floor with a
+        /// position open crosses back and forth every second as price wobbles,
+        /// and a single dropped account update reads as "no valid equity" for one
+        /// tick. Either would tear the wall down mid-sentence and wipe what the
+        /// trader had typed - which means they could never finish typing it, and
+        /// the escape hatch would become a trap.
+        /// </summary>
+        private const int TiltGraceTicks = 8;
+
+        private int tiltMissTicks;
+        private readonly Dictionary<string, int> lockMissTicks =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        private void UpdateTilt(List<AccountSnapshot> snaps, DateTime now)
+        {
+            if (tiltLog.SettleStale(now)) tiltDirty = true;
+
+            TiltTrigger firstDue = null;
+            bool currentStillTrue = false;
+
+            for (int n = 0; n < snaps.Count; n++)
+            {
+                AccountSnapshot s = snaps[n];
+
+                // What an override actually cost is measured against where the
+                // day finishes, so today's open records track the live figure.
+                if (s.Input.HasValidEquity && tiltLog.Touch(s.AccountName, s.Input.DailyPnl, now))
+                    tiltDirty = true;
+
+                List<TiltTrigger> triggers =
+                    TiltLockout.EvaluateAll(s.AccountName, s.Input, s.Decision, tiltOnGiveBack);
+
+                // The chart is told about hard breakers only, and is told
+                // regardless of whether the overlay is switched on or has been
+                // typed past. Turning off the wall is a choice about Ballast's
+                // own window; it is not a request to make a dying account look
+                // clean on the chart the trader is actually watching.
+                bool hard = false;
+                string hardLine = "";
+                for (int k = 0; k < triggers.Count; k++)
+                {
+                    if (!TiltLockout.IsHardBreaker(triggers[k].Kind)) continue;
+                    hard = true;
+                    hardLine = triggers[k].Title;
+                    break;
+                }
+                PublishLockSticky(s.AccountName, hard, hardLine, now);
+
+                if (!tiltEnabled) continue;
+
+                for (int k = 0; k < triggers.Count; k++)
+                {
+                    TiltTrigger t = triggers[k];
+
+                    if (tiltCurrent != null
+                        && string.Equals(t.AccountName, tiltCurrent.AccountName, StringComparison.OrdinalIgnoreCase)
+                        && t.Kind == tiltCurrent.Kind)
+                        currentStillTrue = true;
+
+                    // Dismissing one reason must not disarm the others. Skipping
+                    // rather than stopping is the whole point of walking the list.
+                    if (tiltGate.IsReleased(t.AccountName, t.Kind, now)) continue;
+                    if (firstDue == null) firstDue = t;
+                }
+            }
+
+            if (!tiltEnabled) { if (tiltCurrent != null) HideTilt(); return; }
+
+            if (tiltCurrent != null)
+            {
+                if (currentStillTrue) { tiltMissTicks = 0; return; }
+
+                // Ride out a brief gap rather than tearing the wall down on one
+                // bad tick. Only a sustained clear takes it away.
+                tiltMissTicks++;
+                if (tiltMissTicks < TiltGraceTicks) return;
+
+                HideTilt();
+            }
+
+            if (firstDue != null) ShowTilt(firstDue, now);
+        }
+
+        /// <summary>
+        /// Publish the chart's hard-breaker flag with the same anti-strobe grace
+        /// the overlay gets, so the banner does not flash on and off once a
+        /// second while a position sits on the floor.
+        /// </summary>
+        private void PublishLockSticky(string account, bool hard, string line, DateTime now)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+
+            if (hard)
+            {
+                lockMissTicks[account] = 0;
+                BallastState.PublishLock(account, true, line, now);
+                return;
+            }
+
+            int misses;
+            if (!lockMissTicks.TryGetValue(account, out misses)) misses = TiltGraceTicks;
+            if (misses < TiltGraceTicks)
+            {
+                lockMissTicks[account] = misses + 1;
+                return;   // hold the last published state through the gap
+            }
+
+            BallastState.PublishLock(account, false, "", now);
         }
 
         private const double Pad = 18;
@@ -310,6 +871,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             double z = ZoomSteps[zoomIndex];
             if (zoomHost != null) zoomHost.LayoutTransform = new ScaleTransform(z, z);
+            if (tiltZoomHost != null) tiltZoomHost.LayoutTransform = new ScaleTransform(z, z);
             if (zoomLabel != null) zoomLabel.Text = (z * 100).ToString("0") + "%";
         }
 
@@ -553,6 +1115,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             journalSummary.TextWrapping = TextWrapping.Wrap;
             journalSummary.Margin = new Thickness(0, 10, 0, 0);
             insightInner.Children.Add(journalSummary);
+
+            // What carrying on has cost. Kept here rather than only on the wall,
+            // because the wall is read in a temper and this is read calmly - and
+            // the calm reading is the one that changes what happens next time.
+            tiltJournalLine = new TextBlock();
+            tiltJournalLine.Foreground = ColAmber;
+            tiltJournalLine.FontSize = 12;
+            tiltJournalLine.TextWrapping = TextWrapping.Wrap;
+            tiltJournalLine.Margin = new Thickness(0, 10, 0, 0);
+            tiltJournalLine.Visibility = Visibility.Collapsed;
+            insightInner.Children.Add(tiltJournalLine);
 
             insightCard.Child = insightInner;
             p.Children.Add(insightCard);
@@ -866,6 +1439,62 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "point asking a bot whether a trade was planned - they all were - and if a busy "
               + "strategy took four hundred trades while you took three, letting them into the "
               + "planned-versus-unplanned split would bury the only three that measure you."));
+
+            p.Children.Add(Spacer(18));
+            p.Children.Add(SectionHeader("WHEN YOU ARE TILTING"));
+
+            // Everything above this point on the page is per-account. This is
+            // not, and a trader who assumed it was would think they had switched
+            // it on when they had not.
+            TextBlock tiltScope = new TextBlock();
+            tiltScope.Text = "Unlike the rules above, this applies to every account you watch.";
+            tiltScope.Foreground = ColMuted;
+            tiltScope.FontSize = 11;
+            tiltScope.TextWrapping = TextWrapping.Wrap;
+            tiltScope.Margin = new Thickness(0, 0, 0, 6);
+            p.Children.Add(tiltScope);
+
+            tiltOnBox = new CheckBox();
+            tiltOnBox.Content = "Put a wall on the screen when I blow through a hard line";
+            tiltOnBox.Foreground = ColInk;
+            tiltOnBox.FontSize = 13;
+            tiltOnBox.IsChecked = true;
+            tiltOnBox.Margin = new Thickness(0, 4, 0, 4);
+            tiltOnBox.Checked += delegate { tiltEnabled = true; SaveSettings(); };
+            tiltOnBox.Unchecked += delegate { tiltEnabled = false; SaveSettings(); };
+            p.Children.Add(tiltOnBox);
+
+            tiltGiveBackBox = new CheckBox();
+            tiltGiveBackBox.Content = "Also when I am handing back a green day";
+            tiltGiveBackBox.Foreground = ColInk;
+            tiltGiveBackBox.FontSize = 13;
+            tiltGiveBackBox.Margin = new Thickness(16, 0, 0, 4);
+            tiltGiveBackBox.Checked += delegate { tiltOnGiveBack = true; SaveSettings(); };
+            tiltGiveBackBox.Unchecked += delegate { tiltOnGiveBack = false; SaveSettings(); };
+            p.Children.Add(tiltGiveBackBox);
+
+            p.Children.Add(Why("What does the wall actually do?",
+                "It covers Ballast - the whole window, every tab - when an account goes past its "
+              + "floor, past its daily loss limit, or past the number of losses you said was your "
+              + "line. Not when you are merely over your trade count or outside your window: a wall "
+              + "that fires for small things stops meaning anything.\n\n"
+              + "It does NOT touch your orders. Ballast has never placed, modified or cancelled one, "
+              + "and this does not change that. Your platform is one Alt-Tab away and always will be. "
+              + "What this takes away is the screen, not the market.\n\n"
+              + "There are two ways out. 'I'm done for the day' is one click, and it is the big "
+              + "button on purpose. Carrying on means typing out a sentence - about ten seconds. Ten "
+              + "seconds is roughly how long it takes for an impulse to stop being automatic and "
+              + "start being a decision, which is the entire mechanism. You cannot paste it.\n\n"
+              + "Both are written down. Every override is logged with your P&L at that moment and "
+              + "what the rest of the day did afterwards, and next time the wall shows you that "
+              + "record. Nothing Ballast can say about your trading is as convincing as what you have "
+              + "already done, so it stops arguing and shows you your own numbers - including the "
+              + "times carrying on worked out, because a record that only ever reported losses would "
+              + "be worth nothing the first time you checked it.\n\n"
+              + "Turning this off only turns off the wall in this window. If you have the Ballast "
+              + "indicator on a chart it still paints STOP across the top when an account goes past "
+              + "a hard line, and typing past the wall does not clear that either. Quiet in here is "
+              + "not the same as a clean chart."));
 
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
@@ -1641,8 +2270,38 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 List<AccountSnapshot> snaps = monitor.EvaluateAll(now);
-                Render(snaps);
-                RenderJournal();
+
+                // Drawing is allowed to fail; the wall is not. A malformed
+                // journal row or a bad thumbnail must never be able to take the
+                // one hard-stop mechanism in the product off the screen for the
+                // rest of the session, so rendering gets its own net.
+                try
+                {
+                    Render(snaps);
+                    RenderJournal();
+                }
+                catch (Exception rex)
+                {
+                    if (headlineText != null)
+                    {
+                        headlineText.Text = "Ballast display error: " + rex.Message;
+                        headlineText.Foreground = ColRed;
+                    }
+                }
+
+                // After Render, so the row warnings are already on the shared
+                // board and the lock flag lands on top of them rather than under.
+                UpdateTilt(snaps, now);
+
+                // The cost of an override only means anything if it survives a
+                // restart, so the running figure is flushed rather than held in
+                // memory until the next override that may never come.
+                if (tiltDirty && (now - lastTiltSave).TotalSeconds >= 30)
+                {
+                    tiltDirty = false;
+                    lastTiltSave = now;
+                    tiltLog.Save(TiltPath());
+                }
 
                 if (journalDirty)
                 {
@@ -1660,8 +2319,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             catch (Exception ex)
             {
-                headlineText.Text = "Ballast error: " + ex.Message;
-                headlineText.Foreground = ColRed;
+                // Never let the error handler be the thing that throws.
+                if (headlineText != null)
+                {
+                    headlineText.Text = "Ballast error: " + ex.Message;
+                    headlineText.Foreground = ColRed;
+                }
             }
         }
 
@@ -2322,6 +2985,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private void RenderJournal()
         {
+            RenderTiltRecord();
+
             List<BallastTrade> pending = monitor.Journal.Pending();
 
             if (pending.Count != lastPendingCount)
@@ -3112,6 +3777,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 List<string> lines = new List<string>();
                 lines.Add("*UI*|" + zoomIndex.ToString(CultureInfo.InvariantCulture)
                           + "|" + ((int)generation).ToString(CultureInfo.InvariantCulture));
+                lines.Add("*TILT*|" + (tiltEnabled ? "1" : "0") + "|" + (tiltOnGiveBack ? "1" : "0"));
                 lines.Add(SettingsCodec.Serialise("*DEFAULT*", monitor.DefaultConfig));
                 foreach (string n in monitor.MonitoredNames)
                 {
@@ -3146,6 +3812,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         continue;
                     }
 
+                    if (lines[i] != null && lines[i].StartsWith("*TILT*|"))
+                    {
+                        string[] tf = lines[i].Split('|');
+                        // Absent means on. A trader who has never seen this
+                        // setting should still get the wall.
+                        if (tf.Length > 1) tiltEnabled = tf[1] != "0";
+                        if (tf.Length > 2) tiltOnGiveBack = tf[2] == "1";
+                        continue;
+                    }
+
                     string key;
                     TrackerConfig c = SettingsCodec.Deserialise(lines[i], out key);
                     if (c == null) continue;
@@ -3168,6 +3844,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             // Never lose a session's trades because the window was closed.
             try { CommitSessionPlan(); monitor.Journal.Save(JournalPath()); } catch { }
+
+            // Closing the window at the end of the day is the most likely moment
+            // for a session's final P&L to be lost, and that figure is the whole
+            // point of the override record.
+            try { tiltLog.Save(TiltPath()); } catch { }
 
             if (timer != null)
             {

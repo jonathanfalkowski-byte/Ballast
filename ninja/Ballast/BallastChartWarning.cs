@@ -250,7 +250,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // Calm states are deliberately silent - see the header. A tiny green
             // tick confirms it is alive without becoming wallpaper.
-            if (st.Urgency <= 0 || (st.Urgency == 1 && !ShowCautions))
+            // A hard breaker is never silent, whatever the caution setting says
+            // and whatever else has or has not been published for this account.
+            // This is the case the whole indicator exists for.
+            if (!st.Locked && (st.Urgency <= 0 || (st.Urgency == 1 && !ShowCautions)))
             {
                 Draw.TextFixed(this, Tag, "BALLAST OK", TextPosition.TopLeft,
                                Green, new SimpleFont("Arial", 10), Panel, Panel, 25);
@@ -260,11 +263,18 @@ namespace NinjaTrader.NinjaScript.Indicators
             string text = BallastState.ChartBanner(st);
             if (text.Length == 0) { RemoveDrawObject(Tag); return; }
 
-            if (st.HasCushion)
+            // "Can lose" alongside "stop" reads as a budget to spend. Once the
+            // account is past a hard line there is no number to offer.
+            if (st.HasCushion && !st.Locked)
                 text += "        CAN LOSE " + Money(st.CanLose);
 
-            Brush colour = st.Urgency >= 2 ? Red : Amber;
+            Brush colour = BallastState.IsAlarm(st) ? Red : Amber;
             int size = TextSize < 8 ? 8 : (TextSize > 72 ? 72 : TextSize);
+
+            // Bigger when it matters, because he asked for it "right at the top
+            // of the chart too in big letters" and this is the moment he meant.
+            if (st.Locked) size = (int)Math.Round(size * 1.4);
+            if (size > 72) size = 72;
 
             Draw.TextFixed(this, Tag, text, TextPosition.TopLeft,
                            colour, new SimpleFont("Arial", size), Panel, colour, 70);

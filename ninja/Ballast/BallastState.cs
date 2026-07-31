@@ -28,6 +28,17 @@ namespace Ballast
         public double CanLose;
         public bool HasCushion;
         public DateTime UpdatedAt = DateTime.MinValue;
+
+        /// <summary>
+        /// True while this account has tripped a hard breaker - past its floor,
+        /// past its daily loss limit, or past its max losses for the day.
+        ///
+        /// Deliberately independent of whether the trader has typed past the
+        /// Ballast window. Overriding buys quiet in the app; it does not buy a
+        /// clean-looking chart, and the chart is where they are actually looking.
+        /// </summary>
+        public bool Locked;
+        public string LockLine = "";
     }
 
     public static class BallastState
@@ -60,6 +71,27 @@ namespace Ballast
                 s.CanLose = canLose;
                 s.HasCushion = hasCushion;
                 s.UpdatedAt = now;
+            }
+        }
+
+        /// <summary>
+        /// Set the hard-breaker flag without disturbing the rest of the state.
+        /// Published separately because the window works out the row warning and
+        /// the lockout at different points in its tick, and one must not silently
+        /// blank the other.
+        /// </summary>
+        public static void PublishLock(string account, bool locked, string line, DateTime now)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+
+            lock (gate)
+            {
+                AccountState s;
+                if (!states.TryGetValue(account, out s)) { s = new AccountState(); states[account] = s; }
+
+                s.Locked = locked;
+                s.LockLine = locked ? (line ?? "") : "";
+                if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
             }
         }
 
@@ -97,9 +129,30 @@ namespace Ballast
         public static string ChartBanner(AccountState s)
         {
             if (s == null) return "";
+
+            // A hard breaker outranks whatever else the row had to say, and it
+            // gets said in the plainest possible words. This is the one that has
+            // to land from across a desk with a position on.
+            // Read once. The window publishes on its own thread, and reading
+            // LockLine twice can catch it mid-clear and paint a bare "STOP - ".
+            bool locked = s.Locked;
+            string line = s.LockLine;
+
+            if (locked)
+            {
+                if (string.IsNullOrEmpty(line)) line = "You are done for the day.";
+                return ("STOP - " + line).ToUpperInvariant();
+            }
+
             if (s.Urgency <= 0) return "";
             if (s.Warning.Length == 0) return "";
             return s.Warning.ToUpperInvariant();
+        }
+
+        /// <summary>True when the banner should be painted in the alarm colour.</summary>
+        public static bool IsAlarm(AccountState s)
+        {
+            return s != null && (s.Locked || s.Urgency >= 2);
         }
     }
 }
