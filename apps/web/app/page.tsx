@@ -30,6 +30,17 @@ export default function Home() {
           </Link>
           <span className="ml-2 text-[#7f8b98]">See every screen. Not on sale yet.</span>
         </p>
+        <p className="mt-3 text-[15px]">
+          <Link
+            href="/rules"
+            className="font-semibold text-[#4da3ff] underline underline-offset-4"
+          >
+            Every prop firm&apos;s drawdown rules &rarr;
+          </Link>
+          <span className="ml-2 text-[#7f8b98]">
+            The actual numbers. Free, no signup, no affiliate links.
+          </span>
+        </p>
         <p className="mt-4 text-sm text-[#7f8b98]">
           Built by a trader who spent ten years learning this the hard way.
         </p>

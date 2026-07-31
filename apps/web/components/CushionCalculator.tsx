@@ -1,9 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { cushionToFloor } from "@/lib/disciplineEngine";
+import {
+  cushionToFloor,
+  floorLevel,
+  floorIsLocked,
+  peakThatLocks,
+} from "@/lib/disciplineEngine";
 
 const POINT_VALUE: Record<string, number> = { ES: 50, NQ: 20, MES: 5, MNQ: 2 };
+
+type Kind = "eval_rithmic" | "eval_tradovate" | "funded" | "own";
 
 function money(n: number) {
   return "$" + Math.round(n).toLocaleString();
@@ -17,22 +24,48 @@ export default function CushionCalculator() {
   const [peak, setPeak] = useState(152000);
   const [ddType, setDdType] = useState<"intraday" | "end_of_day">("intraday");
 
+  // What kind of account, which is what decides whether the floor ever stops.
+  //
+  // The calculator used to ignore this entirely, so it silently gave the
+  // trail-forever answer for every account - wrong for every funded account,
+  // and wrong for every Apex evaluation on Rithmic or WealthCharts. On a 250K
+  // legacy eval that is the difference between $6,500 of room and $15,000.
+  const [kind, setKind] = useState<Kind>("eval_rithmic");
+  const [target, setTarget] = useState(9000);
+
+  const lockFloorAt = useMemo(() => {
+    if (kind === "eval_tradovate") return 0;                    // never stops
+    if (kind === "funded") return startingBalance + 100;        // Apex-style lock
+    if (kind === "eval_rithmic") return startingBalance + target; // target profit balance
+    if (kind === "own") return startingBalance - trailing;      // fixed from the start
+    return 0;
+  }, [kind, startingBalance, target, trailing]);
+
   // Position size
   const [inst, setInst] = useState("ES");
   const [riskPerTrade, setRisk] = useState(200);
   const [stopPoints, setStop] = useState(5);
 
-  const cushion = useMemo(
-    () =>
-      cushionToFloor({
-        startingBalance,
-        trailingDrawdown: trailing,
-        currentBalance: current,
-        peakBalance: peak,
-        drawdownType: ddType,
-      }),
-    [startingBalance, trailing, current, peak, ddType],
+  const floorParams = useMemo(
+    () => ({
+      startingBalance,
+      trailingDrawdown: trailing,
+      currentBalance: current,
+      peakBalance: peak,
+      drawdownType: ddType,
+      lockFloorAt,
+    }),
+    [startingBalance, trailing, current, peak, ddType, lockFloorAt],
   );
+
+  const cushion = useMemo(() => cushionToFloor(floorParams), [floorParams]);
+  const floor = useMemo(() => floorLevel(floorParams), [floorParams]);
+  const locked = useMemo(() => floorIsLocked(floorParams), [floorParams]);
+  const locksAtPeak = useMemo(() => peakThatLocks(floorParams), [floorParams]);
+
+  // What a trader most wants to know and no calculator tells them: how much
+  // further the peak has to go before profit starts being worth something.
+  const toGo = locksAtPeak > 0 ? Math.max(0, locksAtPeak - Math.max(peak, current)) : 0;
 
   const pv = POINT_VALUE[inst];
   const riskPerContract = stopPoints * pv;
@@ -69,16 +102,88 @@ export default function CushionCalculator() {
               <option value="end_of_day">End-of-day trailing</option>
             </select>
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[13px] text-[#9aa7b4]">What kind of account</label>
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as Kind)}
+              className="rounded-lg border border-[#2a333f] bg-[#0e141b] px-3 py-2.5 text-[15px] outline-none focus:border-[#4da3ff]"
+            >
+              <option value="eval_rithmic">Evaluation &mdash; Rithmic / WealthCharts</option>
+              <option value="eval_tradovate">Evaluation &mdash; Tradovate</option>
+              <option value="funded">Funded / PA</option>
+              <option value="own">My own money (fixed max loss)</option>
+            </select>
+          </div>
+          {kind === "eval_rithmic" && (
+            <Num label="Profit target to pass ($)" value={target} onChange={setTarget} />
+          )}
         </Grid>
         <Out>
-          <div className="text-sm text-[#9aa7b4]">Room to your trailing floor</div>
-          <div className={`text-3xl font-extrabold ${cushion < trailing * 0.3 ? "text-[#f4523b]" : "text-[#3fb950]"}`}>
-            {money(cushion)}
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <div className="text-sm text-[#9aa7b4]">Room to your floor</div>
+              <div
+                className={`text-3xl font-extrabold ${
+                  cushion < trailing * 0.3 ? "text-[#f4523b]" : "text-[#3fb950]"
+                }`}
+              >
+                {money(cushion)}
+              </div>
+            </div>
+            <div className="text-right text-sm text-[#9aa7b4]">
+              <div>
+                Your account dies at <b className="text-[#e8edf3]">{money(floor)}</b>
+              </div>
+              <div className="mt-1">
+                {lockFloorAt <= 0 ? (
+                  <span className="text-[#e3b341]">This floor never stops following you</span>
+                ) : locked ? (
+                  <span className="text-[#3fb950]">
+                    Locked at {money(lockFloorAt)} &mdash; profit above it is real cushion
+                  </span>
+                ) : (
+                  <span>
+                    Locks at {money(lockFloorAt)} once your peak reaches{" "}
+                    <b className="text-[#e8edf3]">{money(locksAtPeak)}</b>
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* The bit nobody explains */}
+          {lockFloorAt > 0 && !locked && (
+            <p className="mt-3 text-[13px] text-[#9aa7b4]">
+              Until then, <b className="text-[#e8edf3]">making money buys you no extra room</b> — the
+              floor climbs with you and your cushion stays at {money(trailing)}. You need another{" "}
+              <b className="text-[#e8edf3]">{money(toGo)}</b> of peak before that changes.
+            </p>
+          )}
+
+          {lockFloorAt > 0 && locked && (
+            <p className="mt-3 text-[13px] text-[#9aa7b4]">
+              Your floor has stopped moving. From here every dollar you make is genuine cushion,
+              which is why this is the point the whole evaluation turns on.
+            </p>
+          )}
+
+          {lockFloorAt <= 0 && (
+            <p className="mt-3 text-[13px] text-[#9aa7b4]">
+              Your room stays at {money(trailing)} however well you trade — the floor follows your
+              peak forever. On Apex that is the Tradovate behaviour;{" "}
+              <a href="/rules" className="text-[#4da3ff] underline underline-offset-4">
+                on Rithmic it stops
+              </a>
+              .
+            </p>
+          )}
+
           {ddType === "intraday" && (
             <p className="mt-2 text-[13px] text-[#9aa7b4]">
-              Intraday trailing follows your peak — a floating winner that round-trips still ratchets
-              this floor up. Bank profit; don't admire it.
+              Intraday trailing follows your peak{" "}
+              <b className="text-[#e8edf3]">including unrealised profit</b> — a floating winner that round-trips still ratchets this floor up
+              permanently. Bank profit; don&apos;t admire it.
             </p>
           )}
         </Out>

@@ -27,14 +27,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Bump on every rule change. Clients compare this to decide whether to update. */
-export const RULES_VERSION = 4;
+export const RULES_VERSION = 9;
 
 /** Date the figures below were last checked against the firms' own pages. */
-export const RULES_VERIFIED = "2026-07-30";
+export const RULES_VERIFIED = "2026-07-31";
 
 /** Pages a maintenance job should re-check for changes. */
 export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
   { firm: "Apex Trader Funding", url: "https://apextraderfunding.com/help-center/" },
+  { firm: "Apex Trader Funding", url: "https://apextraderfunding.com/help-center/intraday-trailing-drawdown-accounts/intraday-trailing-drawdown-explained/" },
+  { firm: "Apex Trader Funding", url: "https://apextraderfunding.com/help-center/evaluation-accounts-ea/legacy-evaluation-rules/" },
   { firm: "Topstep", url: "https://www.topstep.com/express-funded-account-rules" },
   { firm: "Topstep", url: "https://help.topstep.com/en/articles/8284204-what-is-the-maximum-loss-limit" },
   { firm: "Take Profit Trader", url: "https://takeprofittrader.com/" },
@@ -48,25 +50,124 @@ export const RULES_TEXT = `# Ballast rule book - served from tradeballast.com/ap
 VERSION|${RULES_VERSION}
 VERIFIED|${RULES_VERIFIED}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ballast rule book
+#
+# Prop firm rules change often. This file is plain text ON PURPOSE so you can
+# correct it yourself the moment a firm changes something, without recompiling.
+# Edit it, then click "Reload rule book" in the Ballast window.
+#
+# THESE FIGURES ARE A CONVENIENCE, NOT GOSPEL. Always verify against your own
+# firm's dashboard before trusting the cushion number. A wrong drawdown here
+# produces a wrong cushion, which is worse than no tool at all.
+#
+# Format (pipe separated, one account type per line):
+#   FIRM | PLAN | SIZE | DRAWDOWN | DDTYPE | DAILYLOSS | TARGET | NOTE | LOCKAT | MAXCONTRACTS
+#
+#   DDTYPE     = INTRADAY or EOD
+#   DAILYLOSS  = 0 means the firm publishes no separate daily loss limit
+#   NOTE       = free text, shown in the window
+#
+# Lines starting with # are ignored.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 # -- Apex Trader Funding (4.0, effective 1 March 2026) ------------------------
-# Legacy 75K / 250K / 300K sizes were retired. If you hold a legacy account its
-# figures WILL differ - enter them by hand.
-Apex Trader Funding|Full (intraday)|25000|1000|INTRADAY|0|1500|Trailing threshold is the safeguard; no separate daily loss limit.|25100
-Apex Trader Funding|Full (intraday)|50000|2000|INTRADAY|0|3000|Trailing threshold is the safeguard; no separate daily loss limit.|50100
-Apex Trader Funding|Full (intraday)|100000|3000|INTRADAY|0|6000|Trailing threshold is the safeguard; no separate daily loss limit.|100100
-Apex Trader Funding|Full (intraday)|150000|4000|INTRADAY|0|9000|Trailing threshold is the safeguard; no separate daily loss limit.|150100
-Apex Trader Funding|Full (end-of-day)|25000|1000|EOD|0|1500|EOD variant also carries a soft daily loss limit - check your dashboard.|25100
-Apex Trader Funding|Full (end-of-day)|50000|2000|EOD|0|3000|EOD variant also carries a soft daily loss limit - check your dashboard.|50100
-Apex Trader Funding|Full (end-of-day)|100000|3000|EOD|0|6000|EOD variant also carries a soft daily loss limit - check your dashboard.|100100
-Apex Trader Funding|Full (end-of-day)|150000|4000|EOD|0|9000|EOD variant also carries a soft daily loss limit - check your dashboard.|150100
+# EVALUATIONS AND FUNDED (PA) ACCOUNTS DIFFER, AND SO DO PLATFORMS.
+#
+# Apex publishes THREE behaviours for the intraday threshold:
+#   Performance (funded)          - stops once it reaches Starting Balance + $100
+#   Evaluation, Rithmic/WealthCharts - stops at the Target Profit balance
+#   Evaluation, Tradovate         - never stops, trails the peak forever
+#
+# All three are below as separate rows. Ballast reads the account's connection
+# to pick the right one; where it cannot tell, it takes the row that keeps
+# trailing, which reports LESS room rather than more. That is the direction to
+# be wrong in - assuming a lock that is not there would tell a trader they have
+# thousands more room than they do.
+#
+# 4.0 accounts only go up to 150K. If you hold a 75K, 250K or 300K it is a
+# LEGACY account - see the legacy section below, whose drawdowns come from Apex's
+# own Legacy Evaluation Rules page.
+# Apex intraday EVALUATIONS behave differently depending on the platform, which
+# is Apex's own rule, not a guess. From their help centre:
+#   Rithmic and WealthCharts - "Intraday Threshold stops trailing and becomes
+#     fixed when it reaches an amount equal to the Target Profit balance."
+#     On a 50K with a 3,000 target that is a threshold fixed at 53,000, reached
+#     once the highest balance touches 55,000.
+#   Tradovate - "Intraday Drawdown trails indefinitely with the peak account
+#     balance" and never stops.
+# So LOCKAT below is (size + profit target) on Rithmic/WealthCharts and 0 on
+# Tradovate. NinjaTrader normally reaches Apex over Rithmic.
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|25000|1000|INTRADAY|0|1500|Threshold fixes at the target profit balance.|26500
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|50000|2000|INTRADAY|0|3000|Threshold fixes at the target profit balance.|53000
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|Threshold fixes at the target profit balance.|106000
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|150000|4000|INTRADAY|0|9000|Threshold fixes at the target profit balance.|159000
+Apex Trader Funding|Evaluation intraday (Tradovate)|25000|1000|INTRADAY|0|1500|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|50000|2000|INTRADAY|0|3000|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|100000|3000|INTRADAY|0|6000|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|150000|4000|INTRADAY|0|9000|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation (end-of-day)|25000|1000|EOD|0|1500|Eval threshold keeps trailing - no lock. Verify for your platform.|0
+Apex Trader Funding|Evaluation (end-of-day)|50000|2000|EOD|0|3000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
+Apex Trader Funding|Evaluation (end-of-day)|100000|3000|EOD|0|6000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
+Apex Trader Funding|Evaluation (end-of-day)|150000|4000|EOD|0|9000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
+Apex Trader Funding|PA / funded (intraday)|25000|1000|INTRADAY|0|1500|Threshold stops rising at starting balance + $100.|25100
+Apex Trader Funding|PA / funded (intraday)|50000|2000|INTRADAY|0|3000|Threshold stops rising at starting balance + $100.|50100
+Apex Trader Funding|PA / funded (intraday)|100000|3000|INTRADAY|0|6000|Threshold stops rising at starting balance + $100.|100100
+Apex Trader Funding|PA / funded (intraday)|150000|4000|INTRADAY|0|9000|Threshold stops rising at starting balance + $100.|150100
+Apex Trader Funding|PA / funded (end-of-day)|25000|1000|EOD|0|1500|Threshold stops rising at starting balance + $100.|25100
+Apex Trader Funding|PA / funded (end-of-day)|50000|2000|EOD|0|3000|Threshold stops rising at starting balance + $100.|50100
+Apex Trader Funding|PA / funded (end-of-day)|100000|3000|EOD|0|6000|Threshold stops rising at starting balance + $100.|100100
+Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|9000|Threshold stops rising at starting balance + $100.|150100
+
+
+# -- Apex Trader Funding (LEGACY accounts) ------------------------------------
+# Drawdowns and contract caps below are from Apex's own "Legacy Evaluation
+# Rules" page. Profit targets are the long-standing published figures and are
+# less firmly sourced than the drawdowns - the drawdown is what decides whether
+# the account lives, so that is the number that was verified.
+#
+# 25K / 50K / 100K / 150K exist in BOTH 4.0 and legacy with DIFFERENT drawdowns
+# (a legacy 50K trails $2,500, a 4.0 50K trails $2,000). Balance alone cannot
+# tell them apart, so auto-match picks the tighter 4.0 figure and says so. If
+# your account is legacy, choose the legacy row here by hand.
+#
+# Legacy evaluations follow the same platform split as 4.0 evaluations: the
+# threshold fixes at the target profit balance on Rithmic/WealthCharts and
+# trails forever on Tradovate.
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|25000|1500|INTRADAY|0|1500|Legacy. Threshold fixes at the target profit balance. Apex cap 4 minis.|26500|4
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|50000|2500|INTRADAY|0|3000|Legacy. Threshold fixes at the target profit balance. Apex cap 10 minis.|53000|10
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|75000|2750|INTRADAY|0|4250|Legacy. Threshold fixes at the target profit balance. Apex cap 12 minis.|79250|12
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|Legacy. Threshold fixes at the target profit balance. Apex cap 14 minis.|106000|14
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|150000|5000|INTRADAY|0|9000|Legacy. Threshold fixes at the target profit balance. Apex cap 17 minis.|159000|17
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|250000|6500|INTRADAY|0|15000|Legacy. Threshold fixes at the target profit balance. Apex cap 27 minis.|265000|27
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|300000|7500|INTRADAY|0|20000|Legacy. Threshold fixes at the target profit balance. Apex cap 35 minis.|320000|35
+Apex Trader Funding|Legacy evaluation (Tradovate)|25000|1500|INTRADAY|0|1500|Legacy. Trails forever on Tradovate. Apex cap 4 minis.|0|4
+Apex Trader Funding|Legacy evaluation (Tradovate)|50000|2500|INTRADAY|0|3000|Legacy. Trails forever on Tradovate. Apex cap 10 minis.|0|10
+Apex Trader Funding|Legacy evaluation (Tradovate)|75000|2750|INTRADAY|0|4250|Legacy. Trails forever on Tradovate. Apex cap 12 minis.|0|12
+Apex Trader Funding|Legacy evaluation (Tradovate)|100000|3000|INTRADAY|0|6000|Legacy. Trails forever on Tradovate. Apex cap 14 minis.|0|14
+Apex Trader Funding|Legacy evaluation (Tradovate)|150000|5000|INTRADAY|0|9000|Legacy. Trails forever on Tradovate. Apex cap 17 minis.|0|17
+Apex Trader Funding|Legacy evaluation (Tradovate)|250000|6500|INTRADAY|0|15000|Legacy. Trails forever on Tradovate. Apex cap 27 minis.|0|27
+Apex Trader Funding|Legacy evaluation (Tradovate)|300000|7500|INTRADAY|0|20000|Legacy. Trails forever on Tradovate. Apex cap 35 minis.|0|35
+Apex Trader Funding|Legacy PA / funded|25000|1500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|25100|4
+Apex Trader Funding|Legacy PA / funded|50000|2500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|50100|10
+Apex Trader Funding|Legacy PA / funded|75000|2750|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|75100|12
+Apex Trader Funding|Legacy PA / funded|100000|3000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|100100|14
+Apex Trader Funding|Legacy PA / funded|150000|5000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|150100|17
+Apex Trader Funding|Legacy PA / funded|250000|6500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|250100|27
+Apex Trader Funding|Legacy PA / funded|300000|7500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|300100|35
+Apex Trader Funding|Legacy 100K Static|100000|625|EOD|0|2000|Legacy STATIC drawdown - the floor never moves. Apex cap 2 minis.|99375|2
 
 # -- Topstep (Trading Combine) ------------------------------------------------
 # End-of-day trailing max loss, plus a genuine intraday daily loss limit.
+# Unlike Apex, Topstep DOES lock during the evaluation: their help centre says
+# the Maximum Loss Limit "locks permanently" once it reaches the starting
+# balance, and that is the Trading Combine, not just the funded account.
 Topstep|Trading Combine|50000|2000|EOD|1000|3000|Daily loss limit resets 5:00pm CT.|50000
 Topstep|Trading Combine|100000|3000|EOD|2000|6000|Daily loss limit resets 5:00pm CT.|100000
 Topstep|Trading Combine|150000|4500|EOD|3000|9000|Daily loss limit resets 5:00pm CT.|150000
 
-# -- Take Profit Trader -------------------------------------------------------
+# ── Take Profit Trader ───────────────────────────────────────────────────────
 # Test and PRO+ use end-of-day trailing. PRO uses INTRADAY - the drawdown moves
 # on unrealised gains, so a winner that round-trips still ratchets your floor.
 Take Profit Trader|Test (evaluation)|25000|1500|EOD|0|1500|No daily loss limit on Test accounts.|0
@@ -85,7 +186,7 @@ Take Profit Trader|PRO+ (live)|75000|2500|EOD|0|0|PRO+ reverts to end-of-day tra
 Take Profit Trader|PRO+ (live)|100000|3500|EOD|0|0|PRO+ reverts to end-of-day trailing.|0
 Take Profit Trader|PRO+ (live)|150000|4500|EOD|0|0|PRO+ reverts to end-of-day trailing.|0
 
-# -- MyFundedFutures ----------------------------------------------------------
+# ── MyFundedFutures ──────────────────────────────────────────────────────────
 # No daily loss limit on any plan.
 MyFundedFutures|Builder|50000|2000|EOD|0|3000|Default max loss; a $1,500 option exists at checkout.|50100
 MyFundedFutures|Rapid (4% intraday)|25000|1000|INTRADAY|0|1500|Trail updates on every new equity high during the session.|25100
@@ -98,4 +199,18 @@ MyFundedFutures|Pro (3% EOD)|150000|4500|EOD|0|9000|End-of-day trailing.|150100
 MyFundedFutures|Core (legacy)|50000|1500|EOD|0|3000|Legacy plan - verify, no longer sold.|50100
 MyFundedFutures|Flex (legacy, static)|25000|1000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|25100
 MyFundedFutures|Flex (legacy, static)|50000|2000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|50100
+
+# -- Your own account (not a prop firm) ---------------------------------------
+# For an Interactive Brokers, NinjaTrader Brokerage or any self-funded account.
+# There is no trailing drawdown here - LOCKAT is set to size minus max loss, which
+# freezes the floor immediately, so it behaves as a FIXED max loss you choose.
+# Pick the nearest size and then edit the numbers in Rules to match reality.
+My own account (not a prop firm)|Self-funded - 5% max loss|10000|500|EOD|250|0|Fixed max loss, does not trail. Edit to match your own risk.|9500
+My own account (not a prop firm)|Self-funded - 5% max loss|25000|1250|EOD|500|0|Fixed max loss, does not trail. Edit to match your own risk.|23750
+My own account (not a prop firm)|Self-funded - 5% max loss|50000|2500|EOD|1000|0|Fixed max loss, does not trail. Edit to match your own risk.|47500
+My own account (not a prop firm)|Self-funded - 5% max loss|100000|5000|EOD|2000|0|Fixed max loss, does not trail. Edit to match your own risk.|95000
+My own account (not a prop firm)|Self-funded - 10% max loss|10000|1000|EOD|250|0|Fixed max loss, does not trail. Edit to match your own risk.|9000
+My own account (not a prop firm)|Self-funded - 10% max loss|25000|2500|EOD|500|0|Fixed max loss, does not trail. Edit to match your own risk.|22500
+My own account (not a prop firm)|Self-funded - 10% max loss|50000|5000|EOD|1000|0|Fixed max loss, does not trail. Edit to match your own risk.|45000
+My own account (not a prop firm)|Self-funded - 10% max loss|100000|10000|EOD|2000|0|Fixed max loss, does not trail. Edit to match your own risk.|90000
 `;

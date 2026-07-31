@@ -2056,7 +2056,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // is, that outranks the summary - it is the difference between a
                 // cushion figure that is right and one that is generous.
                 string bad = "";
-                try { bad = ruleBook.SanityWarning(name, t.Config); } catch { }
+                try { bad = ruleBook.SanityWarning(name, t.Config, PlatformOf(FindAccount(name))); } catch { }
 
                 sub.Text = bad.Length > 0
                     ? ConfigSummary(name, t.Config) + "\n" + bad
@@ -2235,6 +2235,61 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// about. A Sim account, or a balance matching no standard size, is simply
         /// left for the trader to set by hand.
         /// </summary>
+        /// <summary>
+        /// Which platform this account connects through - "RITHMIC", "TRADOVATE"
+        /// or "" when it cannot be determined.
+        ///
+        /// This is not cosmetic. Apex's intraday evaluation threshold stops
+        /// trailing at the target profit balance on Rithmic and WealthCharts, and
+        /// never stops on Tradovate. Same firm, same size, same evaluation,
+        /// different floor. Getting it from the connection means the trader does
+        /// not have to know that Apex has three different rules and which one
+        /// their data feed puts them under.
+        ///
+        /// Reflection, because the connection types are not something worth
+        /// taking a hard reference on for one string, and a failure here should
+        /// only ever mean "unknown platform" rather than a broken add-on.
+        /// </summary>
+        private string PlatformOf(Account a)
+        {
+            try
+            {
+                if (a == null) return "";
+
+                object conn = null;
+                System.Reflection.PropertyInfo cp = a.GetType().GetProperty("Connection");
+                if (cp != null) conn = cp.GetValue(a, null);
+                if (conn == null) return "";
+
+                // The readable name lives on the connection's options.
+                string found = "";
+                System.Reflection.PropertyInfo op = conn.GetType().GetProperty("Options");
+                if (op != null)
+                {
+                    object opts = op.GetValue(conn, null);
+                    if (opts != null)
+                    {
+                        System.Reflection.PropertyInfo np = opts.GetType().GetProperty("Name");
+                        if (np != null) found = np.GetValue(opts, null) as string;
+
+                        if (string.IsNullOrEmpty(found))
+                        {
+                            System.Reflection.PropertyInfo pp = opts.GetType().GetProperty("Provider");
+                            if (pp != null)
+                            {
+                                object prov = pp.GetValue(opts, null);
+                                if (prov != null) found = prov.ToString();
+                            }
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(found)) found = conn.ToString();
+                return RuleBook.PlatformFromConnection(found);
+            }
+            catch { return ""; }
+        }
+
         private void AutoDetectOne(string name, BallastTracker t, double balance)
         {
             try
@@ -2244,7 +2299,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 bool preferIntraday = monitor.DefaultConfig.DrawdownType == DrawdownType.Intraday;
                 AccountGeneration g = t.Config.Generation != AccountGeneration.Auto
                     ? t.Config.Generation : generation;
-                FirmAccountSpec s = ruleBook.AutoDetect(name, balance, preferIntraday, g);
+                string platform = PlatformOf(FindAccount(name));
+                FirmAccountSpec s = ruleBook.AutoDetect(name, balance, preferIntraday, g, platform);
                 if (s == null) return;
 
                 t.Config = RuleBook.ToConfig(s, t.Config);
@@ -2252,8 +2308,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 accountLabels[name] = s.Firm + " " + s.Label;
 
                 detectionNote.Text = "Recognised " + name + " as " + s.Firm + " " + s.Label
-                                   + " from its name and balance. Verify against your firm, "
-                                   + "then add your own trading rules below.";
+                                   + (platform.Length > 0
+                                        ? " - connected over " + platform.ToLowerInvariant()
+                                          + ", which decides how its threshold trails"
+                                        : "")
+                                   + ". Verify against your firm, then add your own trading rules below.";
                 detectionNote.Foreground = ColMuted;
                 SaveSettings();
             }
@@ -3044,7 +3103,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     BallastTracker cfgT = monitor.Get(s.AccountName);
-                    if (cfgT != null) mismatch = ruleBook.SanityWarning(s.AccountName, cfgT.Config);
+                    if (cfgT != null)
+                        mismatch = ruleBook.SanityWarning(s.AccountName, cfgT.Config,
+                                                         PlatformOf(FindAccount(s.AccountName)));
                 }
                 catch { }
 

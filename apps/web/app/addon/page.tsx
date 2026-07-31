@@ -158,6 +158,34 @@ export default function AddonPage() {
         </p>
       </Shot>
 
+      {/* The one thing it has to ask */}
+      <section className="mt-16 rounded-2xl border border-[#2a333f] bg-[#161b22] p-8">
+        <h2 className="text-2xl font-bold tracking-tight">
+          It asks one question a machine cannot answer
+        </h2>
+        <div className="mt-4 space-y-4 text-[#9aa7b4]">
+          <p>
+            After every trade: <strong className="text-white">did you move your stop or your
+            target?</strong> One tap — held both, moved my stop, moved my target, moved both — and
+            if you moved something, the note box changes to ask why, while you still remember.
+          </p>
+          <p>
+            Ballast watches your position, not your working orders, so this is genuinely invisible
+            to it. It is also the break that costs the most: a stop moved away turns a planned loss
+            into an unplanned one, and a target pulled in turns a winner into a scratch. Answering
+            it turns the most expensive habit in trading into something with a number attached —{" "}
+            <em className="not-italic text-[#f4523b]">
+              &ldquo;the 4 trades where you moved your stop or target cost you $1,200; the 6 you
+              left alone made $1,080.&rdquo;
+            </em>
+          </p>
+          <p>
+            Trades you do not answer count as neither. A journal that assumed you held would
+            flatter you, and that is the one thing it must never do.
+          </p>
+        </div>
+      </section>
+
       {/* Setup */}
       <Shot
         eyebrow="Setup"
@@ -193,15 +221,25 @@ export default function AddonPage() {
         <div className="mt-4 space-y-4 text-[#9aa7b4]">
           <p>
             A panel off to one side is exactly where nobody looks in the second before a revenge
-            trade. Ballast ships a companion indicator that paints the same message across the top of
-            the chart itself, in large letters, in the same colours.
+            trade. Ballast ships a companion indicator that puts the same message on the chart
+            itself — in a strip of its own, beneath the price panel, the way volume sits.
           </p>
           <p>
-            It only ever shows something{" "}
-            <strong className="text-white">actionable</strong>. There is no permanent all-clear
-            banner, because a message that is always there is one you stop seeing — and then it is
-            worth nothing on the day it matters. And it draws nothing at all if the data is stale,
-            rather than confidently showing you an hour-old &ldquo;you are fine&rdquo;.
+            The strip matters more than it sounds. A real trading chart is the most contested space
+            on the screen: your platform lists every indicator&apos;s name across the top, the
+            instrument watermark sits in a corner, and a chart running eight studies has a wall of
+            coloured text before Ballast draws a character. Making the warning bigger or redder does
+            not win that fight, it just adds to the pile. So it stops competing.{" "}
+            <strong className="text-white">Nothing else can draw there</strong>, so it can never be
+            buried, and you always know exactly where to look.
+          </p>
+          <p>
+            On a quiet day it is a quiet line — trades taken against your limit, losses in a row,
+            what is left of today&apos;s budget, the room to your floor. When an account goes past a
+            hard line the strip fills red. It reads whichever account the chart&apos;s own order
+            entry is set to, so switching a chart between accounts moves Ballast with it and there
+            is nothing to configure. And it draws nothing at all if the data is stale, rather than
+            confidently showing you an hour-old &ldquo;you are fine&rdquo;.
           </p>
           <p>
             A hard breaker is the one thing it will not stay quiet about. Turning the lockout off,

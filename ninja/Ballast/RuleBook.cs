@@ -208,6 +208,22 @@ namespace Ballast
         public FirmAccountSpec AutoDetect(string accountName, double balance, bool preferIntraday,
                                           AccountGeneration generation)
         {
+            return AutoDetect(accountName, balance, preferIntraday, generation, "");
+        }
+
+        /// <summary>
+        /// As above, but preferring rows written for a particular platform.
+        ///
+        /// When the platform is unknown the SAFE row wins, not the first one:
+        /// among otherwise equal candidates the one that keeps trailing is
+        /// chosen, because a floor that keeps following the peak reports less
+        /// room than one that stops. Being cautiously wrong about a threshold is
+        /// survivable; the opposite is how an account dies at a number the trader
+        /// thought was still safe.
+        /// </summary>
+        public FirmAccountSpec AutoDetect(string accountName, double balance, bool preferIntraday,
+                                          AccountGeneration generation, string platform)
+        {
             string firm = FirmFromAccountName(accountName);
             if (firm.Length == 0 || balance <= 0) return null;
 
@@ -235,6 +251,8 @@ namespace Ballast
 
             if (best == null) return null;
 
+            best = PreferPlatform(firm, best, platform);
+
             // Where the generation was stated, it has already been honoured and
             // there is nothing left to disambiguate.
             if (generation != AccountGeneration.Auto) return best;
@@ -260,6 +278,49 @@ namespace Ballast
         /// Closest size match within a filtered slice of the rule book. Returns
         /// null rather than a distant guess - a 12% window, same as MatchByBalance.
         /// </summary>
+        /// <summary>
+        /// Which trading platform a rule row is written for, or "" when the row
+        /// applies to all of them.
+        ///
+        /// This exists because Apex's intraday EVALUATION threshold behaves
+        /// differently depending on how you connect. Their help centre is
+        /// explicit: on Rithmic and WealthCharts the threshold "stops trailing
+        /// and becomes fixed when it reaches an amount equal to the Target Profit
+        /// balance", while on Tradovate it "trails indefinitely with the peak
+        /// account balance". Same firm, same account size, same evaluation - a
+        /// materially different floor.
+        ///
+        /// No prop-firm comparison site captures this. It only shows up if you
+        /// are writing software that has to produce a number a trader will act
+        /// on, which is the whole argument for keeping this rule book honest.
+        /// </summary>
+        public static string PlatformOfPlan(string plan)
+        {
+            if (string.IsNullOrEmpty(plan)) return "";
+            string p = plan.ToUpperInvariant();
+
+            if (p.IndexOf("TRADOVATE", StringComparison.Ordinal) >= 0) return "TRADOVATE";
+            if (p.IndexOf("RITHMIC", StringComparison.Ordinal) >= 0) return "RITHMIC";
+            if (p.IndexOf("WEALTHCHART", StringComparison.Ordinal) >= 0) return "RITHMIC";
+            return "";
+        }
+
+        /// <summary>
+        /// Normalise whatever NinjaTrader calls a connection into the platform
+        /// names the rule book uses. Returns "" when it is not one we know, which
+        /// means "do not use platform to decide anything".
+        /// </summary>
+        public static string PlatformFromConnection(string connectionName)
+        {
+            if (string.IsNullOrEmpty(connectionName)) return "";
+            string c = connectionName.ToUpperInvariant();
+
+            if (c.IndexOf("TRADOVATE", StringComparison.Ordinal) >= 0) return "TRADOVATE";
+            if (c.IndexOf("RITHMIC", StringComparison.Ordinal) >= 0) return "RITHMIC";
+            if (c.IndexOf("WEALTHCHART", StringComparison.Ordinal) >= 0) return "RITHMIC";
+            return "";
+        }
+
         public static bool IsLegacyPlanName(string plan)
         {
             return !string.IsNullOrEmpty(plan)
@@ -317,6 +378,11 @@ namespace Ballast
         /// </summary>
         public string SanityWarning(string accountName, TrackerConfig c)
         {
+            return SanityWarning(accountName, c, "");
+        }
+
+        public string SanityWarning(string accountName, TrackerConfig c, string platform)
+        {
             if (c == null || string.IsNullOrEmpty(accountName)) return "";
 
             string firm = FirmFromAccountName(accountName);
@@ -324,13 +390,43 @@ namespace Ballast
 
             bool funded = IsFundedAccountName(accountName);
 
-            // 1. An evaluation whose floor has been told to stop trailing.
+            // 1. An evaluation whose floor stops trailing.
+            //
+            // Whether that is right depends on the platform, which is why this
+            // check needs to know. On Apex over Tradovate the threshold never
+            // stops; over Rithmic or WealthCharts it fixes at the target profit
+            // balance. Both are the firm's own published rules, and picking the
+            // wrong one moves the floor by thousands.
             if (!funded && c.LockFloorAt > 0)
             {
-                return "this looks like a " + firm + " evaluation, but its floor is set to stop "
-                     + "trailing at " + Money(c.LockFloorAt) + ". Evaluation thresholds keep "
-                     + "following your peak - set \"stops trailing at\" to 0, or your room is "
-                     + "being overstated.";
+                if (platform == "TRADOVATE")
+                {
+                    return "this is a " + firm + " evaluation on Tradovate, where the threshold "
+                         + "trails the peak indefinitely - but it is set to stop at "
+                         + Money(c.LockFloorAt) + ". Set \"stops trailing at\" to 0, or your room "
+                         + "is being overstated.";
+                }
+
+                // Rithmic, WealthCharts, or unknown: a lock is legitimate, but it
+                // belongs at the target profit balance and nowhere else.
+                if (c.ProfitTarget > 0)
+                {
+                    double expect = c.StartingBalance + c.ProfitTarget;
+                    if (Math.Abs(c.LockFloorAt - expect) > 1)
+                    {
+                        return "the threshold on this evaluation is set to stop at "
+                             + Money(c.LockFloorAt) + ", but it should stop at the target profit "
+                             + "balance - " + Money(c.StartingBalance) + " plus "
+                             + Money(c.ProfitTarget) + " is " + Money(expect) + ".";
+                    }
+                }
+                else if (platform.Length == 0)
+                {
+                    return "this looks like a " + firm + " evaluation with a floor set to stop "
+                         + "trailing at " + Money(c.LockFloorAt) + ", and there is no profit "
+                         + "target recorded to check that against. Pick the account type again so "
+                         + "Ballast can set it, or your room may be overstated.";
+                }
             }
 
             // 2. A drawdown larger than anything the firm publishes at this size.
@@ -359,6 +455,44 @@ namespace Ballast
         {
             double r = Math.Round(n);
             return (r < 0 ? "-$" : "$") + Math.Abs(r).ToString("N0", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Swap a chosen row for the equivalent row written for this platform.
+        /// With no platform known, take whichever equivalent row trails longest.
+        /// </summary>
+        private FirmAccountSpec PreferPlatform(string firm, FirmAccountSpec best, string platform)
+        {
+            if (best == null) return null;
+
+            List<FirmAccountSpec> all = ForFirm(firm);
+            FirmAccountSpec safest = best;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                FirmAccountSpec o = all[i];
+
+                // Same account in every respect except which platform it is for.
+                if (Math.Abs(o.Size - best.Size) > 1) continue;
+                if (Math.Abs(o.Drawdown - best.Drawdown) > 1) continue;
+                if (o.DrawdownType != best.DrawdownType) continue;
+                if (IsFundedPlanName(o.Plan) != IsFundedPlanName(best.Plan)) continue;
+                if (IsLegacyPlanName(o.Plan) != IsLegacyPlanName(best.Plan)) continue;
+
+                string rowPlatform = PlatformOfPlan(o.Plan);
+
+                if (platform.Length > 0 && rowPlatform == platform) return o;
+
+                // No platform to go on: prefer the row that never stops trailing,
+                // and otherwise the one that stops latest.
+                if (platform.Length == 0)
+                {
+                    if (o.LockFloorAt <= 0) safest = o;
+                    else if (safest.LockFloorAt > 0 && o.LockFloorAt > safest.LockFloorAt) safest = o;
+                }
+            }
+
+            return platform.Length > 0 ? best : safest;
         }
 
         public static TrackerConfig ToConfig(FirmAccountSpec s, TrackerConfig keepPersonalFrom)

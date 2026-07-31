@@ -19,30 +19,44 @@
 # Lines starting with # are ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION|8
+VERSION|9
 VERIFIED|2026-07-30
 
 # -- Apex Trader Funding (4.0, effective 1 March 2026) ------------------------
-# EVALUATIONS AND FUNDED (PA) ACCOUNTS DIFFER, AND IT MATTERS.
+# EVALUATIONS AND FUNDED (PA) ACCOUNTS DIFFER, AND SO DO PLATFORMS.
 #
-# Apex's help centre: on a Performance Account the intraday threshold "stops
-# increasing" once it reaches Starting Balance + $100. On evaluations it does
-# NOT work that way - Tradovate evaluations trail "indefinitely with the Peak
-# Balance and do not stop", and Rithmic/WealthCharts evaluations stop at a
-# different, higher level.
+# Apex publishes THREE behaviours for the intraday threshold:
+#   Performance (funded)          - stops once it reaches Starting Balance + $100
+#   Evaluation, Rithmic/WealthCharts - stops at the Target Profit balance
+#   Evaluation, Tradovate         - never stops, trails the peak forever
 #
-# So every EVALUATION row below carries LOCKAT 0, meaning Ballast keeps trailing
-# the floor forever. On a Rithmic eval that understates your cushion slightly.
-# That is the direction to be wrong in: assuming a lock that is not there would
-# tell you that you have thousands more room than you do.
+# All three are below as separate rows. Ballast reads the account's connection
+# to pick the right one; where it cannot tell, it takes the row that keeps
+# trailing, which reports LESS room rather than more. That is the direction to
+# be wrong in - assuming a lock that is not there would tell a trader they have
+# thousands more room than they do.
 #
 # 4.0 accounts only go up to 150K. If you hold a 75K, 250K or 300K it is a
 # LEGACY account - see the legacy section below, whose drawdowns come from Apex's
 # own Legacy Evaluation Rules page.
-Apex Trader Funding|Evaluation (intraday)|25000|1000|INTRADAY|0|1500|Eval threshold keeps trailing the peak - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (intraday)|50000|2000|INTRADAY|0|3000|Eval threshold keeps trailing the peak - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (intraday)|100000|3000|INTRADAY|0|6000|Eval threshold keeps trailing the peak - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (intraday)|150000|4000|INTRADAY|0|9000|Eval threshold keeps trailing the peak - no lock. Verify for your platform.|0
+# Apex intraday EVALUATIONS behave differently depending on the platform, which
+# is Apex's own rule, not a guess. From their help centre:
+#   Rithmic and WealthCharts - "Intraday Threshold stops trailing and becomes
+#     fixed when it reaches an amount equal to the Target Profit balance."
+#     On a 50K with a 3,000 target that is a threshold fixed at 53,000, reached
+#     once the highest balance touches 55,000.
+#   Tradovate - "Intraday Drawdown trails indefinitely with the peak account
+#     balance" and never stops.
+# So LOCKAT below is (size + profit target) on Rithmic/WealthCharts and 0 on
+# Tradovate. NinjaTrader normally reaches Apex over Rithmic.
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|25000|1000|INTRADAY|0|1500|Threshold fixes at the target profit balance.|26500
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|50000|2000|INTRADAY|0|3000|Threshold fixes at the target profit balance.|53000
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|Threshold fixes at the target profit balance.|106000
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|150000|4000|INTRADAY|0|9000|Threshold fixes at the target profit balance.|159000
+Apex Trader Funding|Evaluation intraday (Tradovate)|25000|1000|INTRADAY|0|1500|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|50000|2000|INTRADAY|0|3000|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|100000|3000|INTRADAY|0|6000|Tradovate evals trail forever - no lock.|0
+Apex Trader Funding|Evaluation intraday (Tradovate)|150000|4000|INTRADAY|0|9000|Tradovate evals trail forever - no lock.|0
 Apex Trader Funding|Evaluation (end-of-day)|25000|1000|EOD|0|1500|Eval threshold keeps trailing - no lock. Verify for your platform.|0
 Apex Trader Funding|Evaluation (end-of-day)|50000|2000|EOD|0|3000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
 Apex Trader Funding|Evaluation (end-of-day)|100000|3000|EOD|0|6000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
@@ -68,14 +82,23 @@ Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|9000|Threshold st
 # tell them apart, so auto-match picks the tighter 4.0 figure and says so. If
 # your account is legacy, choose the legacy row here by hand.
 #
-# Legacy evaluations trail without locking, same as 4.0 evaluations.
-Apex Trader Funding|Legacy evaluation|25000|1500|INTRADAY|0|1500|Legacy. Apex cap 4 minis.|0|4
-Apex Trader Funding|Legacy evaluation|50000|2500|INTRADAY|0|3000|Legacy. Apex cap 10 minis.|0|10
-Apex Trader Funding|Legacy evaluation|75000|2750|INTRADAY|0|4250|Legacy. Apex cap 12 minis.|0|12
-Apex Trader Funding|Legacy evaluation|100000|3000|INTRADAY|0|6000|Legacy. Apex cap 14 minis.|0|14
-Apex Trader Funding|Legacy evaluation|150000|5000|INTRADAY|0|9000|Legacy. Apex cap 17 minis.|0|17
-Apex Trader Funding|Legacy evaluation|250000|6500|INTRADAY|0|15000|Legacy. Apex cap 27 minis.|0|27
-Apex Trader Funding|Legacy evaluation|300000|7500|INTRADAY|0|20000|Legacy. Apex cap 35 minis.|0|35
+# Legacy evaluations follow the same platform split as 4.0 evaluations: the
+# threshold fixes at the target profit balance on Rithmic/WealthCharts and
+# trails forever on Tradovate.
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|25000|1500|INTRADAY|0|1500|Legacy. Threshold fixes at the target profit balance. Apex cap 4 minis.|26500|4
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|50000|2500|INTRADAY|0|3000|Legacy. Threshold fixes at the target profit balance. Apex cap 10 minis.|53000|10
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|75000|2750|INTRADAY|0|4250|Legacy. Threshold fixes at the target profit balance. Apex cap 12 minis.|79250|12
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|Legacy. Threshold fixes at the target profit balance. Apex cap 14 minis.|106000|14
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|150000|5000|INTRADAY|0|9000|Legacy. Threshold fixes at the target profit balance. Apex cap 17 minis.|159000|17
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|250000|6500|INTRADAY|0|15000|Legacy. Threshold fixes at the target profit balance. Apex cap 27 minis.|265000|27
+Apex Trader Funding|Legacy evaluation (Rithmic/WealthCharts)|300000|7500|INTRADAY|0|20000|Legacy. Threshold fixes at the target profit balance. Apex cap 35 minis.|320000|35
+Apex Trader Funding|Legacy evaluation (Tradovate)|25000|1500|INTRADAY|0|1500|Legacy. Trails forever on Tradovate. Apex cap 4 minis.|0|4
+Apex Trader Funding|Legacy evaluation (Tradovate)|50000|2500|INTRADAY|0|3000|Legacy. Trails forever on Tradovate. Apex cap 10 minis.|0|10
+Apex Trader Funding|Legacy evaluation (Tradovate)|75000|2750|INTRADAY|0|4250|Legacy. Trails forever on Tradovate. Apex cap 12 minis.|0|12
+Apex Trader Funding|Legacy evaluation (Tradovate)|100000|3000|INTRADAY|0|6000|Legacy. Trails forever on Tradovate. Apex cap 14 minis.|0|14
+Apex Trader Funding|Legacy evaluation (Tradovate)|150000|5000|INTRADAY|0|9000|Legacy. Trails forever on Tradovate. Apex cap 17 minis.|0|17
+Apex Trader Funding|Legacy evaluation (Tradovate)|250000|6500|INTRADAY|0|15000|Legacy. Trails forever on Tradovate. Apex cap 27 minis.|0|27
+Apex Trader Funding|Legacy evaluation (Tradovate)|300000|7500|INTRADAY|0|20000|Legacy. Trails forever on Tradovate. Apex cap 35 minis.|0|35
 Apex Trader Funding|Legacy PA / funded|25000|1500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|25100|4
 Apex Trader Funding|Legacy PA / funded|50000|2500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|50100|10
 Apex Trader Funding|Legacy PA / funded|75000|2750|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|75100|12

@@ -124,17 +124,65 @@ export function evaluateDiscipline(input: DisciplineInput): DisciplineDecision {
  * On intraday-trailing accounts the floor follows the *peak* balance, so a floating
  * winner that round-trips still ratchets the floor up — hence peak, not current.
  */
-export function cushionToFloor(params: {
+export type FloorParams = {
   startingBalance: number;
   trailingDrawdown: number;
   currentBalance: number;
   peakBalance: number;
   drawdownType: "intraday" | "end_of_day";
-}): number {
+  /**
+   * Balance at which the threshold STOPS following you up, after which it is
+   * fixed. 0 means it never stops.
+   *
+   * This was missing entirely, which made every calculation here wrong for any
+   * account whose floor locks — every funded account, and every Apex evaluation
+   * on Rithmic or WealthCharts. It matters more than it sounds: below the lock,
+   * profit buys you no room at all, because the floor climbs with you. Above it,
+   * every dollar is real cushion. Same account, opposite behaviour, and the
+   * crossover is the moment a trader most needs the number to be right.
+   */
+  lockFloorAt?: number;
+};
+
+/** The actual dollar level the account dies at. Mirrors the add-on's engine. */
+export function floorLevel(params: FloorParams): number {
   const { startingBalance, trailingDrawdown, currentBalance, peakBalance, drawdownType } = params;
-  const anchor = drawdownType === "intraday" ? Math.max(peakBalance, currentBalance) : currentBalance;
-  const floor = anchor - trailingDrawdown;
-  // Floor never trails below the starting balance minus the drawdown.
-  const effectiveFloor = Math.max(floor, startingBalance - trailingDrawdown);
-  return currentBalance - effectiveFloor;
+  const lockFloorAt = params.lockFloorAt ?? 0;
+
+  const anchor =
+    drawdownType === "intraday" ? Math.max(peakBalance, currentBalance) : currentBalance;
+
+  const trailed = anchor - trailingDrawdown;
+
+  // Never below where it started.
+  let floor = Math.max(trailed, startingBalance - trailingDrawdown);
+
+  // Once it reaches the lock level it stops trailing for good.
+  if (lockFloorAt > 0 && floor >= lockFloorAt) floor = lockFloorAt;
+
+  return floor;
+}
+
+/** True once the floor has locked and no longer follows the peak. */
+export function floorIsLocked(params: FloorParams): boolean {
+  const lockFloorAt = params.lockFloorAt ?? 0;
+  if (lockFloorAt <= 0) return false;
+
+  const anchor =
+    params.drawdownType === "intraday"
+      ? Math.max(params.peakBalance, params.currentBalance)
+      : params.currentBalance;
+
+  return anchor - params.trailingDrawdown >= lockFloorAt;
+}
+
+/** Peak balance at which the floor will lock. 0 when it never does. */
+export function peakThatLocks(params: FloorParams): number {
+  const lockFloorAt = params.lockFloorAt ?? 0;
+  if (lockFloorAt <= 0) return 0;
+  return lockFloorAt + params.trailingDrawdown;
+}
+
+export function cushionToFloor(params: FloorParams): number {
+  return params.currentBalance - floorLevel(params);
 }
