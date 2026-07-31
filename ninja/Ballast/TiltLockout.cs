@@ -569,6 +569,14 @@ namespace Ballast
             if (i == null || d == null) return outp;
             if (!i.HasValidEquity) return outp;      // no data is not a reason to shout
 
+            // A strategy does not tilt. Every word on that wall is addressed to a
+            // person about to take a trade to get even, and a bot grinding a
+            // play account below its floor is not that - it is just a bot. The
+            // risk figures still apply and still show on the row and the chart;
+            // what is switched off is the argument, because there is nobody there
+            // to have it with.
+            if (i.IsAutomated) return outp;
+
             string name = accountName ?? "";
 
             if (Has(d.Signals, TiltKind.PastFloor))

@@ -77,6 +77,21 @@ namespace Ballast
         private readonly Dictionary<string, BallastTracker> trackers =
             new Dictionary<string, BallastTracker>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Rules for accounts that are NOT currently being watched.
+        ///
+        /// Un-ticking an account used to throw its settings away, and because the
+        /// settings file is written from the watched list, the next save deleted
+        /// them from disk as well. A trader with twenty accounts who ticks one off
+        /// for an afternoon then loses its drawdown, its daily stop and its size
+        /// cap for good - and has no way of knowing that is what un-ticking meant.
+        ///
+        /// Un-ticking now means "stop watching this", never "forget this". The
+        /// only thing that erases an account's rules is the trader changing them.
+        /// </summary>
+        private readonly Dictionary<string, TrackerConfig> remembered =
+            new Dictionary<string, TrackerConfig>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Settings applied to any newly monitored account.</summary>
         public TrackerConfig DefaultConfig = new TrackerConfig();
 
@@ -116,8 +131,17 @@ namespace Ballast
             if (!trackers.TryGetValue(accountName, out t))
             {
                 t = new BallastTracker();
-                t.Config = CloneConfig(DefaultConfig);
+
+                // Its own rules if it has ever had any, the defaults only if it
+                // has genuinely never been set up. Re-ticking an account must
+                // hand back exactly what un-ticking took away.
+                TrackerConfig kept;
+                t.Config = remembered.TryGetValue(accountName, out kept)
+                    ? CloneConfig(kept)
+                    : CloneConfig(DefaultConfig);
+
                 trackers[accountName] = t;
+                remembered.Remove(accountName);
             }
             return t;
         }
@@ -129,9 +153,62 @@ namespace Ballast
             return null;
         }
 
+        /// <summary>Stop watching an account, keeping its rules for when it comes back.</summary>
         public void Remove(string accountName)
         {
-            if (accountName != null) trackers.Remove(accountName);
+            if (string.IsNullOrEmpty(accountName)) return;
+
+            BallastTracker t;
+            if (trackers.TryGetValue(accountName, out t) && t.Config != null)
+                remembered[accountName] = CloneConfig(t.Config);
+
+            trackers.Remove(accountName);
+        }
+
+        /// <summary>Rules held for an account that is not being watched, or null.</summary>
+        public TrackerConfig RememberedConfig(string accountName)
+        {
+            TrackerConfig c;
+            if (accountName != null && remembered.TryGetValue(accountName, out c)) return c;
+            return null;
+        }
+
+        /// <summary>True when this account has rules, whether or not it is being watched.</summary>
+        public bool HasConfig(string accountName)
+        {
+            return IsMonitored(accountName)
+                || (!string.IsNullOrEmpty(accountName) && remembered.ContainsKey(accountName));
+        }
+
+        /// <summary>
+        /// Put rules on record without starting to watch the account. Used when
+        /// loading the settings file, so an account saved while un-ticked comes
+        /// back with everything it had.
+        /// </summary>
+        public void RememberConfig(string accountName, TrackerConfig c)
+        {
+            if (string.IsNullOrEmpty(accountName) || c == null) return;
+            if (trackers.ContainsKey(accountName)) return;
+            remembered[accountName] = CloneConfig(c);
+        }
+
+        /// <summary>Un-watched accounts that still have rules on file, in display order.</summary>
+        public List<string> RememberedNames
+        {
+            get
+            {
+                List<string> names = new List<string>(remembered.Keys);
+                names.Sort(NaturalNameComparer.Instance);
+                return names;
+            }
+        }
+
+        /// <summary>Forget an account's rules outright. Only ever called deliberately.</summary>
+        public void Forget(string accountName)
+        {
+            if (string.IsNullOrEmpty(accountName)) return;
+            trackers.Remove(accountName);
+            remembered.Remove(accountName);
         }
 
         /// <summary>Push the current default settings onto every monitored account.</summary>

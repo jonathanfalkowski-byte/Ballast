@@ -80,6 +80,19 @@ namespace Ballast
         public string Feeling = "";
         public string Note = "";
 
+        /// <summary>
+        /// Whether the stop or the target was moved once the trade was on, and
+        /// which. "" means not answered.
+        ///
+        /// This is the one thing software genuinely cannot see - Ballast watches
+        /// the position, not the working orders - and it is the discipline break
+        /// that costs the most. A stop moved away from price converts a planned
+        /// loss into an unplanned one, and a target pulled in converts a winner
+        /// into a scratch. Asking about it turns the most expensive habit in
+        /// trading into something with a number attached.
+        /// </summary>
+        public string Moved = "";
+
         // ── Photographs of the chart, taken automatically.
         /// <summary>PNG of the chart when this trade was opened. "" if none.</summary>
         public string EntryImage = "";
@@ -210,6 +223,31 @@ namespace Ballast
         public const string Verdict_Chased    = "chased";           // took it to win something back
 
         /// <summary>Short label for a verdict, for buttons and rows.</summary>
+        public const string Moved_Nothing = "held";
+        public const string Moved_Stop    = "moved stop";
+        public const string Moved_Target  = "moved target";
+        public const string Moved_Both    = "moved both";
+
+        public static readonly string[] MovedOptions = new string[]
+        {
+            Moved_Nothing, Moved_Stop, Moved_Target, Moved_Both
+        };
+
+        public static string MovedLabel(string m)
+        {
+            if (m == Moved_Nothing) return "held both";
+            if (m == Moved_Stop)    return "moved my stop";
+            if (m == Moved_Target)  return "moved my target";
+            if (m == Moved_Both)    return "moved both";
+            return "not said";
+        }
+
+        /// <summary>True when the trader moved something after the trade was on.</summary>
+        public static bool DidMove(string m)
+        {
+            return m == Moved_Stop || m == Moved_Target || m == Moved_Both;
+        }
+
         public static string VerdictLabel(string v)
         {
             if (v == Verdict_ByTheBook) return "by the book";
@@ -473,6 +511,34 @@ namespace Ballast
         }
 
         /// <summary>
+        /// Trades where the stop or target was moved once the trade was on,
+        /// against trades that were left alone.
+        ///
+        /// Only trades the trader actually answered the question on are counted.
+        /// A blank means "not said", and rolling unanswered trades into "held"
+        /// would flatter the numbers - which is the one thing a journal must
+        /// never do, because the whole point of it is to be believed.
+        /// </summary>
+        public List<JournalBucket> MovedSplit(List<BallastTrade> source)
+        {
+            source = ManualOnly(source);
+            JournalBucket moved = new JournalBucket(); moved.Label = "Moved the stop or target";
+            JournalBucket held = new JournalBucket(); held.Label = "Left them where they were";
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                string m = source[i].Moved;
+                if (m == null || m.Length == 0) continue;      // not answered
+                if (DidMove(m)) moved.Add(source[i]);
+                else held.Add(source[i]);
+            }
+
+            List<JournalBucket> list = new List<JournalBucket>();
+            list.Add(moved); list.Add(held);
+            return list;
+        }
+
+        /// <summary>
         /// Trades entered within <paramref name="windowMinutes"/> of a losing
         /// trade — the revenge window — against everything else.
         /// </summary>
@@ -653,6 +719,25 @@ namespace Ballast
                 }
             }
 
+            // Moving a stop is the most expensive habit in trading and the only
+            // one Ballast cannot observe for itself, so when the trader has
+            // answered enough times for it to mean something, it competes on
+            // equal terms with everything else.
+            List<JournalBucket> moved = MovedSplit(source);
+            if (moved[0].Count >= 3 && moved[0].Net < 0)
+            {
+                double gap = -moved[0].Net;
+                if (gap > bestGap)
+                {
+                    bestGap = gap;
+                    best = "The " + moved[0].Count + " trades where you moved your stop or target cost you "
+                         + BallastTrade.Money(-moved[0].Net) + ".";
+                    if (moved[1].Count >= 3)
+                        best += " The " + moved[1].Count + " you left alone made "
+                              + BallastTrade.Money(moved[1].Net) + ".";
+                }
+            }
+
             if (best == null)
                 return "Nothing is standing out as a leak yet. Keep tagging - the comparisons get sharper with more trades.";
 
@@ -668,7 +753,7 @@ namespace Ballast
             "Account,Instrument,Direction,Contracts,EntryTime,ExitTime,DurationMin,PnL," +
             "TradeNoToday,DailyPnLBefore,CushionAtEntry,FloorAtEntry,MinSincePrevLoss," +
             "PrevWasLoss,InWindow,AdviceAtEntry,Planned,Feeling,SessionPlan,Note," +
-            "EntryImage,ExitImage,Done,Automated";
+            "EntryImage,ExitImage,Done,Automated,Moved";
 
         private static string Esc(string s)
         {
@@ -715,7 +800,8 @@ namespace Ballast
             sb.Append(Esc(e.EntryImage)).Append(',');
             sb.Append(Esc(e.ExitImage)).Append(',');
             sb.Append(e.Dismissed ? "1" : "0").Append(',');
-            sb.Append(e.Automated ? "1" : "0");
+            sb.Append(e.Automated ? "1" : "0").Append(',');
+            sb.Append(Esc(e.Moved));
             return sb.ToString();
         }
 
@@ -789,6 +875,11 @@ namespace Ballast
             // treat them as cleared so they do not all reappear on upgrade.
             else if (f.Count > 20) e.Dismissed = e.IsTagged;
             if (f.Count > 23) e.Automated = f[23] == "1";
+
+            // Whether the stop or target was moved. Rows written before the
+            // question existed leave it blank, which reads as "not said" rather
+            // than as "held" - a journal must never answer on the trader's behalf.
+            if (f.Count > 24) e.Moved = f[24];
 
             return e;
         }

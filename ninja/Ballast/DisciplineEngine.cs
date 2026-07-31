@@ -79,6 +79,15 @@ namespace Ballast
         public bool HasValidEquity = true;
         public DrawdownType DrawdownType = DrawdownType.Intraday;
 
+        /// <summary>Traded by a strategy rather than by hand.</summary>
+        public bool IsAutomated;
+
+        /// <summary>The firm's target for passing this account. Display only.</summary>
+        public double ProfitTarget;
+
+        /// <summary>What the account started at, so progress toward passing can be shown.</summary>
+        public double StartingBalance;
+
         public bool LastTradeWasLoss;
         public int MinutesSinceLastLoss = -1;   // -1 == no loss yet today
         public int CooldownMinutes = 5;
@@ -235,7 +244,7 @@ namespace Ballast
             if (i.MaxTrades > 0 && i.TradesToday >= i.MaxTrades)
             {
                 signals.Add(new RiskSignal("over_trading", Severity.Medium,
-                    "That's " + i.TradesToday + " trades - at your max of " + i.MaxTrades + "."));
+                    "That's " + i.TradesToday + " trades on this account - its max is " + i.MaxTrades + ". Other accounts have their own count."));
             }
 
             if (i.NowMinuteEt < i.SessionStartMinute || i.NowMinuteEt > i.SessionEndMinute)
@@ -292,12 +301,12 @@ namespace Ballast
             else if (Has(d.Signals, "daily_loss_limit"))
             {
                 action = DisciplineAction.Lockout; urgency = Urgency.Alert;
-                reason = "you've hit your daily loss limit";
+                reason = "this account has hit its daily loss limit";
             }
             else if (Has(d.Signals, "loss_streak"))
             {
                 action = DisciplineAction.StopForDay; urgency = Urgency.Alert;
-                reason = "you've taken your max losses for the day";
+                reason = "this account has taken its max losses for today";
             }
             else if (Has(d.Signals, "give_back"))
             {
@@ -317,7 +326,7 @@ namespace Ballast
             else if (Has(d.Signals, "over_trading"))
             {
                 action = DisciplineAction.StopForDay; urgency = Urgency.Caution;
-                reason = "you're at your max trades for the day";
+                reason = "this account is at its max trades for today";
             }
             else if (Has(d.Signals, "over_size"))
             {

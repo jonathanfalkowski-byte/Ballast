@@ -16,6 +16,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 
 namespace Ballast
 {
@@ -39,6 +41,26 @@ namespace Ballast
         /// </summary>
         public bool Locked;
         public string LockLine = "";
+
+        // ── The running count ────────────────────────────────────────────────
+        //
+        // The chart used to show either a warning or the words "BALLAST OK", and
+        // nothing else. That meant a trader who changed an account's rules saw no
+        // difference on the chart at all, and reasonably concluded the indicator
+        // was not picking the change up. It was; there was simply nothing on the
+        // chart that could ever show it.
+        //
+        // These are the three numbers a trader actually tracks in their head all
+        // session - trades taken, losses in a row, and how much of today's budget
+        // is left - so they are published whether or not anything is wrong.
+        public int TradesToday;
+        public int MaxTrades;
+        public int LossesToday;
+        public int MaxLosses;
+        /// <summary>Dollars left before today's loss limit is hit. 0 when no limit is set.</summary>
+        public double RoomToday;
+        public bool HasDailyLimit;
+        public double DailyPnl;
     }
 
     public static class BallastState
@@ -72,6 +94,75 @@ namespace Ballast
                 s.HasCushion = hasCushion;
                 s.UpdatedAt = now;
             }
+        }
+
+        /// <summary>
+        /// The running count for one account. Published every tick alongside the
+        /// warning, so a chart can show where the trader stands even on a calm
+        /// day - which is most days, and is exactly when the numbers are worth
+        /// glancing at rather than reacting to.
+        /// </summary>
+        public static void PublishCount(string account, int tradesToday, int maxTrades,
+                                        int lossesToday, int maxLosses,
+                                        double roomToday, bool hasDailyLimit,
+                                        double dailyPnl, DateTime now)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+
+            lock (gate)
+            {
+                AccountState s;
+                if (!states.TryGetValue(account, out s)) { s = new AccountState(); states[account] = s; }
+
+                s.TradesToday = tradesToday;
+                s.MaxTrades = maxTrades;
+                s.LossesToday = lossesToday;
+                s.MaxLosses = maxLosses;
+                s.RoomToday = roomToday;
+                s.HasDailyLimit = hasDailyLimit;
+                s.DailyPnl = dailyPnl;
+                if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
+            }
+        }
+
+        /// <summary>
+        /// The quiet one-line status for a calm chart: what you have done today
+        /// and what is left. Short enough to ignore, specific enough to be worth
+        /// a glance, and it changes when the account's rules change - which is
+        /// what makes the indicator visibly alive.
+        /// </summary>
+        public static string ChartCount(AccountState s, string account)
+        {
+            if (s == null) return "";
+
+            StringBuilder sb = new StringBuilder();
+            if (!string.IsNullOrEmpty(account)) sb.Append(account.ToUpperInvariant()).Append("   ");
+
+            // A bare count agrees with itself - "1 TRADE". A ratio does not:
+            // "1/5 TRADE" is wrong, because the noun belongs to the limit, not to
+            // the count. Small thing, but a chart banner that reads as broken
+            // English undermines every number next to it.
+            sb.Append(s.TradesToday);
+            if (s.MaxTrades > 0) sb.Append('/').Append(s.MaxTrades);
+            sb.Append(s.MaxTrades <= 0 && s.TradesToday == 1 ? " TRADE" : " TRADES");
+
+            sb.Append("   ").Append(s.LossesToday);
+            if (s.MaxLosses > 0) sb.Append('/').Append(s.MaxLosses);
+            sb.Append(s.MaxLosses <= 0 && s.LossesToday == 1 ? " LOSS" : " LOSSES");
+
+            if (s.HasDailyLimit)
+                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT TODAY");
+
+            if (s.HasCushion)
+                sb.Append("   ").Append(Money(s.CanLose)).Append(" TO FLOOR");
+
+            return sb.ToString();
+        }
+
+        private static string Money(double v)
+        {
+            double r = Math.Round(v);
+            return (r < 0 ? "-$" : "$") + Math.Abs(r).ToString("N0", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

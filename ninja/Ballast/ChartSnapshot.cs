@@ -702,6 +702,67 @@ namespace Ballast
             catch (Exception ex) { return "Diagnosis failed: " + ex.Message; }
         }
 
+        /// <summary>
+        /// The chart each account's OPEN trade was photographed on.
+        ///
+        /// Which chart to photograph is decided partly by which window is
+        /// active, because that is genuinely the best signal at the moment an
+        /// order goes in - the trader is looking at the chart they just clicked.
+        /// At the EXIT it is the worst possible signal: minutes have passed, the
+        /// trader has been looking at other charts, and the exit was very often
+        /// filled by a bracket while their attention was somewhere else
+        /// entirely. The result was an entry from one chart and an exit from
+        /// another, which is worse than no picture, because the pair reads as a
+        /// record of a trade that never happened.
+        ///
+        /// So the exit follows the entry. Whatever chart was photographed when
+        /// the position opened is the one photographed when it closes, whatever
+        /// happens to be focused at the time.
+        ///
+        /// Weak references: a chart the trader has since closed must not be kept
+        /// alive by Ballast remembering it.
+        /// </summary>
+        private static readonly Dictionary<string, WeakReference> openTradeChart =
+            new Dictionary<string, WeakReference>(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly object chartGate = new object();
+
+        private static void RememberChart(string account, FrameworkElement chart)
+        {
+            if (string.IsNullOrEmpty(account) || chart == null) return;
+            lock (chartGate) { openTradeChart[account] = new WeakReference(chart); }
+        }
+
+        /// <summary>
+        /// Index of this account's remembered chart within the current list, or
+        /// -1 if it was never recorded or has since been closed.
+        /// </summary>
+        private static int RememberedIndex(string account, List<FrameworkElement> visuals)
+        {
+            if (string.IsNullOrEmpty(account) || visuals == null) return -1;
+
+            object target = null;
+            lock (chartGate)
+            {
+                WeakReference wr;
+                if (!openTradeChart.TryGetValue(account, out wr)) return -1;
+                if (wr != null && wr.IsAlive) target = wr.Target;
+            }
+
+            if (target == null) return -1;
+
+            for (int i = 0; i < visuals.Count; i++)
+                if (ReferenceEquals(visuals[i], target)) return i;
+
+            return -1;
+        }
+
+        private static void ForgetChart(string account)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+            lock (chartGate) { openTradeChart.Remove(account); }
+        }
+
         public static string Capture(string root, string account, string instrument,
                                      DateTime when, bool isEntry)
         {
@@ -720,7 +781,13 @@ namespace Ballast
                     return "";
                 }
 
-                int idx = BestChartIndex(names, instrument, active);
+                // On the way out, use the chart the entry was taken from. Only
+                // fall through to the usual search if that chart has since been
+                // closed, or the entry was never photographed.
+                int idx = -1;
+                if (!isEntry) idx = RememberedIndex(account, visuals);
+
+                if (idx < 0) idx = BestChartIndex(names, instrument, active);
 
                 // Nothing matched by instrument, but exactly one chart is active -
                 // that is the one being traded on.
@@ -750,6 +817,12 @@ namespace Ballast
                 SnapshotResult r = RenderToPng(visuals[idx], path);
 
                 if (!r.Ok) { LastProblem = r.Problem; return ""; }
+
+                // Opening a position pins the chart for this account; closing it
+                // releases it, so the next trade starts the choice again rather
+                // than inheriting a chart from an hour ago.
+                if (isEntry) RememberChart(account, visuals[idx]);
+                else ForgetChart(account);
 
                 LastProblem = "";
                 return r.Path;

@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -89,8 +90,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, string> accountLabels = new Dictionary<string, string>();
 
         private readonly Dictionary<string, CheckBox> accountBoxes = new Dictionary<string, CheckBox>();
+        /// <summary>The line under each account's tick box, so one row can be
+        /// updated without rebuilding the list the trader is clicking on.</summary>
+        private readonly Dictionary<string, TextBlock> accountSubs =
+            new Dictionary<string, TextBlock>(StringComparer.OrdinalIgnoreCase);
         private DateTime lastAccountRefresh = DateTime.MinValue;
         private bool suppressEditTargetReload;
+        /// <summary>Set while the account-type list is being rebuilt, so repopulating it does not count as a choice.</summary>
+        private bool suppressTypeApply;
 
         // Journal
         private Border journalStripBorder;
@@ -141,6 +148,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private bool tiltOnGiveBack;
         private TextBlock tiltJournalLine;
         private StackPanel tiltZoomHost;
+        private Border imageOverlay;
+        private Image imageBig;
+        private TextBlock imageCaption;
+        private ScrollViewer imageScroll;
+        private Button imageZoomBtn;
+        private string imagePath = "";
+        private bool imageActualSize;
+
         private bool tiltDirty;
         private DateTime lastTiltSave = DateTime.MinValue;
         private string lastTiltRecord = "\u0000";
@@ -150,22 +165,57 @@ namespace NinjaTrader.NinjaScript.AddOns
         private int activeTab;
         private TextBlock planReminder, emptyNote;
 
+        private TextBlock firmSummary;
+        private Button firmToggle;
+        private StackPanel firmFields;
+
         private ComboBox profileBox;
         private TextBlock profileDetail;
         private TextBox tbRiskPerTrade;
 
-        private static readonly Brush ColBg    = new SolidColorBrush(Color.FromRgb(0x0e, 0x11, 0x16));
-        private static readonly Brush ColPanel = new SolidColorBrush(Color.FromRgb(0x16, 0x1b, 0x22));
-        private static readonly Brush ColCard  = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1c));
-        private static readonly Brush ColInk   = new SolidColorBrush(Color.FromRgb(0xe8, 0xed, 0xf3));
-        private static readonly Brush ColMuted = new SolidColorBrush(Color.FromRgb(0xb4, 0xc0, 0xcd));
-        private static readonly Brush ColGreen = new SolidColorBrush(Color.FromRgb(0x3f, 0xb9, 0x50));
-        private static readonly Brush ColAmber = new SolidColorBrush(Color.FromRgb(0xe3, 0xb3, 0x41));
-        private static readonly Brush ColRed   = new SolidColorBrush(Color.FromRgb(0xf4, 0x52, 0x3b));
-        private static readonly Brush ColLine   = new SolidColorBrush(Color.FromRgb(0x25, 0x2c, 0x36));
-        private static readonly Brush ColHeader = new SolidColorBrush(Color.FromRgb(0x11, 0x15, 0x1b));
-        private static readonly Brush ColAccent = new SolidColorBrush(Color.FromRgb(0x4d, 0xa3, 0xff));
-        private static readonly Brush ColFaint  = new SolidColorBrush(Color.FromRgb(0x8b, 0x97, 0xa5));
+        /// <summary>
+        /// FROZEN, every one of them, and the window will not reopen without it.
+        ///
+        /// NinjaTrader builds an AddOn window on a UI thread of its choosing, and
+        /// closing and reopening Ballast can land it on a different one. A WPF
+        /// brush belongs to the thread that made it, so a static brush created
+        /// the first time the window opened cannot be attached to a control
+        /// created the second time - it throws "cannot use a DependencyObject
+        /// that belongs to a different thread than its parent Freezable" during
+        /// construction, and the window then refuses to open at all until
+        /// NinjaTrader restarts.
+        ///
+        /// Freezing makes a Freezable immutable and therefore thread-safe to
+        /// share. Exactly the same trap as the chart indicator's brushes; fixed
+        /// there first, which is how this one got found.
+        /// </summary>
+        private static Brush Frozen(byte r, byte g, byte b)
+        {
+            SolidColorBrush brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
+        /// <summary>Same, for the semi-transparent overlay backdrops.</summary>
+        private static Brush FrozenA(byte a, byte r, byte g, byte b)
+        {
+            SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
+        private static readonly Brush ColBg    = Frozen(0x0e, 0x11, 0x16);
+        private static readonly Brush ColPanel = Frozen(0x16, 0x1b, 0x22);
+        private static readonly Brush ColCard  = Frozen(0x12, 0x16, 0x1c);
+        private static readonly Brush ColInk   = Frozen(0xe8, 0xed, 0xf3);
+        private static readonly Brush ColMuted = Frozen(0xb4, 0xc0, 0xcd);
+        private static readonly Brush ColGreen = Frozen(0x3f, 0xb9, 0x50);
+        private static readonly Brush ColAmber = Frozen(0xe3, 0xb3, 0x41);
+        private static readonly Brush ColRed   = Frozen(0xf4, 0x52, 0x3b);
+        private static readonly Brush ColLine   = Frozen(0x25, 0x2c, 0x36);
+        private static readonly Brush ColHeader = Frozen(0x11, 0x15, 0x1b);
+        private static readonly Brush ColAccent = Frozen(0x4d, 0xa3, 0xff);
+        private static readonly Brush ColFaint  = Frozen(0x8b, 0x97, 0xa5);
         private static readonly Brush ColTransparent = Brushes.Transparent;
 
         public BallastWindow()
@@ -261,6 +311,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Sits on top of everything, including the tab bar, so there is no
             // clicking around it. It is the last child and has the highest
             // Z-index for the same reason.
+            // The picture viewer sits above the pages and below the tilt wall.
+            // If an account is dying, that outranks looking at a screenshot.
+            imageOverlay = BuildImageOverlay();
+            Grid.SetRow(imageOverlay, 0);
+            Grid.SetRowSpan(imageOverlay, 2);
+            Panel.SetZIndex(imageOverlay, 900);
+            shell.Children.Add(imageOverlay);
+
             tiltOverlay = BuildTiltOverlay();
             Grid.SetRow(tiltOverlay, 0);
             Grid.SetRowSpan(tiltOverlay, 2);
@@ -294,6 +352,151 @@ namespace NinjaTrader.NinjaScript.AddOns
         // in a month this stops being an opinion about his trading and becomes
         // his own record of it.
 
+        /// <summary>
+        /// Full-window picture viewer.
+        ///
+        /// The journal photographs the chart at entry and exit, which is the one
+        /// field hindsight cannot rewrite - and then showed it at 260 pixels
+        /// wide, where it proves a trade happened but nobody can read a single
+        /// price on it. Clicking a thumbnail opens it here, as large as the
+        /// window allows, with a switch to full resolution for the moments where
+        /// the detail is the point.
+        /// </summary>
+        private Border BuildImageOverlay()
+        {
+            Border o = new Border();
+            o.Visibility = Visibility.Collapsed;
+            o.Background = FrozenA(0xF9, 0x07, 0x09, 0x0d);
+
+            Grid g = new Grid();
+            g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
+            g.RowDefinitions.Add(new RowDefinition());
+
+            // Bar
+            Border bar = new Border();
+            bar.Background = ColHeader;
+            bar.BorderBrush = ColLine;
+            bar.BorderThickness = new Thickness(0, 0, 0, 1);
+            bar.Padding = new Thickness(14, 8, 14, 8);
+
+            Grid barGrid = new Grid();
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+            imageCaption = new TextBlock();
+            imageCaption.Foreground = ColInk;
+            imageCaption.FontSize = 13;
+            imageCaption.FontWeight = FontWeights.Bold;
+            imageCaption.VerticalAlignment = VerticalAlignment.Center;
+            imageCaption.TextTrimming = TextTrimming.CharacterEllipsis;
+            imageCaption.Margin = new Thickness(0, 0, 16, 0);
+            barGrid.Children.Add(imageCaption);
+
+            StackPanel btns = new StackPanel();
+            btns.Orientation = Orientation.Horizontal;
+            Grid.SetColumn(btns, 1);
+
+            imageZoomBtn = QuietButton("Actual size", delegate { ToggleImageZoom(); });
+            btns.Children.Add(imageZoomBtn);
+
+            btns.Children.Add(QuietButton("Open in Windows", delegate
+            {
+                try { if (imagePath.Length > 0) System.Diagnostics.Process.Start(imagePath); }
+                catch { }
+            }));
+
+            btns.Children.Add(PrimaryButton("Close", delegate { HideImage(); }));
+            barGrid.Children.Add(btns);
+
+            bar.Child = barGrid;
+            g.Children.Add(bar);
+
+            imageScroll = new ScrollViewer();
+            imageScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            imageScroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+            imageScroll.Margin = new Thickness(10);
+            Grid.SetRow(imageScroll, 1);
+
+            imageBig = new Image();
+            imageBig.Stretch = Stretch.Uniform;
+            imageBig.HorizontalAlignment = HorizontalAlignment.Center;
+            imageBig.VerticalAlignment = VerticalAlignment.Center;
+            imageScroll.Content = imageBig;
+            g.Children.Add(imageScroll);
+
+            o.Child = g;
+            return o;
+        }
+
+        private void ShowImage(string path, string which, BallastTrade trade)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+
+                imagePath = path;
+                imageActualSize = false;
+
+                // Decoded at full resolution here, unlike the thumbnail - the
+                // whole point is to be able to read it. One at a time, and
+                // released when the viewer closes.
+                BitmapImage bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.UriSource = new Uri(path, UriKind.Absolute);
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.EndInit();
+                bmp.Freeze();
+
+                imageBig.Source = bmp;
+                ApplyImageZoom();
+
+                string label = which;
+                if (trade != null)
+                    label = which + "  -  " + trade.AccountName + "   " + trade.ShortLabel;
+                imageCaption.Text = label;
+
+                imageOverlay.Visibility = Visibility.Visible;
+            }
+            catch { }
+        }
+
+        private void ToggleImageZoom()
+        {
+            imageActualSize = !imageActualSize;
+            ApplyImageZoom();
+        }
+
+        private void ApplyImageZoom()
+        {
+            if (imageBig == null) return;
+
+            if (imageActualSize)
+            {
+                // Native pixels, scrollable. For reading the price ladder.
+                imageBig.Stretch = Stretch.None;
+                imageBig.HorizontalAlignment = HorizontalAlignment.Left;
+                imageBig.VerticalAlignment = VerticalAlignment.Top;
+                if (imageZoomBtn != null) imageZoomBtn.Content = "Fit to window";
+            }
+            else
+            {
+                imageBig.Stretch = Stretch.Uniform;
+                imageBig.HorizontalAlignment = HorizontalAlignment.Center;
+                imageBig.VerticalAlignment = VerticalAlignment.Center;
+                if (imageZoomBtn != null) imageZoomBtn.Content = "Actual size";
+            }
+        }
+
+        private void HideImage()
+        {
+            if (imageOverlay != null) imageOverlay.Visibility = Visibility.Collapsed;
+
+            // Let the full-resolution bitmap go. A day of trades is a lot of
+            // screenshots to keep decoded in memory for no reason.
+            if (imageBig != null) imageBig.Source = null;
+            imagePath = "";
+        }
+
         private Border BuildTiltOverlay()
         {
             Border o = new Border();
@@ -301,7 +504,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Near-solid rather than solid: the numbers behind stay faintly
             // visible, so it reads as Ballast getting in the way rather than as
             // the platform having crashed.
-            o.Background = new SolidColorBrush(Color.FromArgb(0xF7, 0x1a, 0x06, 0x06));
+            o.Background = FrozenA(0xF7, 0x1a, 0x06, 0x06);
 
             ScrollViewer sv = new ScrollViewer();
             sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
@@ -317,7 +520,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TextBlock kicker = new TextBlock();
             kicker.Text = "BALLAST";
-            kicker.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xb4, 0xb4));
+            kicker.Foreground = Frozen(0xff, 0xb4, 0xb4);
             kicker.FontSize = 11;
             kicker.FontWeight = FontWeights.Bold;
             p.Children.Add(kicker);
@@ -331,14 +534,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             p.Children.Add(tiltTitle);
 
             tiltLine = new TextBlock();
-            tiltLine.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xdc, 0xdc));
+            tiltLine.Foreground = Frozen(0xff, 0xdc, 0xdc);
             tiltLine.FontSize = 16;
             tiltLine.TextWrapping = TextWrapping.Wrap;
             tiltLine.Margin = new Thickness(0, 14, 0, 0);
             p.Children.Add(tiltLine);
 
             tiltAsk = new TextBlock();
-            tiltAsk.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xdc, 0xdc));
+            tiltAsk.Foreground = Frozen(0xff, 0xdc, 0xdc);
             tiltAsk.FontSize = 14;
             tiltAsk.TextWrapping = TextWrapping.Wrap;
             tiltAsk.Margin = new Thickness(0, 10, 0, 0);
@@ -356,14 +559,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             // because nothing Ballast invents is as convincing as what he has
             // already done.
             tiltHistory = new TextBlock();
-            tiltHistory.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            tiltHistory.Foreground = Frozen(0xff, 0xc9, 0xc9);
             tiltHistory.FontSize = 13;
             tiltHistory.TextWrapping = TextWrapping.Wrap;
             tiltHistory.Margin = new Thickness(0, 12, 0, 0);
             p.Children.Add(tiltHistory);
 
             tiltStood = new TextBlock();
-            tiltStood.Foreground = new SolidColorBrush(Color.FromRgb(0xb8, 0xf0, 0xc0));
+            tiltStood.Foreground = Frozen(0xb8, 0xf0, 0xc0);
             tiltStood.FontSize = 13;
             tiltStood.TextWrapping = TextWrapping.Wrap;
             tiltStood.Margin = new Thickness(0, 4, 0, 0);
@@ -378,7 +581,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             stand.Margin = new Thickness(0, 24, 0, 0);
             stand.HorizontalAlignment = HorizontalAlignment.Left;
             stand.Background = Brushes.White;
-            stand.Foreground = new SolidColorBrush(Color.FromRgb(0x1a, 0x06, 0x06));
+            stand.Foreground = Frozen(0x1a, 0x06, 0x06);
             stand.BorderBrush = Brushes.White;
             stand.Click += delegate { OnTiltStandDown(); };
             p.Children.Add(stand);
@@ -386,7 +589,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             TextBlock standNote = new TextBlock();
             standNote.Text = "Closes this and leaves the account alone until tomorrow. "
                            + "Ballast keeps watching; it just stops arguing with you.";
-            standNote.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            standNote.Foreground = Frozen(0xff, 0xc9, 0xc9);
             standNote.FontSize = 11;
             standNote.TextWrapping = TextWrapping.Wrap;
             standNote.Margin = new Thickness(0, 8, 0, 0);
@@ -407,13 +610,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltFixConfig.HorizontalAlignment = HorizontalAlignment.Left;
             tiltFixConfig.Background = ColTransparent;
             tiltFixConfig.Foreground = Brushes.White;
-            tiltFixConfig.BorderBrush = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
+            tiltFixConfig.BorderBrush = Frozen(0xff, 0x9a, 0x9a);
             tiltFixConfig.Click += delegate { OnTiltFixConfig(); };
             tiltConfigRow.Children.Add(tiltFixConfig);
 
             TextBlock cfgNote = new TextBlock();
             cfgNote.Text = "Nothing is recorded against you for this one.";
-            cfgNote.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            cfgNote.Foreground = Frozen(0xff, 0xc9, 0xc9);
             cfgNote.FontSize = 11;
             cfgNote.Margin = new Thickness(0, 6, 0, 0);
             tiltConfigRow.Children.Add(cfgNote);
@@ -423,13 +626,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             // ── the override ──
             Border rule = new Border();
             rule.Height = 1;
-            rule.Background = new SolidColorBrush(Color.FromArgb(0x55, 0xff, 0xff, 0xff));
+            rule.Background = FrozenA(0x55, 0xff, 0xff, 0xff);
             rule.Margin = new Thickness(0, 26, 0, 20);
             p.Children.Add(rule);
 
             TextBlock orLabel = new TextBlock();
             orLabel.Text = "Or carry on trading. Type this out first:";
-            orLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
+            orLabel.Foreground = Frozen(0xff, 0xc9, 0xc9);
             orLabel.FontSize = 12;
             orLabel.TextWrapping = TextWrapping.Wrap;
             p.Children.Add(orLabel);
@@ -449,9 +652,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltTypeBox.AcceptsReturn = false;
             tiltTypeBox.TextWrapping = TextWrapping.Wrap;
             tiltTypeBox.Padding = new Thickness(8, 6, 8, 6);
-            tiltTypeBox.Background = new SolidColorBrush(Color.FromRgb(0x2a, 0x10, 0x10));
+            tiltTypeBox.Background = Frozen(0x2a, 0x10, 0x10);
             tiltTypeBox.Foreground = Brushes.White;
-            tiltTypeBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
+            tiltTypeBox.BorderBrush = Frozen(0xff, 0x9a, 0x9a);
             tiltTypeBox.TextChanged += OnTiltTyped;
 
             // Pasting it defeats the entire mechanism, so pasting is refused.
@@ -471,8 +674,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltProgress.Value = 0;
             tiltProgress.Height = 4;
             tiltProgress.Margin = new Thickness(0, 6, 0, 0);
-            tiltProgress.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a));
-            tiltProgress.Background = new SolidColorBrush(Color.FromArgb(0x44, 0xff, 0xff, 0xff));
+            tiltProgress.Foreground = Frozen(0xff, 0x9a, 0x9a);
+            tiltProgress.Background = FrozenA(0x44, 0xff, 0xff, 0xff);
             tiltProgress.BorderBrush = ColTransparent;
             p.Children.Add(tiltProgress);
 
@@ -484,8 +687,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltGoOn.HorizontalAlignment = HorizontalAlignment.Left;
             tiltGoOn.IsEnabled = false;
             tiltGoOn.Background = ColTransparent;
-            tiltGoOn.Foreground = new SolidColorBrush(Color.FromRgb(0xff, 0xc9, 0xc9));
-            tiltGoOn.BorderBrush = new SolidColorBrush(Color.FromRgb(0x99, 0x55, 0x55));
+            tiltGoOn.Foreground = Frozen(0xff, 0xc9, 0xc9);
+            tiltGoOn.BorderBrush = Frozen(0x99, 0x55, 0x55);
             tiltGoOn.Click += delegate { OnTiltOverride(); };
             p.Children.Add(tiltGoOn);
 
@@ -493,7 +696,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             small.Text = "Buys you " + TiltLockout.DefaultReleaseMinutes
                        + " minutes. If it is still true after that, this comes back. "
                        + "Either way it goes in your journal with what the rest of the day did.";
-            small.Foreground = new SolidColorBrush(Color.FromRgb(0xd8, 0x9a, 0x9a));
+            small.Foreground = Frozen(0xd8, 0x9a, 0x9a);
             small.FontSize = 11;
             small.TextWrapping = TextWrapping.Wrap;
             small.Margin = new Thickness(0, 8, 0, 0);
@@ -501,7 +704,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TextBlock foot = new TextBlock();
             foot.Text = "Ballast has not touched your orders and cannot. Your platform is still there.";
-            foot.Foreground = new SolidColorBrush(Color.FromRgb(0xc0, 0x88, 0x88));
+            foot.Foreground = Frozen(0xc0, 0x88, 0x88);
             foot.FontSize = 10;
             foot.TextWrapping = TextWrapping.Wrap;
             foot.Margin = new Thickness(0, 18, 0, 0);
@@ -530,10 +733,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Off-track typing turns the box red rather than throwing an error.
             // Being told off by a text box while already angry helps nobody.
             tiltTypeBox.BorderBrush = ok
-                ? new SolidColorBrush(Color.FromRgb(0xb8, 0xf0, 0xc0))
+                ? Frozen(0xb8, 0xf0, 0xc0)
                 : TiltLockout.OnTrack(typed)
-                    ? new SolidColorBrush(Color.FromRgb(0xff, 0x9a, 0x9a))
-                    : new SolidColorBrush(Color.FromRgb(0xff, 0x50, 0x50));
+                    ? Frozen(0xff, 0x9a, 0x9a)
+                    : Frozen(0xff, 0x50, 0x50);
         }
 
         private void ShowTilt(TiltTrigger t, DateTime now)
@@ -870,8 +1073,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void ApplyZoom()
         {
             double z = ZoomSteps[zoomIndex];
-            if (zoomHost != null) zoomHost.LayoutTransform = new ScaleTransform(z, z);
-            if (tiltZoomHost != null) tiltZoomHost.LayoutTransform = new ScaleTransform(z, z);
+            // Frozen for the same reason the brushes are - a Transform is a
+            // Freezable too, and these outlive the call that created them.
+            ScaleTransform scale = new ScaleTransform(z, z);
+            scale.Freeze();
+
+            if (zoomHost != null) zoomHost.LayoutTransform = scale;
+            if (tiltZoomHost != null) tiltZoomHost.LayoutTransform = scale;
             if (zoomLabel != null) zoomLabel.Text = (z * 100).ToString("0") + "%";
         }
 
@@ -1006,16 +1214,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             p.Children.Add(SectionHeader("ACCOUNTS"));
 
-            Grid hdr = new Grid();
+            // Six columns, and every heading is a phrase rather than a label.
+            // "DO" was a column heading nobody could read - it meant "what to do
+            // now", which is the single most important thing on the row and was
+            // being announced in two letters.
+            Grid hdr = AccountsGrid();
             hdr.Margin = new Thickness(12, 0, 12, 6);
-            hdr.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
-            hdr.ColumnDefinitions.Add(new ColumnDefinition());
-            hdr.ColumnDefinitions.Add(new ColumnDefinition());
-            hdr.ColumnDefinitions.Add(new ColumnDefinition());
             hdr.Children.Add(MicroCell("ACCOUNT", 0));
-            hdr.Children.Add(MicroCell("CAN LOSE", 1));
-            hdr.Children.Add(MicroCell("DAY P&L", 2));
-            hdr.Children.Add(MicroCell("DO", 3));
+            hdr.Children.Add(MicroCell("TRADES", 1));
+            hdr.Children.Add(MicroCell("LOSSES IN A ROW", 2));
+            hdr.Children.Add(MicroCell("LEFT TODAY", 3));
+            hdr.Children.Add(MicroCell("TO THE FLOOR", 4));
+            hdr.Children.Add(MicroCell("WHAT TO DO", 5));
             p.Children.Add(hdr);
 
             rowsPanel = new StackPanel();
@@ -1296,16 +1506,34 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "account gets the right figure instead. Sizes that only exist in one generation "
               + "(75K, 250K, 300K are legacy-only) are never ambiguous."));
 
+            // Picking a type IS the instruction. There is nothing a trader could
+            // mean by choosing "Evaluation (intraday) - 250K" other than "this
+            // account is that", so making them then hunt for a button called
+            // "Apply to selected" - one of four buttons on the page with a
+            // similar name - was ceremony rather than safety. It applies on
+            // selection, and the sentence lower down confirms what it did.
             p.Children.Add(Label("Account type"));
             accountTypeBox = new ComboBox();
-            accountTypeBox.Margin = new Thickness(0, 0, 0, 10);
+            accountTypeBox.Margin = new Thickness(0, 0, 0, 6);
+            accountTypeBox.SelectionChanged += delegate
+            {
+                if (suppressTypeApply) return;
+                ApplyChosenType(false);
+            };
             p.Children.Add(accountTypeBox);
+
+            TextBlock typeNote = new TextBlock();
+            typeNote.Text = "Choosing one fills in that account's size, drawdown and floor straight away.";
+            typeNote.Foreground = ColFaint;
+            typeNote.FontSize = 11;
+            typeNote.TextWrapping = TextWrapping.Wrap;
+            typeNote.Margin = new Thickness(0, 0, 0, 8);
+            p.Children.Add(typeNote);
 
             StackPanel firmBtns = new StackPanel();
             firmBtns.Orientation = Orientation.Horizontal;
             firmBtns.Margin = new Thickness(0, 0, 0, 8);
-            firmBtns.Children.Add(PrimaryButton("Apply to selected", delegate { ApplyChosenType(false); }));
-            firmBtns.Children.Add(QuietButton("Match all by balance", delegate { AutoConfigure(); }));
+            firmBtns.Children.Add(QuietButton("Match all my accounts by balance", delegate { AutoConfigure(); }));
             firmBtns.Children.Add(QuietButton("Check for updates", delegate { CheckForRuleUpdates(true); }));
             p.Children.Add(firmBtns);
 
@@ -1350,8 +1578,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             StackPanel profBtns = new StackPanel();
             profBtns.Orientation = Orientation.Horizontal;
             profBtns.Margin = new Thickness(0, 4, 0, 8);
-            profBtns.Children.Add(PrimaryButton("Apply to selected", delegate { ApplyProfile(false); }));
-            profBtns.Children.Add(QuietButton("Apply to all", delegate { ApplyProfile(true); }));
+            profBtns.Children.Add(PrimaryButton("Use this starting point", delegate { ApplyProfile(false); }));
+            profBtns.Children.Add(QuietButton("Use it on every account", delegate { ApplyProfile(true); }));
             p.Children.Add(profBtns);
 
             p.Children.Add(Why("Why percentages of the drawdown, not the account?",
@@ -1374,54 +1602,137 @@ namespace NinjaTrader.NinjaScript.AddOns
             editTargetBox.SelectionChanged += delegate { OnEditTargetChanged(); };
             p.Children.Add(editTargetBox);
 
+            // ── The two that are actually yours ──────────────────────────────
+            //
+            // An evaluation or funded account arrives with its size, its
+            // drawdown, its drawdown type and its floor-lock level already
+            // decided by the firm. Presenting those as questions, in the same
+            // type and the same box as the two real decisions, made a page of
+            // eleven fields out of what is genuinely a page of two.
+            //
+            // These two are the ones a trader chooses fresh each day, so they go
+            // first, they are larger, and nothing shares the row with them.
+            Border decisions = new Border();
+            decisions.CornerRadius = new CornerRadius(8);
+            decisions.Background = ColCard;
+            decisions.BorderBrush = ColAccent;
+            decisions.BorderThickness = new Thickness(1);
+            decisions.Padding = new Thickness(14, 12, 14, 12);
+            decisions.Margin = new Thickness(0, 0, 0, 14);
+
+            StackPanel dInner = new StackPanel();
+
+            TextBlock dHead = new TextBlock();
+            dHead.Text = "The only two you have to decide";
+            dHead.Foreground = ColInk;
+            dHead.FontSize = 14;
+            dHead.FontWeight = FontWeights.Bold;
+            dHead.Margin = new Thickness(0, 0, 0, 2);
+            dInner.Children.Add(dHead);
+
+            TextBlock dSub = new TextBlock();
+            dSub.Text = "Everything else about a prop account is set by the firm, and Ballast fills "
+                      + "it in from the account type below.";
+            dSub.Foreground = ColMuted;
+            dSub.FontSize = 11;
+            dSub.TextWrapping = TextWrapping.Wrap;
+            dSub.Margin = new Thickness(0, 0, 0, 10);
+            dInner.Children.Add(dSub);
+
+            Grid gD = TwoCol();
+            tbDailyLoss = FieldIn(gD, 0, 0, "How much am I willing to lose today ($)", "500");
+            tbMaxTrades = FieldIn(gD, 0, 1, "How many trades", "4");
+            dInner.Children.Add(gD);
+
+            decisions.Child = dInner;
+            p.Children.Add(decisions);
+
+            // ── The rest of the trader's own limits ──────────────────────────
+            p.Children.Add(Label("Your other limits"));
+
+            Grid g2 = TwoCol();
+            tbMaxLosses = FieldIn(g2, 0, 0, "Stop after N losses", "2");
+            tbTarget = FieldIn(g2, 0, 1, "Daily target ($) - one good day", "500");
+            p.Children.Add(g2);
+
+            Grid g4 = TwoCol();
+            tbMaxContracts = FieldIn(g4, 0, 0, "Max contracts", "1");
+            p.Children.Add(g4);
+
+            p.Children.Add(Why("Is the daily target my evaluation target?",
+                "No - and if it currently reads $15,000 or similar, that was Ballast's fault. Until "
+              + "this build the rule book wrote your firm's PASS target into this box, which broke "
+              + "two things quietly: an account could never be told to bank a good day, and the "
+              + "\"you were up and have handed it back\" warning could never fire either, because "
+              + "both of those trigger off this number.\n\n"
+              + "This is one good day. The number that would make you happy to stop. Your firm's "
+              + "pass target is tracked separately and shown on the Now tab as progress."));
+
+            p.Children.Add(Spacer(14));
+
+            // ── What the firm decided ────────────────────────────────────────
+            //
+            // Folded away, because on a prop account these are facts to check
+            // once rather than settings to maintain. The summary line above the
+            // fold is what a trader actually wants: confirmation that Ballast has
+            // the right numbers, in one sentence, without a form.
+            firmSummary = new TextBlock();
+            firmSummary.Foreground = ColMuted;
+            firmSummary.FontSize = 12;
+            firmSummary.TextWrapping = TextWrapping.Wrap;
+            firmSummary.Margin = new Thickness(0, 0, 0, 6);
+            p.Children.Add(firmSummary);
+
+            firmToggle = QuietButton("Show the firm's figures", delegate { ToggleFirmFields(); });
+            firmToggle.Margin = new Thickness(0, 0, 0, 10);
+            p.Children.Add(firmToggle);
+
+            firmFields = new StackPanel();
+            firmFields.Visibility = Visibility.Collapsed;
+
+            TextBlock firmNote = new TextBlock();
+            firmNote.Text = "Only change these if Ballast has the account wrong. Picking the account "
+                          + "type above fills them in from your firm's published rules.";
+            firmNote.Foreground = ColFaint;
+            firmNote.FontSize = 11;
+            firmNote.TextWrapping = TextWrapping.Wrap;
+            firmNote.Margin = new Thickness(0, 0, 0, 8);
+            firmFields.Children.Add(firmNote);
+
             Grid g = TwoCol();
             tbBalance = FieldIn(g, 0, 0, "Account size ($)", "50000");
             tbDrawdown = FieldIn(g, 0, 1, "Max loss / drawdown ($)", "2500");
-            p.Children.Add(g);
+            firmFields.Children.Add(g);
 
-            p.Children.Add(Label("Drawdown type"));
+            firmFields.Children.Add(Label("Drawdown type"));
             ddTypeBox = new ComboBox();
             ddTypeBox.Items.Add("Intraday trailing");
             ddTypeBox.Items.Add("End-of-day trailing");
             ddTypeBox.SelectedIndex = 0;
             ddTypeBox.Margin = new Thickness(0, 0, 0, 12);
-            p.Children.Add(ddTypeBox);
+            firmFields.Children.Add(ddTypeBox);
 
-            p.Children.Add(Label("Stops trailing at ($, 0 = never)"));
+            firmFields.Children.Add(Label("Stops trailing at ($, 0 = never)"));
             tbLockAt = Field("0");
-            p.Children.Add(tbLockAt);
+            firmFields.Children.Add(tbLockAt);
 
-            p.Children.Add(Why("What is this?",
+            firmFields.Children.Add(Why("What is this?",
                 "Most firms freeze the floor once your balance passes a set level - Apex at your "
               + "starting size + $100, Topstep at your starting size. Past that point the drawdown no "
               + "longer follows you up. Leave 0 if you are unsure: Ballast will keep trailing, which "
               + "understates your cushion rather than overstating it. For your own (non-prop) account, "
               + "set this to your starting balance minus your max loss and the floor becomes fixed."));
 
-            p.Children.Add(Spacer(12));
-
-            Grid g2 = TwoCol();
-            tbMaxLosses = FieldIn(g2, 0, 0, "Stop after N losses", "2");
-            tbDailyLoss = FieldIn(g2, 0, 1, "Daily loss limit ($)", "500");
-            p.Children.Add(g2);
-
-            Grid g3 = TwoCol();
-            tbTarget = FieldIn(g3, 0, 0, "Daily target ($)", "500");
-            tbMaxTrades = FieldIn(g3, 0, 1, "Max trades", "4");
-            p.Children.Add(g3);
-
-            Grid g4 = TwoCol();
-            tbMaxContracts = FieldIn(g4, 0, 0, "Max contracts", "1");
-            p.Children.Add(g4);
-
-            p.Children.Add(Label("Account generation (this account)"));
+            firmFields.Children.Add(Label("Account generation (this account)"));
             acctGenBox = new ComboBox();
             acctGenBox.Margin = new Thickness(0, 0, 0, 12);
             acctGenBox.Items.Add("Use the setting above");
             acctGenBox.Items.Add("Legacy");
             acctGenBox.Items.Add("Current (4.0)");
             acctGenBox.SelectedIndex = 0;
-            p.Children.Add(acctGenBox);
+            firmFields.Children.Add(acctGenBox);
+
+            p.Children.Add(firmFields);
 
             automatedBox = new CheckBox();
             automatedBox.Content = "This account is traded by a strategy, not by hand";
@@ -1727,6 +2038,51 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>Rebuild the checkbox list if the set of accounts changed.</summary>
+        /// <summary>
+        /// Write the line under one account's tick box. Split out so that ticking
+        /// an account can update its own row rather than rebuilding the whole
+        /// list - which would destroy the very checkbox the trader just clicked,
+        /// from inside that checkbox's own event handler.
+        /// </summary>
+        private void DescribeAccount(string name)
+        {
+            TextBlock sub;
+            if (name == null || !accountSubs.TryGetValue(name, out sub) || sub == null) return;
+
+            BallastTracker t = monitor.Get(name);
+            if (t != null)
+            {
+                // If the settings contradict what the account's own name says it
+                // is, that outranks the summary - it is the difference between a
+                // cushion figure that is right and one that is generous.
+                string bad = "";
+                try { bad = ruleBook.SanityWarning(name, t.Config); } catch { }
+
+                sub.Text = bad.Length > 0
+                    ? ConfigSummary(name, t.Config) + "\n" + bad
+                    : ConfigSummary(name, t.Config);
+                sub.Foreground = bad.Length > 0 ? ColRed : ColMuted;
+                return;
+            }
+
+            // An un-ticked account that still has rules says so, and says what
+            // they are. Otherwise "not watched" is indistinguishable from "never
+            // set up", and the only way to tell them apart is to tick it and see
+            // - which is exactly the doubt that made a trader re-enter settings
+            // they had already entered.
+            TrackerConfig kept = monitor.RememberedConfig(name);
+            if (kept != null)
+            {
+                sub.Text = "not watched - rules kept: " + ConfigSummary(name, kept);
+                sub.Foreground = ColFaint;
+            }
+            else
+            {
+                sub.Text = "not watched";
+                sub.Foreground = ColFaint;
+            }
+        }
+
         private void RefreshAccountList(bool force)
         {
             if (!force && (Core.Globals.Now - lastAccountRefresh).TotalSeconds < 10) return;
@@ -1744,6 +2100,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             accountListPanel.Children.Clear();
             accountBoxes.Clear();
+            accountSubs.Clear();
 
             if (names.Count == 0)
             {
@@ -1781,21 +2138,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 sub.TextWrapping = TextWrapping.Wrap;
                 sub.Margin = new Thickness(20, 1, 0, 0);
 
-                BallastTracker t = monitor.Get(name);
-                if (t == null)
-                {
-                    sub.Text = "not watched";
-                    sub.Foreground = ColFaint;
-                }
-                else
-                {
-                    sub.Text = ConfigSummary(name, t.Config);
-                    sub.Foreground = ColMuted;
-                }
-
                 rowSp.Children.Add(sub);
                 accountListPanel.Children.Add(rowSp);
                 accountBoxes[name] = cb;
+                accountSubs[name] = sub;
+                DescribeAccount(name);
             }
 
             RefreshEditTargets();
@@ -1844,6 +2191,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 bool isNew = !monitor.IsMonitored(name);
 
+                // Rules held from a previous tick. GetOrCreate restores them, so
+                // this has to be read BEFORE the call, not after.
+                bool hadRules = monitor.RememberedConfig(name) != null;
+
                 BallastTracker t = monitor.GetOrCreate(name);
                 WireCapture(t, name);
                 Account a = FindAccount(name);
@@ -1858,15 +2209,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // balance. The trader should not have to tell Ballast something
                     // the broker already told it. Only for accounts we have never
                     // configured - settings already saved are never overwritten.
-                    if (isNew && !configuredFromDisk.Contains(name)) AutoDetectOne(name, t, cash);
+                    if (isNew && !configuredFromDisk.Contains(name) && !hadRules) AutoDetectOne(name, t, cash);
                 }
             }
             else
             {
+                // Keeps this account's rules - see BallastMonitor.Remove. The
+                // trader is saying "stop watching", not "throw my setup away".
                 monitor.Remove(name);
                 BallastState.Clear(name);   // stop any chart still showing its banner
             }
+
             RefreshEditTargets();
+            DescribeAccount(name);
+
+            // Ticking an account IS a setting. It used to survive only if the
+            // trader happened to press Apply and save afterwards, so a tick made
+            // and then slept on was gone in the morning.
+            SaveSettings();
         }
 
         /// <summary>
@@ -1928,6 +2288,44 @@ namespace NinjaTrader.NinjaScript.AddOns
         private bool EditingDefault()
         {
             return editTargetBox.SelectedIndex <= 0;
+        }
+
+        private void ToggleFirmFields()
+        {
+            if (firmFields == null) return;
+
+            bool show = firmFields.Visibility != Visibility.Visible;
+            firmFields.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (firmToggle != null)
+                firmToggle.Content = show ? "Hide the firm's figures" : "Show the firm's figures";
+        }
+
+        /// <summary>
+        /// One sentence confirming what Ballast believes this account is. On a
+        /// prop account these numbers are not decisions, they are facts to check,
+        /// and a sentence is a far better way to check a fact than four form
+        /// fields are.
+        /// </summary>
+        private void RefreshFirmSummary(TrackerConfig c)
+        {
+            if (firmSummary == null) return;
+
+            if (c == null) { firmSummary.Text = ""; return; }
+
+            string dd = c.DrawdownType == DrawdownType.Intraday
+                ? "trailing intraday" : "trailing end-of-day";
+
+            string text = "Ballast has this as " + Money(c.StartingBalance)
+                        + " with " + Money(c.TrailingDrawdown) + " " + dd;
+
+            if (c.LockFloorAt > 0) text += ", floor fixed once it reaches " + Money(c.LockFloorAt);
+            else text += ", floor never stops trailing";
+
+            if (c.FirmMaxContracts > 0)
+                text += ". Your firm's own cap is " + c.FirmMaxContracts
+                     + (c.FirmMaxContracts == 1 ? " contract" : " contracts");
+
+            firmSummary.Text = text + ".";
         }
 
         private void OnEditTargetChanged()
@@ -2062,13 +2460,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void PopulateAccountTypes()
         {
-            accountTypeBox.Items.Clear();
-            string firm = firmBox.SelectedItem as string;
-            if (string.IsNullOrEmpty(firm)) return;
+            // Rebuilding the list fires SelectionChanged, and the type dropdown
+            // now writes to the account on selection. Without this guard, merely
+            // switching firms would silently reconfigure whichever account was
+            // being edited to the first type in the new list.
+            suppressTypeApply = true;
+            try
+            {
+                accountTypeBox.Items.Clear();
+                string firm = firmBox.SelectedItem as string;
+                if (string.IsNullOrEmpty(firm)) return;
 
-            List<FirmAccountSpec> list = FilterByGeneration(ruleBook.ForFirm(firm));
-            for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
-            if (accountTypeBox.Items.Count > 0) accountTypeBox.SelectedIndex = 0;
+                List<FirmAccountSpec> list = FilterByGeneration(ruleBook.ForFirm(firm));
+                for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
+                if (accountTypeBox.Items.Count > 0) accountTypeBox.SelectedIndex = 0;
+            }
+            finally { suppressTypeApply = false; }
         }
 
         private FirmAccountSpec SelectedSpec()
@@ -2188,22 +2595,46 @@ namespace NinjaTrader.NinjaScript.AddOns
             RefreshAccountList(true);
         }
 
+        /// <summary>
+        /// The account's position, taken from whichever instrument is carrying
+        /// the most contracts.
+        ///
+        /// It used to be the NET of every position on the account: longs added,
+        /// shorts subtracted. Hold two contracts of one instrument and two short
+        /// of another and that nets to zero - which Ballast read as "flat", so it
+        /// closed the round-trip, banked a trade, and then opened a fresh one on
+        /// the very next poll a second later. One trade became two, the loss
+        /// streak counted a trade that never happened, and the journal grew a row
+        /// with an entry time that made no sense.
+        ///
+        /// Taking the dominant instrument instead means flat is only ever
+        /// reported when every position really is flat, and the direction and
+        /// size agree with OpenInstrument, which already picks the same one.
+        /// </summary>
         private int SignedPosition(Account a)
         {
-            int qty = 0;
+            int best = 0;
+            int bestAbs = 0;
+
             try
             {
                 lock (a.Positions)
                 {
                     foreach (Position p in a.Positions)
                     {
-                        if (p.MarketPosition == MarketPosition.Long) qty += p.Quantity;
-                        else if (p.MarketPosition == MarketPosition.Short) qty -= p.Quantity;
+                        int q;
+                        if (p.MarketPosition == MarketPosition.Long) q = p.Quantity;
+                        else if (p.MarketPosition == MarketPosition.Short) q = -p.Quantity;
+                        else continue;
+
+                        int abs = q < 0 ? -q : q;
+                        if (abs > bestAbs) { bestAbs = abs; best = q; }
                     }
                 }
             }
             catch { }
-            return qty;
+
+            return best;
         }
 
         /// <summary>
@@ -2354,7 +2785,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             card.BorderBrush = colour;
             urgencyText.Foreground = colour;
             urgencyText.Text = "NEXT ACTION - " + urg;
-            headlineText.Text = d.Headline;
+            // Name the account IN the headline, not underneath it.
+            //
+            // "Stop - you're at your max trades for the day" reads as a statement
+            // about the trader's whole day. It is not: it is about one account
+            // that has hit its own limit, while another may have four trades left
+            // and a different limit entirely. Burying that in a smaller line
+            // below made a per-account fact look like a global one.
+            headlineText.Text = snaps.Count > 1
+                ? worst.AccountName + " - " + LowerFirst(d.Headline)
+                : d.Headline;
             headlineText.Foreground = ColInk;
             string ctx = snaps.Count > 1 ? "driven by " + worst.AccountName : worst.AccountName;
             if (!worst.Input.HasValidEquity)
@@ -2440,6 +2880,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (emptyNote != null) emptyNote.Visibility = Visibility.Collapsed;
         }
 
+        /// <summary>
+        /// One definition of the accounts table's columns, used by both the
+        /// heading row and every data row. They used to be declared separately
+        /// and had already drifted, which is why the headings sat slightly left
+        /// of the figures they described.
+        /// </summary>
+        private static Grid AccountsGrid()
+        {
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+            return g;
+        }
+
+        /// <summary>Dollars left before today's loss limit is reached.</summary>
+        private static double RoomToday(DisciplineInput i)
+        {
+            if (i == null || i.DailyLossLimit <= 0) return 0;
+            double room = i.DailyLossLimit + i.DailyPnl;   // a green day buys you more room, which is true
+            return room < 0 ? 0 : room;
+        }
+
         private void RenderRows(List<AccountSnapshot> snaps, string worstName)
         {
             rowsPanel.Children.Clear();
@@ -2460,17 +2926,56 @@ namespace NinjaTrader.NinjaScript.AddOns
                 row.Padding = new Thickness(8, 5, 8, 5);
                 row.Margin = new Thickness(0, 0, 0, 4);
 
-                Grid g = new Grid();
-                g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
-                g.ColumnDefinitions.Add(new ColumnDefinition());
-                g.ColumnDefinitions.Add(new ColumnDefinition());
-                g.ColumnDefinitions.Add(new ColumnDefinition());
+                Grid g = AccountsGrid();
 
                 string label;
                 string shown = accountLabels.TryGetValue(s.AccountName, out label) && !string.IsNullOrEmpty(label)
                     ? s.AccountName + "  (" + label + ")"
                     : s.AccountName;
                 g.Children.Add(Cell(shown, ColInk, 0, FontWeights.Bold));
+
+                // Trades taken. The row used to show losses only, so a trader who
+                // had set a max-trades rule had no way of seeing where they stood
+                // against it - and reasonably concluded the setting did nothing.
+                string tradesText = s.Input.MaxTrades > 0
+                    ? s.Input.TradesToday + " / " + s.Input.MaxTrades
+                    : s.Input.TradesToday.ToString(CultureInfo.InvariantCulture);
+                Brush tradesCol = s.Input.MaxTrades > 0 && s.Input.TradesToday >= s.Input.MaxTrades
+                    ? ColAmber : ColMuted;
+                g.Children.Add(Cell(tradesText, tradesCol, 1, FontWeights.Normal));
+
+                string lossText = s.Input.MaxLossesBeforeStop > 0
+                    ? s.Input.LossesToday + " / " + s.Input.MaxLossesBeforeStop
+                    : s.Input.LossesToday.ToString(CultureInfo.InvariantCulture);
+                Brush lossCol = s.Input.MaxLossesBeforeStop > 0
+                                && s.Input.LossesToday >= s.Input.MaxLossesBeforeStop
+                    ? ColRed : ColMuted;
+                g.Children.Add(Cell(lossText, lossCol, 2, FontWeights.Normal));
+
+                // How much of today's budget is left. This is the number a trader
+                // actually keeps in their head, and until now it was nowhere on
+                // screen - only the raw P&L, which you then had to do arithmetic
+                // against your own rule to make sense of.
+                double room = RoomToday(s.Input);
+                string roomText;
+                Brush roomCol;
+                if (s.Input.DailyLossLimit <= 0)
+                {
+                    roomText = "no limit set";
+                    roomCol = ColFaint;
+                }
+                else if (room <= 0)
+                {
+                    roomText = "spent";
+                    roomCol = ColRed;
+                }
+                else
+                {
+                    roomText = Money(room);
+                    roomCol = room < s.Input.DailyLossLimit * 0.34 ? ColAmber : ColMuted;
+                }
+                g.Children.Add(Cell(roomText, roomCol, 3, FontWeights.Normal));
+
                 string cushionText;
                 Brush cushionCol;
                 if (!s.Input.HasValidEquity)
@@ -2486,20 +2991,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 else
                 {
-                    // Spelling out the level is what makes a locked floor make
-                    // sense: once frozen, profit becomes real cushion, so this
-                    // figure legitimately exceeds the account's max loss.
                     cushionText = Money(s.Input.CushionToFloor)
-                                + (s.Input.FloorLocked
-                                    ? "  (fixed floor " + Money(s.Input.FloorLevel) + ")"
-                                    : "");
+                                + (s.Input.FloorLocked ? "  fixed" : "");
                     cushionCol = s.Input.CushionToFloor < 400 ? ColRed : ColMuted;
                 }
-                g.Children.Add(Cell(cushionText, cushionCol, 1, FontWeights.Normal));
-                g.Children.Add(Cell(Money(s.Input.DailyPnl),
-                                    s.Input.DailyPnl >= 0 ? ColGreen : ColRed, 2, FontWeights.Normal));
-                g.Children.Add(Cell(s.Input.LossesToday + "/" + s.Input.MaxLossesBeforeStop + "  " + ShortAction(s.Decision.Action),
-                                    col, 3, FontWeights.Bold));
+                g.Children.Add(Cell(cushionText, cushionCol, 4, FontWeights.Normal));
+
+                g.Children.Add(Cell(LongAction(s.Decision.Action), col, 5, FontWeights.Bold));
 
                 StackPanel rowStack = new StackPanel();
                 rowStack.Children.Add(g);
@@ -2517,6 +3015,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     s.Input.HasValidEquity && !s.Input.PastFloor,
                     Core.Globals.Now);
 
+                // The same running count the row shows, so the chart can show it
+                // too. A calm chart used to say "BALLAST OK" and nothing else,
+                // which is why editing an account's rules appeared to have no
+                // effect on it whatsoever.
+                BallastState.PublishCount(s.AccountName,
+                    s.Input.TradesToday, s.Input.MaxTrades,
+                    s.Input.LossesToday, s.Input.MaxLossesBeforeStop,
+                    room, s.Input.DailyLossLimit > 0,
+                    s.Input.DailyPnl, Core.Globals.Now);
+
                 if (warn.Length > 0 && warn != "clear")
                 {
                     TextBlock wt = new TextBlock();
@@ -2527,6 +3035,59 @@ namespace NinjaTrader.NinjaScript.AddOns
                     wt.TextWrapping = TextWrapping.Wrap;
                     wt.Margin = new Thickness(0, 4, 0, 0);
                     rowStack.Children.Add(wt);
+                }
+
+                // A configuration that gives the account more room than the firm
+                // does. Shown here as well as in Setup, because Setup is a page
+                // nobody opens twice and this is the number being trusted.
+                string mismatch = "";
+                try
+                {
+                    BallastTracker cfgT = monitor.Get(s.AccountName);
+                    if (cfgT != null) mismatch = ruleBook.SanityWarning(s.AccountName, cfgT.Config);
+                }
+                catch { }
+
+                if (mismatch.Length > 0)
+                {
+                    TextBlock mm = new TextBlock();
+                    mm.Text = "check this: " + mismatch;
+                    mm.Foreground = ColRed;
+                    mm.FontSize = 10;
+                    mm.TextWrapping = TextWrapping.Wrap;
+                    mm.Margin = new Thickness(0, 3, 0, 0);
+                    rowStack.Children.Add(mm);
+                }
+
+                // Progress toward passing, for an evaluation that has one.
+                //
+                // This is where the firm's profit target belongs. It used to be
+                // written into the daily target, where it did nothing but break
+                // the protect-your-green logic; here it is what a trader on an
+                // evaluation actually wants to know.
+                if (s.Input.ProfitTarget > 0 && s.Input.HasValidEquity && !s.Input.PastFloor)
+                {
+                    double made = s.Input.CurrentEquity - s.Input.StartingBalance;
+                    TextBlock pt = new TextBlock();
+
+                    if (made >= s.Input.ProfitTarget)
+                    {
+                        pt.Text = "target met - " + Money(made) + " of " + Money(s.Input.ProfitTarget)
+                                + " - check your firm's remaining conditions before you request a payout";
+                        pt.Foreground = ColGreen;
+                    }
+                    else
+                    {
+                        pt.Text = "to pass: " + Money(made > 0 ? made : 0) + " of "
+                                + Money(s.Input.ProfitTarget) + "  -  "
+                                + Money(s.Input.ProfitTarget - (made > 0 ? made : 0)) + " to go";
+                        pt.Foreground = ColMuted;
+                    }
+
+                    pt.FontSize = 10;
+                    pt.TextWrapping = TextWrapping.Wrap;
+                    pt.Margin = new Thickness(0, 3, 0, 0);
+                    rowStack.Children.Add(pt);
                 }
 
                 // The throttled size, spelled out under the row. Advising a
@@ -2548,6 +3109,25 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 row.Child = rowStack;
                 rowsPanel.Children.Add(row);
+            }
+        }
+
+        /// <summary>
+        /// What to do, in words. The row used to carry a four-letter code - LOCK,
+        /// STOP, BANK, WAIT, SIZE - under a heading reading "DO". Between them
+        /// they managed to make the most important cell on the row unreadable.
+        /// </summary>
+        private static string LongAction(DisciplineAction a)
+        {
+            switch (a)
+            {
+                case DisciplineAction.Lockout:      return "STOP NOW";
+                case DisciplineAction.StopForDay:   return "DONE TODAY";
+                case DisciplineAction.ProtectGreen: return "BANK IT";
+                case DisciplineAction.Cooldown:     return "WAIT";
+                case DisciplineAction.SizeDown:     return "SIZE DOWN";
+                case DisciplineAction.None:         return "HOLD OFF";
+                default:                            return "CLEAR";
             }
         }
 
@@ -2581,6 +3161,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             return (r < 0 ? "-$" : "$") + Math.Abs(r).ToString("N0", CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// "Stop - ..." becomes "stop - ..." when it follows an account name, so
+        /// the headline reads as one sentence rather than two collided ones.
+        /// </summary>
+        private static string LowerFirst(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return char.ToLowerInvariant(s[0]) + s.Substring(1);
+        }
+
         // ── Settings ─────────────────────────────────────────────────────────
 
         private static double ParseD(TextBox tb, double fallback)
@@ -2611,6 +3201,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (automatedBox != null) automatedBox.IsChecked = c.IsAutomated;
             if (acctGenBox != null) acctGenBox.SelectedIndex = (int)c.Generation;
             ddTypeBox.SelectedIndex = c.DrawdownType == DrawdownType.EndOfDay ? 1 : 0;
+
+            // The sentence above the fold has to move with the fields under it.
+            RefreshFirmSummary(c);
         }
 
         private void ReadFieldsInto(TrackerConfig c)
@@ -2813,9 +3406,87 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
             tbSessionPlan.Text = monitor.Journal.SessionPlan;
+            SeedTodaysCounts(today);
             LoadStandingPlan();
             LoadEvents();
             RenderJournal();
+        }
+
+        /// <summary>
+        /// Give every tracker back today's trade and loss count from the journal.
+        ///
+        /// Without this, closing and reopening the Ballast window resets both to
+        /// zero, and the max-trades rule, the loss-streak stop and the tilt
+        /// lockout all quietly start again from nothing. A discipline rule that a
+        /// trader can clear by closing a window is not a rule - and it would be
+        /// cleared, because closing the window is exactly what someone does when
+        /// they do not like what it says.
+        /// </summary>
+        private void SeedTodaysCounts(List<BallastTrade> today)
+        {
+            if (today == null) return;
+
+            DateTime day;
+            try { day = Core.Globals.Now.Date; } catch { day = DateTime.Now.Date; }
+
+            Dictionary<string, int> trades = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, int> losses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, DateTime> lastLoss = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, bool> lastWasLoss = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, DateTime> lastExit = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, double> pnl = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < today.Count; i++)
+            {
+                BallastTrade e = today[i];
+                if (e == null || string.IsNullOrEmpty(e.AccountName)) continue;
+
+                string a = e.AccountName;
+
+                int n;
+                trades[a] = trades.TryGetValue(a, out n) ? n + 1 : 1;
+
+                double p;
+                pnl[a] = pnl.TryGetValue(a, out p) ? p + e.Pnl : e.Pnl;
+
+                if (e.Pnl < 0)
+                {
+                    losses[a] = losses.TryGetValue(a, out n) ? n + 1 : 1;
+
+                    DateTime prev;
+                    if (!lastLoss.TryGetValue(a, out prev) || e.ExitTime > prev) lastLoss[a] = e.ExitTime;
+                }
+
+                // Whether the MOST RECENT trade lost, which is what the cooldown
+                // and revenge-window checks actually read.
+                DateTime seen;
+                if (!lastExit.TryGetValue(a, out seen) || e.ExitTime >= seen)
+                {
+                    lastExit[a] = e.ExitTime;
+                    lastWasLoss[a] = e.Pnl < 0;
+                }
+            }
+
+            foreach (string name in monitor.MonitoredNames)
+            {
+                BallastTracker t = monitor.Get(name);
+                if (t == null) continue;
+
+                int tr, ls;
+                trades.TryGetValue(name, out tr);
+                losses.TryGetValue(name, out ls);
+
+                DateTime ll;
+                bool haveLoss = lastLoss.TryGetValue(name, out ll);
+
+                bool wasLoss;
+                lastWasLoss.TryGetValue(name, out wasLoss);
+
+                double dayPnl;
+                pnl.TryGetValue(name, out dayPnl);
+
+                t.SeedToday(day, tr, ls, haveLoss ? (DateTime?)ll : null, wasLoss, dayPnl);
+            }
         }
 
         private string StandingPlanPath()
@@ -3045,10 +3716,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             List<BallastTrade> mine = BallastJournal.ManualOnly(all);
             int botCount = all.Count - mine.Count;
 
+            // Every clause says which period it covers. It used to read "Today: 7
+            // trades recorded. Your own trades: 10" - today's number followed
+            // immediately by an all-time one, with nothing to say they were
+            // different periods, so it simply looked wrong.
+            List<BallastTrade> mineToday = BallastJournal.ManualOnly(today);
+
             journalSummary.Text =
-                "Today: " + today.Count + " trades recorded. "
-              + "Your own trades: " + mine.Count + ", " + (mine.Count - monitor.Journal.Untagged().Count) + " tagged. "
-              + "Planned " + pl[0].Count + " (" + BallastTrade.Money(pl[0].Net) + "), "
+                "Today: " + today.Count + (today.Count == 1 ? " trade" : " trades") + " recorded, "
+              + mineToday.Count + " of them your own. "
+              + "All time: " + mine.Count + (mine.Count == 1 ? " trade" : " trades") + " of yours, "
+              + (mine.Count - monitor.Journal.Untagged().Count) + " tagged - "
+              + "planned " + pl[0].Count + " (" + BallastTrade.Money(pl[0].Net) + "), "
               + "unplanned " + pl[1].Count + " (" + BallastTrade.Money(pl[1].Net) + "), "
               + "taken after a stop signal " + adv[0].Count + " (" + BallastTrade.Money(adv[0].Net) + ")."
               + (botCount > 0
@@ -3279,13 +3958,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             name.Foreground = isBot ? ColMuted : ColInk;
             name.FontSize = 13;
             name.FontWeight = FontWeights.Bold;
+            name.VerticalAlignment = VerticalAlignment.Center;
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            // A long account name must not run into the totals on its right.
+            name.Margin = new Thickness(0, 0, 18, 0);
             g.Children.Add(name);
 
             TextBlock sum = new TextBlock();
-            sum.Text = count + (count == 1 ? " trade   " : " trades   ") + BallastTrade.Money(net);
+            sum.Text = count + (count == 1 ? " trade" : " trades") + "     " + BallastTrade.Money(net);
             sum.Foreground = net >= 0 ? ColGreen : ColRed;
             sum.FontSize = 12;
             sum.FontWeight = FontWeights.Bold;
+            sum.VerticalAlignment = VerticalAlignment.Center;
+            sum.HorizontalAlignment = HorizontalAlignment.Right;
             Grid.SetColumn(sum, 1);
             g.Children.Add(sum);
 
@@ -3298,6 +3983,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             b.Background = ColPanel;
             b.BorderBrush = ColLine;
             b.BorderThickness = new Thickness(1);
+
+            // A button centres its content by default, which collapsed the grid
+            // to the width of its text and printed the account name hard up
+            // against its own totals - "Sim1042 trades $2,801". The row has to
+            // fill the button for the two columns to separate at all.
+            b.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+
             b.Click += delegate { ToggleAccount(account); };
             return b;
         }
@@ -3399,12 +4091,30 @@ namespace NinjaTrader.NinjaScript.AddOns
                 shots.Orientation = Orientation.Horizontal;
                 shots.Margin = new Thickness(0, 8, 0, 0);
 
-                UIElement a = Thumbnail(e.EntryImage, "entry");
-                UIElement b2 = Thumbnail(e.ExitImage, "exit");
+                UIElement a = Thumbnail(e.EntryImage, "entry", e);
+                UIElement b2 = Thumbnail(e.ExitImage, "exit", e);
                 if (a != null) shots.Children.Add(a);
                 if (b2 != null) shots.Children.Add(b2);
 
                 if (shots.Children.Count > 0) sp.Children.Add(shots);
+
+                // Say when one is missing rather than leaving a gap. A trade with
+                // an entry photo and no exit looks like the picture is still
+                // loading; it is not, and the trader should know the record is
+                // incomplete rather than quietly assume it is not.
+                bool haveEntry = a != null, haveExit = b2 != null;
+                if (haveEntry != haveExit)
+                {
+                    TextBlock miss = new TextBlock();
+                    miss.Text = haveEntry
+                        ? "No exit photo for this one - the chart it was taken on may have been closed or retitled before it filled."
+                        : "No entry photo for this one.";
+                    miss.Foreground = ColFaint;
+                    miss.FontSize = 10;
+                    miss.TextWrapping = TextWrapping.Wrap;
+                    miss.Margin = new Thickness(0, 4, 0, 0);
+                    sp.Children.Add(miss);
+                }
 
                 StackPanel picBtns = new StackPanel();
                 picBtns.Orientation = Orientation.Horizontal;
@@ -3508,6 +4218,50 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Row 2: feeling and a free note. Both optional, both still available
             // after the verdict has landed.
+            // Row 2: did you move your stop or target?
+            //
+            // Ballast watches the position, not the working orders, so this is
+            // genuinely invisible to it - and it is the break that costs the
+            // most. A stop moved away turns a planned loss into an unplanned one.
+            // One tap, same as the verdict, and the note prompt underneath then
+            // asks why.
+            StackPanel movedRow = new StackPanel();
+            movedRow.Orientation = Orientation.Horizontal;
+            movedRow.Margin = new Thickness(0, 0, 0, 8);
+
+            TextBlock movedLabel = new TextBlock();
+            movedLabel.Text = "Stop / target:";
+            movedLabel.Foreground = ColFaint;
+            movedLabel.FontSize = 11;
+            movedLabel.Margin = new Thickness(0, 8, 8, 0);
+            movedRow.Children.Add(movedLabel);
+
+            List<Button> movedButtons = new List<Button>();
+            TextBlock noteHint = new TextBlock();
+
+            for (int v = 0; v < BallastJournal.MovedOptions.Length; v++)
+            {
+                string key = BallastJournal.MovedOptions[v];
+
+                Button mb = new Button();
+                mb.Content = BallastJournal.MovedLabel(key);
+                mb.Padding = new Thickness(11, 6, 11, 6);
+                mb.Margin = new Thickness(0, 0, 6, 0);
+                mb.FontSize = 11;
+                mb.Click += delegate
+                {
+                    e.Moved = key;
+                    StyleMoved(e, movedButtons);
+                    SetNoteHint(e, noteHint);
+                    journalDirty = true;
+                };
+                movedButtons.Add(mb);
+                movedRow.Children.Add(mb);
+            }
+
+            sp.Children.Add(movedRow);
+            StyleMoved(e, movedButtons);
+
             StackPanel detailRow = new StackPanel();
             detailRow.Orientation = Orientation.Horizontal;
             detailRow.Margin = new Thickness(0, 0, 0, 8);
@@ -3552,11 +4306,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             note.LostFocus += delegate { e.Note = note.Text == null ? "" : note.Text; journalDirty = true; };
             sp.Children.Add(note);
 
-            TextBlock noteHint = new TextBlock();
-            noteHint.Text = "Anything you want to remember. Optional - press Done when finished.";
             noteHint.Foreground = ColFaint;
             noteHint.FontSize = 10;
             noteHint.Margin = new Thickness(0, 4, 0, 0);
+            SetNoteHint(e, noteHint);
             sp.Children.Add(noteHint);
 
             b.Child = sp;
@@ -3568,6 +4321,37 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// amber for a rule broken, red for the two that cost money - so the
         /// colour of the row is itself feedback.
         /// </summary>
+        /// <summary>
+        /// The note prompt follows the answer. Someone who has just said they
+        /// moved their stop is being asked a specific question at the moment they
+        /// still know the answer - which is worth far more than the same blank
+        /// box labelled "anything you want to remember".
+        /// </summary>
+        private void SetNoteHint(BallastTrade e, TextBlock hint)
+        {
+            if (hint == null) return;
+
+            hint.Text = (e != null && BallastJournal.DidMove(e.Moved))
+                ? "Why did you move it? One line, while you still remember."
+                : "Anything you want to remember. Optional - press Done when finished.";
+        }
+
+        private void StyleMoved(BallastTrade e, List<Button> buttons)
+        {
+            if (e == null || buttons == null) return;
+
+            for (int i = 0; i < buttons.Count && i < BallastJournal.MovedOptions.Length; i++)
+            {
+                bool on = e.Moved == BallastJournal.MovedOptions[i];
+                bool bad = BallastJournal.DidMove(BallastJournal.MovedOptions[i]);
+
+                buttons[i].Background = on ? (bad ? ColAmber : ColGreen) : ColPanel;
+                buttons[i].Foreground = on ? ColBg : ColInk;
+                buttons[i].BorderBrush = on ? (bad ? ColAmber : ColGreen) : ColLine;
+                buttons[i].FontWeight = on ? FontWeights.Bold : FontWeights.Normal;
+            }
+        }
+
         private void StyleVerdicts(BallastTrade e, List<Button> buttons)
         {
             for (int i = 0; i < buttons.Count && i < BallastJournal.PlannedOptions.Length; i++)
@@ -3611,7 +4395,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// OnLoad caching means the file is not locked, so pruning can still
         /// delete it later.
         /// </summary>
-        private UIElement Thumbnail(string path, string caption)
+        private UIElement Thumbnail(string path, string caption, BallastTrade trade)
         {
             try
             {
@@ -3637,8 +4421,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                 frame.Padding = new Thickness(2);
                 frame.Child = img;
 
+                // A 260px-wide picture of a trading chart is a record that
+                // something happened, not something anyone can read. Clicking it
+                // opens it as large as the window allows.
+                string open = path;
+                BallastTrade owner = trade;
+                string which = caption;
+                frame.Cursor = System.Windows.Input.Cursors.Hand;
+                frame.MouseLeftButtonUp += delegate { ShowImage(open, which, owner); };
+
                 TextBlock cap = new TextBlock();
-                cap.Text = caption;
+                cap.Text = caption + "  -  click to enlarge";
                 cap.Foreground = ColFaint;
                 cap.FontSize = 9;
                 cap.FontWeight = FontWeights.Bold;
@@ -3764,6 +4557,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        private static bool Contains(List<string> list, string value)
+        {
+            if (list == null || value == null) return false;
+            for (int i = 0; i < list.Count; i++)
+                if (string.Equals(list[i], value, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         private string SettingsPath()
         {
             try { return Path.Combine(Core.Globals.UserDataDir, "ballast-settings.txt"); }
@@ -3779,10 +4580,28 @@ namespace NinjaTrader.NinjaScript.AddOns
                           + "|" + ((int)generation).ToString(CultureInfo.InvariantCulture));
                 lines.Add("*TILT*|" + (tiltEnabled ? "1" : "0") + "|" + (tiltOnGiveBack ? "1" : "0"));
                 lines.Add(SettingsCodec.Serialise("*DEFAULT*", monitor.DefaultConfig));
-                foreach (string n in monitor.MonitoredNames)
+
+                // Which accounts are ticked. Kept as its own line so that an
+                // account's RULES and whether it is being WATCHED are two
+                // separate facts. They used to be the same fact - a settings line
+                // existed only while an account was ticked - which is why
+                // un-ticking silently deleted everything the trader had entered.
+                List<string> watched = monitor.MonitoredNames;
+                StringBuilder w = new StringBuilder("*WATCH*");
+                for (int i = 0; i < watched.Count; i++) w.Append('|').Append(watched[i]);
+                lines.Add(w.ToString());
+
+                foreach (string n in watched)
                 {
                     BallastTracker t = monitor.Get(n);
                     if (t != null) lines.Add(SettingsCodec.Serialise(n, t.Config));
+                }
+
+                // Un-ticked accounts keep their rules on disk too.
+                foreach (string n in monitor.RememberedNames)
+                {
+                    TrackerConfig c = monitor.RememberedConfig(n);
+                    if (c != null) lines.Add(SettingsCodec.Serialise(n, c));
                 }
                 File.WriteAllLines(SettingsPath(), lines.ToArray());
             }
@@ -3797,8 +4616,27 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!File.Exists(p)) { LoadConfigIntoFields(monitor.DefaultConfig); return; }
 
                 string[] lines = File.ReadAllLines(p);
+
+                // Read the watch list first, because every account line after it
+                // has to know whether that account is ticked or merely on record.
+                // A file written before this line existed has no watch list at
+                // all - in that case every account in it was, by definition,
+                // being watched, so an upgrade must not silently untick the lot.
+                List<string> watch = null;
                 for (int i = 0; i < lines.Length; i++)
                 {
+                    if (lines[i] == null || !lines[i].StartsWith("*WATCH*")) continue;
+                    watch = new List<string>();
+                    string[] parts = lines[i].Split('|');
+                    for (int k = 1; k < parts.Length; k++)
+                        if (parts[k].Length > 0) watch.Add(parts[k]);
+                    break;
+                }
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (lines[i] != null && lines[i].StartsWith("*WATCH*")) continue;
+
                     if (lines[i] != null && lines[i].StartsWith("*UI*|"))
                     {
                         string[] ui = lines[i].Split('|');
@@ -3829,8 +4667,23 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (key == "*DEFAULT*") monitor.DefaultConfig = c;
                     else
                     {
-                        BallastTracker t = monitor.GetOrCreate(key);
-                        if (t != null) t.Config = c;
+                        bool isWatched = watch == null || Contains(watch, key);
+
+                        if (isWatched)
+                        {
+                            BallastTracker t = monitor.GetOrCreate(key);
+                            if (t != null) t.Config = c;
+                        }
+                        else
+                        {
+                            // On record, not being watched. Its rules survive
+                            // restarts exactly like a watched account's do.
+                            monitor.RememberConfig(key, c);
+                        }
+
+                        // Either way it counts as configured, so re-ticking it
+                        // later never triggers auto-detection over settings the
+                        // trader entered by hand.
                         if (!configuredFromDisk.Contains(key)) configuredFromDisk.Add(key);
                     }
                 }
@@ -3849,6 +4702,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // for a session's final P&L to be lost, and that figure is the whole
             // point of the override record.
             try { tiltLog.Save(TiltPath()); } catch { }
+            try { SaveSettings(); } catch { }
 
             if (timer != null)
             {

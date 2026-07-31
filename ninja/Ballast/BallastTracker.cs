@@ -24,6 +24,20 @@ namespace Ballast
         public int MaxLossesBeforeStop = 2;
         public double DailyLossLimit = 500;
         public double DailyTarget = 500;
+
+        /// <summary>
+        /// The firm's profit target for PASSING this account - $15,000 on a 250K
+        /// Apex evaluation. Nothing to do with a daily target, and it is only
+        /// here to be displayed.
+        ///
+        /// It used to be written straight into DailyTarget by the rule book,
+        /// which quietly broke two things at once: "bank it, you have hit your
+        /// target" could never fire, and the give-back warning - which only
+        /// triggers once the day's peak has passed the daily target - could never
+        /// fire either. On any account configured from the rule book, protecting
+        /// a green day simply did not work.
+        /// </summary>
+        public double ProfitTarget = 0;
         public int MaxTrades = 4;
         public int MaxContracts = 1;
         public int CooldownMinutes = 5;
@@ -110,6 +124,76 @@ namespace Ballast
         private double realisedAtTradeOpen;
         private DateTime sessionDate = DateTime.MinValue.Date;
 
+        // ── Today's count, recovered from the journal ────────────────────────
+        //
+        // A tracker is built fresh every time the Ballast window opens, so its
+        // counters start at zero. Close the window at lunchtime and reopen it and
+        // the account has apparently taken no trades and no losses today - which
+        // means the max-trades rule, the loss-streak stop and the lockout can all
+        // be cleared by closing a window. That is not a rule; that is a rule with
+        // an off switch nobody documented.
+        //
+        // The journal already knows what happened today, so the counts are seeded
+        // from it. Held as a pending seed rather than written directly because
+        // EnsureSession zeroes the counters the first time it runs for a new
+        // session date, and would otherwise wipe them straight back out.
+        private bool seedPending;
+        private DateTime seedDay = DateTime.MinValue.Date;
+        private int seedTrades;
+        private int seedLosses;
+        private DateTime? seedLastLossAt;
+        private bool seedLastWasLoss;
+        private double seedDailyPnl;
+
+        /// <summary>
+        /// Tell this tracker what the journal says has already happened today.
+        /// Applied when the session for that date opens, and ignored once the
+        /// date has moved on.
+        /// </summary>
+        public void SeedToday(DateTime day, int trades, int losses,
+                              DateTime? lastLossAt, bool lastWasLoss, double dailyPnl)
+        {
+            seedPending = true;
+            seedDay = day.Date;
+            seedTrades = trades < 0 ? 0 : trades;
+            seedLosses = losses < 0 ? 0 : losses;
+            seedLastLossAt = lastLossAt;
+            seedLastWasLoss = lastWasLoss;
+            seedDailyPnl = dailyPnl;
+
+            // If this tracker has already opened today's session - the window has
+            // been running a while and the journal loaded late - apply it now.
+            if (sessionDate == seedDay) ApplySeed();
+        }
+
+        private void ApplySeed()
+        {
+            if (!seedPending) return;
+            if (sessionDate != seedDay) return;
+
+            TradesToday = seedTrades;
+            LossesToday = seedLosses;
+            LastLossAt = seedLastLossAt;
+            LastTradeWasLoss = seedLastWasLoss;
+
+            // The day's P&L is worked out as the change in realised P&L since the
+            // session's baseline. Reopening the window set that baseline to
+            // wherever the account happened to be, so the morning's profit or
+            // loss vanished and the day appeared to start again at zero. Winding
+            // the baseline back by what the journal says has already been made
+            // puts the real figure back.
+            if (haveBaseline)
+            {
+                sessionStartRealised -= seedDailyPnl;
+                DailyPnl = seedDailyPnl;
+                if (DailyPnl > PeakDailyPnl) PeakDailyPnl = DailyPnl;
+            }
+
+            // Once only. A second application would double the count the first
+            // time a new trade arrived.
+            seedPending = false;
+        }
+
         // Snapshot of the world at the moment the current trade was opened.
         private string openInstrument = "";
         private bool openIsLong;
@@ -150,6 +234,11 @@ namespace Ballast
                 PeakEquity = ok ? equityNow : 0;
                 CurrentEquity = ok ? equityNow : 0;
                 HasValidEquity = ok;
+
+                // Put back what the journal says already happened today. Only
+                // ever for today - yesterday's trades must not follow the trader
+                // into a new session.
+                ApplySeed();
             }
             else if (!haveBaseline)
             {
@@ -334,6 +423,9 @@ namespace Ballast
 
             i.LossesToday = LossesToday;
             i.TradesToday = TradesToday;
+            i.IsAutomated = Config.IsAutomated;
+            i.ProfitTarget = Config.ProfitTarget;
+            i.StartingBalance = Config.StartingBalance;
             i.DailyPnl = DailyPnl;
             i.PeakDailyPnl = PeakDailyPnl;
 

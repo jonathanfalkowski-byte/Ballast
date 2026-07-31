@@ -26,7 +26,14 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 17;
+        public const int CurrentFieldCount = 22;
+
+        /// <summary>
+        /// The field count that existed before the trading window, cooldown and
+        /// firm contract cap were added. Kept as its own constant because the
+        /// blocks below have to say which vintage of file they can read.
+        /// </summary>
+        private const int FieldsBeforeSession = 17;
 
         public static string Serialise(string key, TrackerConfig c)
         {
@@ -49,7 +56,12 @@ namespace Ballast
                 D(c.ThrottleCutPct),                                               // 13
                 I(c.BaseMaxContracts),                                             // 14
                 c.IsAutomated ? "1" : "0",                                         // 15
-                ((int)c.Generation).ToString(CultureInfo.InvariantCulture)         // 16
+                ((int)c.Generation).ToString(CultureInfo.InvariantCulture),        // 16
+                I(c.SessionStartMinute),                                           // 17
+                I(c.SessionEndMinute),                                             // 18
+                I(c.CooldownMinutes),                                              // 19
+                I(c.FirmMaxContracts),                                             // 20
+                D(c.ProfitTarget)                                                  // 21
             });
         }
 
@@ -87,7 +99,7 @@ namespace Ballast
             // Fields 11-15 arrived with risk profiles. An older file stops short
             // and keeps the no-throttle defaults, so upgrading never silently
             // changes what size a trader is being advised to take.
-            if (f.Length >= CurrentFieldCount)
+            if (f.Length >= FieldsBeforeSession)
             {
                 c.ProfileKey = f[10];
                 if (double.TryParse(f[11], NumberStyles.Any, CultureInfo.InvariantCulture, out d)) c.RiskPctOfDrawdown = d;
@@ -106,6 +118,22 @@ namespace Ballast
             // tighter drawdown - the safe way to be wrong.
             if (f.Length >= 17 && int.TryParse(f[16], out n) && n >= 0 && n <= 2)
                 c.Generation = (AccountGeneration)n;
+
+            // Fields 18-21 arrived last, and until they did they were simply never
+            // written down: a trader's session window, cooldown and the firm's own
+            // contract cap all silently reverted to the built-in defaults on every
+            // restart. Someone who trades the afternoon was told every day that
+            // they were outside a 09:30-11:30 window they had never chosen.
+            //
+            // Absent still means "use the default", because that is all an older
+            // file can tell us - but from this build on, what the trader set is
+            // what comes back.
+            if (f.Length >= 18 && int.TryParse(f[17], out n) && n >= 0 && n <= 1440) c.SessionStartMinute = n;
+            if (f.Length >= 19 && int.TryParse(f[18], out n) && n >= 0 && n <= 1440) c.SessionEndMinute = n;
+            if (f.Length >= 20 && int.TryParse(f[19], out n) && n >= 0 && n <= 720)  c.CooldownMinutes = n;
+            if (f.Length >= 21 && int.TryParse(f[20], out n) && n >= 0)               c.FirmMaxContracts = n;
+            if (f.Length >= 22 && double.TryParse(f[21], NumberStyles.Any, CultureInfo.InvariantCulture, out d))
+                c.ProfitTarget = d;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.

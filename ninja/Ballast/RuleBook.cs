@@ -300,6 +300,67 @@ namespace Ballast
             return best;
         }
 
+        /// <summary>
+        /// Does this account's configuration contradict what its own name says
+        /// it is? Returns "" when nothing looks wrong.
+        ///
+        /// This exists because the failure is silent and expensive. An account
+        /// named APEX-11325-109 is an Apex EVALUATION - no PA prefix - and an
+        /// Apex evaluation threshold never stops trailing. Configure it with a
+        /// floor that locks and Ballast will happily report thousands of dollars
+        /// of room that does not exist, right up until the account is closed.
+        ///
+        /// Every check here only ever fires when the settings are more generous
+        /// than the firm's published rules. Being told you have LESS room than
+        /// you really do is survivable; the opposite is how accounts die, and it
+        /// is the one thing this tool must never do quietly.
+        /// </summary>
+        public string SanityWarning(string accountName, TrackerConfig c)
+        {
+            if (c == null || string.IsNullOrEmpty(accountName)) return "";
+
+            string firm = FirmFromAccountName(accountName);
+            if (string.IsNullOrEmpty(firm)) return "";        // sim, or a name that says nothing
+
+            bool funded = IsFundedAccountName(accountName);
+
+            // 1. An evaluation whose floor has been told to stop trailing.
+            if (!funded && c.LockFloorAt > 0)
+            {
+                return "this looks like a " + firm + " evaluation, but its floor is set to stop "
+                     + "trailing at " + Money(c.LockFloorAt) + ". Evaluation thresholds keep "
+                     + "following your peak - set \"stops trailing at\" to 0, or your room is "
+                     + "being overstated.";
+            }
+
+            // 2. A drawdown larger than anything the firm publishes at this size.
+            List<FirmAccountSpec> all = ForFirm(firm);
+            double biggest = 0;
+            bool sizeKnown = false;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (Math.Abs(all[i].Size - c.StartingBalance) > 1) continue;
+                sizeKnown = true;
+                if (all[i].Drawdown > biggest) biggest = all[i].Drawdown;
+            }
+
+            if (sizeKnown && biggest > 0 && c.TrailingDrawdown > biggest + 1)
+            {
+                return "a " + firm + " account of " + Money(c.StartingBalance) + " has at most "
+                     + Money(biggest) + " of drawdown, but this one is set to "
+                     + Money(c.TrailingDrawdown) + " - that is more room than the firm gives you.";
+            }
+
+            return "";
+        }
+
+        private static string Money(double n)
+        {
+            double r = Math.Round(n);
+            return (r < 0 ? "-$" : "$") + Math.Abs(r).ToString("N0", CultureInfo.InvariantCulture);
+        }
+
         public static TrackerConfig ToConfig(FirmAccountSpec s, TrackerConfig keepPersonalFrom)
         {
             TrackerConfig c = keepPersonalFrom != null
@@ -311,7 +372,12 @@ namespace Ballast
             c.DrawdownType     = s.DrawdownType;
             c.DailyLossLimit   = s.DailyLossLimit;   // 0 == firm publishes none
             c.LockFloorAt      = s.LockFloorAt;      // 0 == assume it trails forever
-            if (s.ProfitTarget > 0) c.DailyTarget = s.ProfitTarget;
+            // The firm's number is what it takes to PASS, over however many days
+            // that takes. It is recorded, and shown, but it is never allowed to
+            // become the trader's target for one session - $15,000 as a daily
+            // target on a 250K evaluation means the account is never once told to
+            // bank a good day.
+            c.ProfitTarget = s.ProfitTarget;
 
             // The firm's cap is a ceiling, never a suggestion. If the trader's own
             // number is smaller, theirs wins - this only ever brings size down.
