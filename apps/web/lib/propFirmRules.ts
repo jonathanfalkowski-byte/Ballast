@@ -27,10 +27,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Bump on every rule change. Clients compare this to decide whether to update. */
-export const RULES_VERSION = 9;
+export const RULES_VERSION = 11;
 
 /** Date the figures below were last checked against the firms' own pages. */
-export const RULES_VERIFIED = "2026-07-31";
+export const RULES_VERIFIED = "2026-08-01";
 
 /** Pages a maintenance job should re-check for changes. */
 export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
@@ -41,6 +41,12 @@ export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
   { firm: "Topstep", url: "https://help.topstep.com/en/articles/8284204-what-is-the-maximum-loss-limit" },
   { firm: "Take Profit Trader", url: "https://takeprofittrader.com/" },
   { firm: "MyFundedFutures", url: "https://myfundedfutures.com/" },
+  { firm: "Bulenox", url: "https://bulenox.com/help/qualification-account/" },
+  { firm: "Tradeify", url: "https://help.tradeify.co/en/articles/10495897-rules-trailing-max-drawdowns" },
+  { firm: "TradeDay", url: "https://tradeday.freshdesk.com/en/support/solutions/articles/103000008855-what-is-the-maximum-drawdown-rule-" },
+  { firm: "Earn2Trade", url: "https://help.earn2trade.com/en/articles/5372687-how-does-end-of-day-drawdown-work" },
+  { firm: "Legends Trading", url: "https://thelegendstrading.com/plans" },
+  { firm: "Elite Trader Funding", url: "https://elitetraderfunding.app/evaluations" },
 ];
 
 export const RULES_TEXT = `# Ballast rule book - served from tradeballast.com/api/rules
@@ -173,7 +179,7 @@ Topstep|Trading Combine|150000|4500|EOD|3000|9000|Daily loss limit resets 5:00pm
 Take Profit Trader|Test (evaluation)|25000|1500|EOD|0|1500|No daily loss limit on Test accounts.|0
 Take Profit Trader|Test (evaluation)|50000|2000|EOD|0|3000|No daily loss limit on Test accounts.|0
 Take Profit Trader|Test (evaluation)|75000|2500|EOD|0|4500|No daily loss limit on Test accounts.|0
-Take Profit Trader|Test (evaluation)|100000|3500|EOD|0|6000|No daily loss limit on Test accounts.|0
+Take Profit Trader|Test (evaluation)|100000|3000|EOD|0|6000|No daily loss limit on Test accounts.|0
 Take Profit Trader|Test (evaluation)|150000|4500|EOD|0|9000|No daily loss limit on Test accounts.|0
 Take Profit Trader|PRO (funded)|25000|1500|INTRADAY|0|0|PRO drawdown moves in real time on unrealised gains.|0
 Take Profit Trader|PRO (funded)|50000|2000|INTRADAY|0|0|PRO drawdown moves in real time on unrealised gains.|0
@@ -187,18 +193,98 @@ Take Profit Trader|PRO+ (live)|100000|3500|EOD|0|0|PRO+ reverts to end-of-day tr
 Take Profit Trader|PRO+ (live)|150000|4500|EOD|0|0|PRO+ reverts to end-of-day trailing.|0
 
 # ── MyFundedFutures ──────────────────────────────────────────────────────────
-# No daily loss limit on any plan.
-MyFundedFutures|Builder|50000|2000|EOD|0|3000|Default max loss; a $1,500 option exists at checkout.|50100
-MyFundedFutures|Rapid (4% intraday)|25000|1000|INTRADAY|0|1500|Trail updates on every new equity high during the session.|25100
-MyFundedFutures|Rapid (4% intraday)|50000|2000|INTRADAY|0|3000|Trail updates on every new equity high during the session.|50100
-MyFundedFutures|Rapid (4% intraday)|100000|4000|INTRADAY|0|6000|Trail updates on every new equity high during the session.|100100
-MyFundedFutures|Rapid (4% intraday)|150000|6000|INTRADAY|0|9000|Trail updates on every new equity high during the session.|150100
-MyFundedFutures|Pro (3% EOD)|50000|1500|EOD|0|3000|End-of-day trailing.|50100
-MyFundedFutures|Pro (3% EOD)|100000|3000|EOD|0|6000|End-of-day trailing.|100100
-MyFundedFutures|Pro (3% EOD)|150000|4500|EOD|0|9000|End-of-day trailing.|150100
+# No daily loss limit on Rapid or Pro; Builder has a $1,000 soft pause.
+MyFundedFutures|Builder|50000|2000|EOD|1000|3000|$1,000 soft-pause daily loss; $1,500 max-loss option at checkout.|50100
+MyFundedFutures|Rapid (intraday)|25000|1000|INTRADAY|0|1500|Trail updates on every new equity high during the session.|25100
+MyFundedFutures|Rapid (intraday)|50000|2000|INTRADAY|0|3000|Trail updates on every new equity high during the session.|50100
+MyFundedFutures|Rapid (intraday)|100000|3000|INTRADAY|0|6000|Trail updates on every new equity high during the session.|100100
+MyFundedFutures|Rapid (intraday)|150000|4500|INTRADAY|0|9000|Trail updates on every new equity high during the session.|150100
+MyFundedFutures|Pro (EOD)|50000|2000|EOD|0|3000|End-of-day trailing.|50100
+MyFundedFutures|Pro (EOD)|100000|3000|EOD|0|6000|End-of-day trailing.|100100
+MyFundedFutures|Pro (EOD)|150000|4500|EOD|0|9000|End-of-day trailing.|150100
 MyFundedFutures|Core (legacy)|50000|1500|EOD|0|3000|Legacy plan - verify, no longer sold.|50100
 MyFundedFutures|Flex (legacy, static)|25000|1000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|25100
 MyFundedFutures|Flex (legacy, static)|50000|2000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|50100
+
+# -- Bulenox --------------------------------------------------------------------
+# Rithmic feed; usable on NinjaTrader 8. Two eval options per size: "No Scaling"
+# (intraday trailing, full contracts from the start) and "EOD" (end-of-day
+# trailing, dynamic scaling). Bulenox publishes a lock only for the funded/Master
+# EOD account (stops at initial balance + $100); no lock is published for the
+# evaluation trailing drawdown, so LOCKAT stays 0. No daily loss limit stated for
+# the evaluation.
+Bulenox|Evaluation No-Scaling (intraday)|25000|1500|INTRADAY|0|1500|Rithmic/NT8. Trails peak; no published eval lock. Cap 3 minis.|0|3
+Bulenox|Evaluation No-Scaling (intraday)|50000|2500|INTRADAY|0|3000|Rithmic/NT8. Trails peak; no published eval lock. Cap 7 minis.|0|7
+Bulenox|Evaluation No-Scaling (intraday)|100000|3000|INTRADAY|0|6000|Rithmic/NT8. Trails peak; no published eval lock. Cap 12 minis.|0|12
+Bulenox|Evaluation No-Scaling (intraday)|150000|4500|INTRADAY|0|9000|Rithmic/NT8. Trails peak; no published eval lock. Cap 15 minis.|0|15
+Bulenox|Evaluation No-Scaling (intraday)|250000|5500|INTRADAY|0|15000|Rithmic/NT8. Trails peak; no published eval lock. Cap 25 minis.|0|25
+Bulenox|Evaluation EOD|25000|1500|EOD|0|1500|Rithmic/NT8. EOD trailing; eval lock unconfirmed. Cap 3 minis.|0|3
+Bulenox|Evaluation EOD|50000|2500|EOD|0|3000|Rithmic/NT8. EOD trailing; eval lock unconfirmed. Cap 7 minis.|0|7
+Bulenox|Evaluation EOD|100000|3000|EOD|0|6000|Rithmic/NT8. EOD trailing; eval lock unconfirmed. Cap 12 minis.|0|12
+Bulenox|Evaluation EOD|150000|4500|EOD|0|9000|Rithmic/NT8. EOD trailing; eval lock unconfirmed. Cap 15 minis.|0|15
+Bulenox|Evaluation EOD|250000|5500|EOD|0|15000|Rithmic/NT8. EOD trailing; eval lock unconfirmed. Cap 25 minis.|0|25
+
+# -- Tradeify -------------------------------------------------------------------
+# Tradovate feed; usable on NinjaTrader. All plans use END-OF-DAY trailing off the
+# highest EOD balance. Drawdown locks (start + $100) ONLY once funded (Sim Funded),
+# NOT during the evaluation - so LOCKAT stays 0 for these eval rows. Daily loss
+# limits are "soft" (lock the day, do not fail the account). Caps for accounts
+# bought after 12 Sep 2025.
+Tradeify|Growth evaluation (EOD)|25000|1000|EOD|600|1500|Tradovate/NT. Soft daily loss. Locks start+100 only once funded. Cap 1 mini.|0|1
+Tradeify|Growth evaluation (EOD)|50000|2000|EOD|1250|3000|Tradovate/NT. Soft daily loss. Locks once funded. Cap 4 minis.|0|4
+Tradeify|Growth evaluation (EOD)|100000|3500|EOD|2500|6000|Tradovate/NT. Soft daily loss. Locks once funded. Cap 8 minis.|0|8
+Tradeify|Growth evaluation (EOD)|150000|5000|EOD|3000|9000|Tradovate/NT. Soft daily loss. Locks once funded. Cap 12 minis.|0|12
+
+# -- TradeDay -------------------------------------------------------------------
+# CQG feed via Tradovate; free NinjaTrader 8 provided. Each size sold in an
+# Intraday and an End-of-Day version. Trailing max drawdown trails the peak then
+# FREEZES at the starting balance (their own example: a 100K starts TMD at 97,000
+# and freezes once balance hits 103,000). No separate daily loss limit.
+TradeDay|Evaluation (intraday)|50000|2000|INTRADAY|0|3000|CQG/NT8. TMD freezes at starting balance. Cap 5 minis.|50000|5
+TradeDay|Evaluation (intraday)|100000|3000|INTRADAY|0|6000|CQG/NT8. TMD freezes at starting balance. Cap 10 minis.|100000|10
+TradeDay|Evaluation (intraday)|150000|4500|INTRADAY|0|9000|CQG/NT8. TMD freezes at starting balance. Cap 15 minis.|150000|15
+TradeDay|Evaluation (end-of-day)|50000|2000|EOD|0|3000|CQG/NT8. TMD freezes at starting balance. Cap 5 minis.|50000|5
+TradeDay|Evaluation (end-of-day)|100000|3000|EOD|0|6000|CQG/NT8. TMD freezes at starting balance. Cap 10 minis.|100000|10
+TradeDay|Evaluation (end-of-day)|150000|4500|EOD|0|9000|CQG/NT8. TMD freezes at starting balance. Cap 15 minis.|150000|15
+
+# -- Earn2Trade -----------------------------------------------------------------
+# Rithmic or Tradovate feed; usable on NinjaTrader (all provided free). Current
+# evaluations use END-OF-DAY drawdown that trails up only and FREEZES at the
+# starting balance. Sold as Trader Career Path (TCP) and Gauntlet Mini (GAU);
+# same-size specs match. Only sizes verified from Earn2Trade's own pages are
+# listed (GAU150/200 figures were image-only and are omitted).
+Earn2Trade|Trader Career Path / Gauntlet (EOD)|25000|1500|EOD|550|1750|Rithmic/Tradovate/NT. Freezes at starting balance. Cap 3 minis.|25000|3
+Earn2Trade|Trader Career Path / Gauntlet (EOD)|50000|2000|EOD|1100|3000|Rithmic/Tradovate/NT. Freezes at starting balance. Cap 6 minis.|50000|6
+Earn2Trade|Trader Career Path / Gauntlet (EOD)|100000|3500|EOD|2200|6000|Rithmic/Tradovate/NT. Freezes at starting balance. Cap 12 minis.|100000|12
+
+# -- Legends Trading ------------------------------------------------------------
+# Rithmic/Tradovate; usable on NinjaTrader (listed in NinjaTrader's own prop-firm
+# directory). Max drawdown is calculated END OF DAY. The firm does not publish
+# whether the trailing drawdown locks at the starting balance, so LOCKAT stays 0
+# (assume it trails = understates room) until confirmed. Two eval families:
+# Apprentice (subscription) and Elite (one-time).
+Legends Trading|Apprentice evaluation (EOD)|25000|1500|EOD|0|1500|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 4 minis.|0|4
+Legends Trading|Apprentice evaluation (EOD)|50000|2000|EOD|0|3000|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 10 minis.|0|10
+Legends Trading|Apprentice evaluation (EOD)|100000|3000|EOD|0|6000|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 14 minis.|0|14
+Legends Trading|Apprentice evaluation (EOD)|150000|4000|EOD|0|9000|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 17 minis.|0|17
+Legends Trading|Elite evaluation (EOD)|25000|1250|EOD|0|1500|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 2 minis.|0|2
+Legends Trading|Elite evaluation (EOD)|50000|2200|EOD|0|2700|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 4 minis.|0|4
+Legends Trading|Elite evaluation (EOD)|100000|3000|EOD|0|6000|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 8 minis.|0|8
+Legends Trading|Elite evaluation (EOD)|150000|4500|EOD|0|9000|Rithmic/Tradovate/NT. EOD trailing; lock unconfirmed. Cap 12 minis.|0|12
+
+# -- Elite Trader Funding -------------------------------------------------------
+# NinjaTrader / Rithmic / Tradovate. Verified live from ETF's own pricing widget
+# (elitetraderfunding.app/evaluations, 1 Aug 2026). Trailing plans lock at
+# start+$100 once the "safety net" (max drawdown + $100 realized) is reached, so
+# LOCKAT = size+100. Static never trails (fixed floor = size - max loss). Only the
+# sizes read directly are listed; 1-Step 250K, EOD 150K, Static 25K/50K, Diamond
+# Hands, Direct-to-Funded and Fast Track are not yet added.
+Elite Trader Funding|1-Step (Live Trailing, intraday)|50000|2000|INTRADAY|0|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis.|50100|8
+Elite Trader Funding|1-Step (Live Trailing, intraday)|100000|3000|INTRADAY|0|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis.|100100|14
+Elite Trader Funding|1-Step (Live Trailing, intraday)|150000|5000|INTRADAY|0|9000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 18 minis.|150100|18
+Elite Trader Funding|End of Day (EOD trailing)|50000|2000|EOD|1100|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis.|50100|8
+Elite Trader Funding|End of Day (EOD trailing)|100000|3500|EOD|2200|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis.|100100|14
+Elite Trader Funding|Static (fixed floor)|10000|500|EOD|0|1000|NT/Rithmic/Tradovate. Fixed floor, never trails. Cap 1 mini.|9500|1
 
 # -- Your own account (not a prop firm) ---------------------------------------
 # For an Interactive Brokers, NinjaTrader Brokerage or any self-funded account.
