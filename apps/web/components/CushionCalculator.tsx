@@ -9,6 +9,18 @@ import {
 } from "@/lib/disciplineEngine";
 
 const POINT_VALUE: Record<string, number> = { ES: 50, NQ: 20, MES: 5, MNQ: 2 };
+// All four here use a 0.25 tick size = 4 ticks per point, so $/tick = $/point / 4.
+const TICK_VALUE: Record<string, number> = { ES: 12.5, NQ: 5, MES: 1.25, MNQ: 0.5 };
+const tickValue = (inst: string) => TICK_VALUE[inst] ?? 0;
+
+type Setup = {
+  id: number;
+  name: string;
+  inst: string;
+  stopTicks: number;
+  targetTicks: number;
+  contracts: number;
+};
 
 type Kind = "eval_rithmic" | "eval_tradovate" | "funded" | "own";
 
@@ -263,7 +275,166 @@ export default function CushionCalculator() {
           )}
         </Out>
       </Card>
+
+      <SetupsCard cushion={cushion} />
     </div>
+  );
+}
+
+function SetupsCard({ cushion }: { cushion: number }) {
+  const [setups, setSetups] = useState<Setup[]>([
+    { id: 1, name: "Renko 50", inst: "ES", stopTicks: 135, targetTicks: 141, contracts: 2 },
+    { id: 2, name: "Renko 80", inst: "ES", stopTicks: 250, targetTicks: 350, contracts: 2 },
+  ]);
+  const [nextId, setNextId] = useState(3);
+
+  const update = (id: number, patch: Partial<Setup>) =>
+    setSetups((list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const remove = (id: number) => setSetups((list) => list.filter((x) => x.id !== id));
+  const add = () => {
+    setSetups((list) => [
+      ...list,
+      { id: nextId, name: "New setup", inst: "ES", stopTicks: 40, targetTicks: 80, contracts: 1 },
+    ]);
+    setNextId((n) => n + 1);
+  };
+
+  return (
+    <Card title="Your setups - risk per trade vs your cushion">
+      <p className="text-[13px] text-[#9aa7b4]">
+        Enter each setup the way you actually trade it (stops in ticks). Ballast shows what a full
+        stop costs and how much of your remaining failure buffer it eats &mdash; the number that
+        decides whether a strategy you have an edge on can still quietly end the account.
+      </p>
+      <div className="mt-4 space-y-3">
+        {setups.map((s) => (
+          <SetupRow
+            key={s.id}
+            s={s}
+            cushion={cushion}
+            onChange={(p) => update(s.id, p)}
+            onRemove={() => remove(s.id)}
+          />
+        ))}
+        {setups.length === 0 && (
+          <p className="text-[13px] text-[#7f8b98]">No setups yet &mdash; add one below.</p>
+        )}
+      </div>
+      <button
+        onClick={add}
+        className="mt-3 rounded-lg border border-[#2a333f] px-4 py-2 text-[13px] text-[#9aa7b4] hover:border-[#4da3ff] hover:text-[#4da3ff]"
+      >
+        + Add a setup
+      </button>
+      <p className="mt-4 text-[12px] text-[#7f8b98]">
+        Descriptive risk math from your own numbers and the cushion above &mdash; for risk
+        management only. Not financial advice, and not a prediction of results.
+      </p>
+    </Card>
+  );
+}
+
+function SetupRow({
+  s,
+  cushion,
+  onChange,
+  onRemove,
+}: {
+  s: Setup;
+  cushion: number;
+  onChange: (p: Partial<Setup>) => void;
+  onRemove: () => void;
+}) {
+  const tv = tickValue(s.inst);
+  const risk = s.stopTicks * tv * s.contracts;
+  const reward = s.targetTicks * tv * s.contracts;
+  const rr = s.stopTicks > 0 ? s.targetTicks / s.stopTicks : 0;
+  const bufferPct = cushion > 0 ? (risk / cushion) * 100 : Infinity;
+  const stopsLeft = risk > 0 ? Math.floor(cushion / risk) : Infinity;
+  const breaches = cushion > 0 && risk >= cushion;
+  const tone = bufferPct >= 33 ? "#f4523b" : bufferPct >= 15 ? "#e3b341" : "#3fb950";
+
+  return (
+    <div className="rounded-lg border border-[#2a333f] bg-[#12161c] p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] text-[#9aa7b4]">Setup</span>
+          <input
+            value={s.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            className="w-32 rounded-lg border border-[#2a333f] bg-[#0e141b] px-2 py-1.5 text-[14px] outline-none focus:border-[#4da3ff]"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[12px] text-[#9aa7b4]">Instrument</span>
+          <select
+            value={s.inst}
+            onChange={(e) => onChange({ inst: e.target.value })}
+            className="rounded-lg border border-[#2a333f] bg-[#0e141b] px-2 py-1.5 text-[14px] outline-none focus:border-[#4da3ff]"
+          >
+            <option value="ES">ES</option>
+            <option value="NQ">NQ</option>
+            <option value="MES">MES</option>
+            <option value="MNQ">MNQ</option>
+          </select>
+        </label>
+        <SetupNum label="Stop (ticks)" value={s.stopTicks} onChange={(n) => onChange({ stopTicks: n })} />
+        <SetupNum label="Target (ticks)" value={s.targetTicks} onChange={(n) => onChange({ targetTicks: n })} />
+        <SetupNum label="Contracts" value={s.contracts} onChange={(n) => onChange({ contracts: n })} />
+        <button onClick={onRemove} className="ml-auto text-[13px] text-[#7f8b98] hover:text-[#f4523b]">
+          Remove
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-[13px]">
+        <span className="text-[#9aa7b4]">
+          Risk per stop: <b className="text-[#e8edf3]">{money(risk)}</b>
+        </span>
+        <span className="text-[#9aa7b4]">
+          Reward: <b className="text-[#e8edf3]">{money(reward)}</b> ({rr.toFixed(2)}R)
+        </span>
+        <span className="text-[#9aa7b4]">
+          Share of buffer:{" "}
+          <b style={{ color: tone }}>{isFinite(bufferPct) ? bufferPct.toFixed(1) + "%" : "—"}</b>
+        </span>
+        <span className="text-[#9aa7b4]">
+          Full stops left: <b style={{ color: tone }}>{isFinite(stopsLeft) ? stopsLeft : "∞"}</b>
+        </span>
+      </div>
+      {breaches && (
+        <p className="mt-2 text-[13px] text-[#f4523b]">
+          A single full stop on this setup breaches your floor &mdash; this trade alone can end the
+          account.
+        </p>
+      )}
+      {!breaches && bufferPct >= 33 && (
+        <p className="mt-2 text-[13px] text-[#e3b341]">
+          One stop here is {bufferPct.toFixed(0)}% of everything standing between you and a blown
+          account.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SetupNum({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[12px] text-[#9aa7b4]">{label}</span>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        className="w-24 rounded-lg border border-[#2a333f] bg-[#0e141b] px-2 py-1.5 text-[14px] outline-none focus:border-[#4da3ff]"
+      />
+    </label>
   );
 }
 
