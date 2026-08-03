@@ -27,7 +27,7 @@ public static class CountTests
         BallastState.Clear("Sim110");
 
         BallastState.Publish("Sim110", "clear", 0, "Clear to trade", 6500, true, now);
-        BallastState.PublishCount("Sim110", 2, 5, 1, 3, 2400, true, -600, 750, now);
+        BallastState.PublishCount("Sim110", 2, 5, 1, 3, 2400, 3000, -600, 750, now);
 
         AccountState s = BallastState.Get("Sim110", now);
         T.Ok(s != null, "the account is on the board");
@@ -42,14 +42,14 @@ public static class CountTests
 
         // The actual complaint: changing an account's rules produced no visible
         // change on the chart, because the chart only ever said "BALLAST OK".
-        BallastState.PublishCount("Sim110", 2, 8, 1, 3, 2400, true, -600, 750, now);
+        BallastState.PublishCount("Sim110", 2, 8, 1, 3, 2400, 3000, -600, 750, now);
         string after = BallastState.ChartCount(BallastState.Get("Sim110", now), "Sim110");
         T.Ok(after != line, "changing the rules changes what the chart says");
         T.Ok(after.IndexOf("2/8 TRADES") >= 0, "and it shows the new limit");
 
         // Without limits set it still says something true rather than nothing.
         BallastState.Clear("Sim104");
-        BallastState.PublishCount("Sim104", 0, 0, 0, 0, 0, false, 0, 0, now);
+        BallastState.PublishCount("Sim104", 0, 0, 0, 0, 0, 0, 0, 0, now);
         string bare = BallastState.ChartCount(BallastState.Get("Sim104", now), "Sim104");
         T.Ok(bare.IndexOf("0 TRADES") >= 0, "no trade limit still reports the count");
         T.Ok(bare.IndexOf("LEFT") < 0, "and does not invent a budget that was never set");
@@ -57,11 +57,98 @@ public static class CountTests
 
         // Singular grammar, because "1 TRADES" on a chart looks broken.
         BallastState.Clear("Sim105");
-        BallastState.PublishCount("Sim105", 1, 0, 1, 0, 0, false, 0, 0, now);
+        BallastState.PublishCount("Sim105", 1, 0, 1, 0, 0, 0, 0, 0, now);
         string one = BallastState.ChartCount(BallastState.Get("Sim105", now), "Sim105");
         T.Ok(one.IndexOf("1 TRADE ") >= 0 || one.EndsWith("1 TRADE"), "one trade reads as a trade");
         T.Ok(one.IndexOf("1 TRADES") < 0, "not as 1 TRADES");
         T.Ok(one.IndexOf("1 LOSSES") < 0, "and one loss reads as a loss");
+
+        // ── The right chart for the right account ───────────────────────────
+        //
+        // "it is capturing the wrong charts for the trades... apex 106 was on
+        // this chart not the one listed in the journal."
+        //
+        // With NQ open on three charts, every one of them matches the instrument,
+        // so the picture came from whichever chart happened to be focused. The
+        // Chart Trader account is the only thing that tells them apart.
+        List<string> accts = new List<string> { "APEX-11325-105", "APEX-11325-106", "" };
+        List<string> instrs = new List<string> { "NQ SEP26", "NQ SEP26", "NQ SEP26" };
+
+        T.Eq(ChartSnapshot.AccountChartIndex(accts, instrs, "APEX-11325-106", "NQ SEP26"), 1,
+             "the chart bound to 106 is the one photographed for 106");
+        T.Eq(ChartSnapshot.AccountChartIndex(accts, instrs, "APEX-11325-105", "NQ SEP26"), 0,
+             "and 105 gets its own");
+
+        // An account on a chart showing something else still beats a chart that
+        // is merely in front - but the instrument decides between two of its own.
+        List<string> two = new List<string> { "ES 09-26", "NQ SEP26" };
+        List<string> both = new List<string> { "APEX-105", "APEX-105" };
+        T.Eq(ChartSnapshot.AccountChartIndex(both, two, "APEX-105", "NQ SEP26"), 1,
+             "the account's NQ chart wins over the account's ES chart");
+        T.Eq(ChartSnapshot.AccountChartIndex(both, two, "APEX-105", "ES 09-26"), 0,
+             "and the other way round");
+
+        // Silence rather than a guess.
+        T.Eq(ChartSnapshot.AccountChartIndex(accts, instrs, "Sim110", "NQ SEP26"), -1,
+             "an account on no chart hands the choice back");
+        T.Eq(ChartSnapshot.AccountChartIndex(null, instrs, "APEX-105", "NQ SEP26"), -1,
+             "and so does knowing nothing about the charts");
+        T.Eq(ChartSnapshot.AccountChartIndex(accts, instrs, "", "NQ SEP26"), -1,
+             "and so does not knowing the account");
+
+        // ── Colour by how close, not by whether the day is red ──────────────
+        //
+        // "Down three dollars" and "two of three losses with $374 of a $3,000
+        // budget left" used to be the same shade of white. The engine is right
+        // to stay calm until a rule is actually broken, but "not yet broken" and
+        // "nowhere near" are different states.
+        AccountState clear = new AccountState();
+        clear.TradesToday = 1; clear.MaxTrades = 5;
+        clear.LossesToday = 0; clear.MaxLosses = 3;
+        clear.DailyLossLimit = 3000; clear.RoomToday = 2800;
+        T.Eq(BallastState.CountUrgency(clear), 0, "a clean account is clear");
+
+        AccountState thin = new AccountState();
+        thin.TradesToday = 3; thin.MaxTrades = 5;
+        thin.LossesToday = 2; thin.MaxLosses = 3;
+        thin.DailyLossLimit = 3000; thin.RoomToday = 374;
+        T.Eq(BallastState.CountUrgency(thin), 1,
+             "$374 of a $3,000 budget with two of three losses is not white");
+
+        AccountState budget = new AccountState();
+        budget.TradesToday = 1; budget.MaxTrades = 10;
+        budget.LossesToday = 0; budget.MaxLosses = 5;
+        budget.DailyLossLimit = 3000; budget.RoomToday = 900;
+        T.Eq(BallastState.CountUrgency(budget), 1,
+             "two thirds of the budget gone is enough on its own");
+
+        AccountState lastLoss = new AccountState();
+        lastLoss.TradesToday = 2; lastLoss.MaxTrades = 10;
+        lastLoss.LossesToday = 2; lastLoss.MaxLosses = 3;
+        T.Eq(BallastState.CountUrgency(lastLoss), 1, "so is one more loss ending the day");
+
+        AccountState lastTrade = new AccountState();
+        lastTrade.TradesToday = 4; lastTrade.MaxTrades = 5;
+        T.Eq(BallastState.CountUrgency(lastTrade), 1, "and so is one trade left");
+
+        AccountState spent = new AccountState();
+        spent.DailyLossLimit = 3000; spent.RoomToday = 0;
+        T.Eq(BallastState.CountUrgency(spent), 2, "a spent budget is at a line");
+
+        AccountState stopped = new AccountState();
+        stopped.LossesToday = 3; stopped.MaxLosses = 3;
+        T.Eq(BallastState.CountUrgency(stopped), 2, "so is the loss streak");
+
+        AccountState counted = new AccountState();
+        counted.TradesToday = 5; counted.MaxTrades = 5;
+        T.Eq(BallastState.CountUrgency(counted), 2, "so is the trade count");
+
+        // No limits set means nothing to be close to. An account with no rules
+        // must never be painted as though it were about to breach one.
+        AccountState bareState = new AccountState();
+        bareState.TradesToday = 40; bareState.LossesToday = 12;
+        T.Eq(BallastState.CountUrgency(bareState), 0, "no limits set is never a warning");
+        T.Eq(BallastState.CountUrgency(null), 0, "and neither is nothing at all");
 
         // The count must not resurrect an account whose window has closed.
         T.Ok(BallastState.Get("Sim110", now.AddMinutes(5)) == null,

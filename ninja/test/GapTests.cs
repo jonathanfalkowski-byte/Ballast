@@ -29,6 +29,8 @@ public static class GapTests
         FirstOpenOfTheDayIsUnchanged();
         MatchesTheAccountsOwnFigure();
         CommissionIsRecordedPerTrade();
+        ReconstructedRowsAreMoneyNotDecisions();
+        OldJournalsAreConsolidated();
     }
 
     static TrackerConfig Cfg()
@@ -218,19 +220,177 @@ public static class GapTests
         T.Ok(old != null, "an older row still loads");
         T.Near(old.Commission, 0, 0.01, "and simply does not know what it cost");
 
-        // The bound itself: what the watched trades cost, plus a few dollars.
-        // Ten minis of drift is over 40 - a flat 25 would have booked it as a
-        // phantom trade, and a flat 50 would have hidden a real one from someone
-        // trading a single contract.
+        // ── The bound the reconciliation actually uses ───────────────────────
+        //
+        // Mirrors BallastWindow.ReconcileClosedPeriod. The account's own
+        // commission total for the day, or the journal's if the feed reports
+        // none, plus a few dollars.
         double watched = e.Commission + e2.Commission;
-        double noise = watched + 5.0;
-        T.Near(noise, 54.92, 0.01, "the noise floor is the trader's own commission");
-        T.Ok(noise > 41.60, "so a day of ten-lot commission does not become a missing trade");
+        T.Near(Noise(49.92, watched), 54.92, 0.01,
+               "the floor is the trader's own commission, not a flat guess");
+        T.Ok(Noise(49.92, watched) > 41.60,
+             "so a day of ten-lot commission never becomes a missing trade");
+        T.Near(Noise(0, 0), 5.0, 0.01,
+               "and a day with no commission at all has nothing to explain away");
 
-        BallastTracker quiet = new BallastTracker();
-        quiet.Config = Cfg();
-        T.Near(0 + 5.0, 5.0, 0.01,
-               "and a day with no watched trades has nothing to explain away");
+        // THE CASE THAT BROKE IT. Ballast restarts, and the journal rows from
+        // this morning were written by a build that did not record commission -
+        // so every one of them reads zero. Summing the journal collapsed the
+        // floor to five dollars and booked a $26 commission residue as a trade.
+        T.Near(Noise(26.16, 0), 31.16, 0.01,
+               "the account's figure holds up when the journal's does not");
+        T.Ok(Ignored(26, Noise(26.16, 0)),
+             "so $26 against $26.16 of commission is not a missing trade");
+        T.Ok(Ignored(9, Noise(9.30, 0)), "nor $9 against $9.30");
+        T.Ok(!Ignored(400, Noise(26.16, 0)), "while $400 against $26 of commission still is");
+
+        // BOTH DIRECTIONS. The first version only tolerated the account looking
+        // WORSE than the journal. The trader's own case was the other way: the
+        // account had made -$2,100 and Ballast had counted -$2,126, so the
+        // journal over-stated the loss by $26. A charge landing after one round
+        // trip closes is absorbed by the next, and that can push either way.
+        T.Ok(Ignored(26, Noise(26.16, 0)), "a positive residue is commission too");
+        T.Ok(Ignored(-26, Noise(26.16, 0)), "and so is a negative one");
+    }
+
+    /// <summary>
+    /// "it is also recording the trades wrong, i have only done 1 trade for apex
+    /// 106... apex 105 ive only done 2 total trades and it seems to think i did
+    /// 5... all the accounts are off... and it thinks im done for the day."
+    ///
+    /// Each reconstructed row was counting as one trade AND one loss. A day of
+    /// restarts therefore drove every account to its max-trades limit and its
+    /// loss streak, and Ballast said STOP on the strength of its own bookkeeping.
+    /// A rule that fires on an artefact discredits every other rule in the
+    /// product.
+    /// </summary>
+    static void ReconstructedRowsAreMoneyNotDecisions()
+    {
+        T.S("a reconstructed row is money, not a decision");
+
+        BallastTrade watched = new BallastTrade();
+        watched.AccountName = "APEX-105";
+        watched.Instrument = "NQ SEP26";
+        watched.MaxContracts = 2;
+        watched.IsLong = true;
+        watched.Pnl = -400;
+        T.Ok(!watched.IsReconstructed, "a watched trade has a size and a direction");
+        T.Eq(watched.SizeLabel, "Long 2", "and says so");
+
+        BallastTrade gap = new BallastTrade();
+        gap.AccountName = "APEX-105";
+        gap.Instrument = "(Ballast was closed)";
+        gap.MaxContracts = 0;
+        gap.Pnl = -1372;
+        T.Ok(gap.IsReconstructed, "a reconstructed row has neither");
+        T.Eq(gap.SizeLabel, "", "so it claims neither");
+
+        // The counting rule, mirrored from BallastWindow.SeedTodaysCounts: money
+        // from every row, counts from watched rows only.
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Row("APEX-105", 2, -400));      // watched, a loss
+        day.Add(Row("APEX-105", 1, 250));       // watched, a win
+        day.Add(Row("APEX-105", 0, -1372));     // reconstructed - one row, folded
+
+        int trades = 0, losses = 0;
+        double pnl = 0;
+        for (int i = 0; i < day.Count; i++)
+        {
+            pnl += day[i].Pnl;
+            trades++;
+            if (day[i].Pnl < 0) losses++;
+        }
+
+        // With the gap folded into ONE row per account per day, this is the whole
+        // day: two watched trades and one reconstructed one.
+        T.Eq(trades, 3, "one reconstructed row counts as one trade, not none and not five");
+        T.Eq(losses, 2, "and as one loss, because it lost");
+        T.Near(pnl, -1522, 0.01, "while every dollar is counted exactly once");
+
+        // Both extremes have been wrong in production, and this is the case that
+        // killed the second one: the trader had taken two losing trades and was
+        // told he had taken one, against a rule that stops him at three.
+        T.Ok(losses >= 2, "a day of two losing trades reports two, one of them reconstructed");
+
+        // And the failure the first version caused: five trades against a limit
+        // of five and three losses against a limit of three, all from restarts.
+        T.Ok(trades < 5, "restarts can no longer inflate the count");
+    }
+
+    /// <summary>
+    /// A journal that already holds several rows describing the same gap - the
+    /// state every earlier build left behind - is corrected once on load.
+    /// </summary>
+    static void OldJournalsAreConsolidated()
+    {
+        T.S("several rows for one gap become one");
+
+        DateTime day = new DateTime(2026, 8, 3);
+
+        BallastJournal j = new BallastJournal();
+        j.Add(At(Row("APEX-105", 2, -400), day.AddHours(9)));
+        j.Add(At(Row("APEX-105", 0, -1372), day.AddHours(11)));
+        j.Add(At(Row("APEX-105", 0, -26), day.AddHours(12)));
+        j.Add(At(Row("APEX-105", 0, -9), day.AddHours(13)));
+        j.Add(At(Row("APEX-106", 0, -50), day.AddHours(12)));
+        j.Add(At(Row("APEX-105", 0, -200), day.AddDays(1).AddHours(10)));
+
+        T.Eq(j.ConsolidateReconstructed(), 2, "two duplicate rows go");
+        T.Eq(j.All.Count, 4, "leaving the watched trade and one gap row per account per day");
+
+        List<BallastTrade> left = j.All;
+        double gap105 = 0, gap106 = 0;
+        int recon = 0;
+        for (int i = 0; i < left.Count; i++)
+        {
+            if (!left[i].IsReconstructed) continue;
+            recon++;
+            if (left[i].ExitTime.Date != day) continue;
+            if (left[i].AccountName == "APEX-105") gap105 = left[i].Pnl;
+            else gap106 = left[i].Pnl;
+        }
+
+        T.Eq(recon, 3, "one for 105 today, one for 106 today, one for 105 tomorrow");
+        T.Near(gap105, -1407, 0.01, "and every dollar of 105's three rows is in the one that stays");
+        T.Near(gap106, -50, 0.01, "while another account's gap is its own");
+
+        // Running it again changes nothing - it is a repair, not a transform.
+        T.Eq(j.ConsolidateReconstructed(), 0, "a consolidated journal stays consolidated");
+
+        // A journal of watched trades is left completely alone.
+        BallastJournal clean = new BallastJournal();
+        clean.Add(At(Row("APEX-105", 2, -400), day.AddHours(9)));
+        clean.Add(At(Row("APEX-105", 1, 250), day.AddHours(10)));
+        T.Eq(clean.ConsolidateReconstructed(), 0, "nothing to do on a watched journal");
+        T.Eq(clean.All.Count, 2, "and nothing is lost");
+    }
+
+    static BallastTrade At(BallastTrade e, DateTime when)
+    {
+        e.EntryTime = when;
+        e.ExitTime = when.AddMinutes(3);
+        return e;
+    }
+
+    static BallastTrade Row(string account, int contracts, double pnl)
+    {
+        BallastTrade e = new BallastTrade();
+        e.AccountName = account;
+        e.MaxContracts = contracts;
+        e.Pnl = pnl;
+        e.IsLong = true;
+        return e;
+    }
+
+    /// <summary>Mirrors the bound in BallastWindow.ReconcileClosedPeriod.</summary>
+    static double Noise(double accountCommissionToday, double journalCommission)
+    {
+        return Math.Max(accountCommissionToday, journalCommission) + 5.0;
+    }
+
+    static bool Ignored(double missing, double noise)
+    {
+        return missing > -noise && missing < noise;
     }
 
     static void TradesWhileClosedLandInTheDay()

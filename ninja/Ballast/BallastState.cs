@@ -61,8 +61,12 @@ namespace Ballast
         public double RoomToday;
         /// <summary>Today's target and whether one is set - the other end of the same decision as RoomToday.</summary>
         public double DailyTarget;
-        public bool HasDailyLimit;
+        /// <summary>The daily loss limit this room is measured against. 0 = none set.</summary>
+        public double DailyLossLimit;
+        public bool HasDailyLimit { get { return DailyLossLimit > 0; } }
         public double DailyPnl;
+
+        /// <summary>Room to the account's floor, and whether it is known.</summary>
     }
 
     public static class BallastState
@@ -106,7 +110,7 @@ namespace Ballast
         /// </summary>
         public static void PublishCount(string account, int tradesToday, int maxTrades,
                                         int lossesToday, int maxLosses,
-                                        double roomToday, bool hasDailyLimit,
+                                        double roomToday, double dailyLossLimit,
                                         double dailyPnl, double dailyTarget, DateTime now)
         {
             if (string.IsNullOrEmpty(account)) return;
@@ -121,7 +125,7 @@ namespace Ballast
                 s.LossesToday = lossesToday;
                 s.MaxLosses = maxLosses;
                 s.RoomToday = roomToday;
-                s.HasDailyLimit = hasDailyLimit;
+                s.DailyLossLimit = dailyLossLimit;
                 s.DailyPnl = dailyPnl;
                 s.DailyTarget = dailyTarget;
                 if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
@@ -178,6 +182,42 @@ namespace Ballast
                 sb.Append("   ").Append(Money(s.CanLose)).Append(" TO FLOOR");
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// How much attention the quiet count deserves. 0 = clear, 1 = getting
+        /// close, 2 = at a line.
+        ///
+        /// The chart used to paint this line white whenever the day was red and
+        /// green whenever it was not, which says almost nothing: a trader three
+        /// dollars down and a trader with $374 left of a $3,000 budget and two of
+        /// three losses on the board got the same colour. White is the absence of
+        /// a signal, and this line's whole job is to be glanceable.
+        ///
+        /// The engine deliberately stays calm until a rule is actually broken -
+        /// that is right, because an alarm that fires early is an alarm people
+        /// learn to ignore. But "not yet broken" and "nowhere near" are different
+        /// states and should not look identical.
+        /// </summary>
+        public static int CountUrgency(AccountState s)
+        {
+            if (s == null) return 0;
+
+            // At a line. These normally carry a banner of their own, so this is
+            // mostly here so the count never contradicts one.
+            if (s.HasDailyLimit && s.RoomToday <= 0) return 2;
+            if (s.MaxLosses > 0 && s.LossesToday >= s.MaxLosses) return 2;
+            if (s.MaxTrades > 0 && s.TradesToday >= s.MaxTrades) return 2;
+
+            // One more of anything ends the day.
+            if (s.MaxLosses > 1 && s.LossesToday >= s.MaxLosses - 1) return 1;
+            if (s.MaxTrades > 1 && s.TradesToday >= s.MaxTrades - 1) return 1;
+
+            // Two thirds of today's budget gone. The same third the window uses
+            // to turn its own LEFT TO LOSE column amber, so the two agree.
+            if (s.HasDailyLimit && s.RoomToday < s.DailyLossLimit * 0.34) return 1;
+
+            return 0;
         }
 
         private static string Money(double v)

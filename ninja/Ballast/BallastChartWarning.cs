@@ -108,6 +108,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private const string Tag = "BallastWarning";
 
+        /// <summary>
+        /// Font scale for the quiet count. Deliberately below the alert size:
+        /// this line is six figures long and has to fit the panel on one row at
+        /// any zoom a trader actually uses.
+        /// </summary>
+        private const double CountScale = 0.7;
+
         // Repaints on a clock rather than on ticks. See StartClock().
         private System.Windows.Threading.DispatcherTimer clock;
 
@@ -494,7 +501,30 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string count = BallastState.ChartCount(st, ShowAccountName ? account : null);
                 if (count.Length == 0) count = "BALLAST WATCHING " + account.ToUpperInvariant();
 
-                Say(count, st.DailyPnl < 0 ? Ink : Green, Panel, 0.7, Where);
+                // Colour by how close the account is to its own lines, not by
+                // whether the day happens to be red. "Down three dollars" and
+                // "two of three losses with $374 of a $3,000 budget left" were
+                // the same shade of white, and the second one is the whole
+                // reason this line exists.
+                int close = BallastState.CountUrgency(st);
+
+                // Colour and background carry the warning. The SIZE does not.
+                //
+                // The fourth argument to Say is a font scale, not an opacity, and
+                // raising it to 1.0 for a warning made this line 43% wider than
+                // the panel - so it wrapped, and the second half landed on top of
+                // NinjaTrader's own copyright line in the corner. A warning that
+                // makes the chart look broken is a warning that gets turned off.
+                //
+                // At a line the strip is filled the way a real alarm is; getting
+                // close is amber on the usual background. Both stay at the size
+                // that fits.
+                Say(count,
+                    close >= 2 ? AlarmInk : close == 1 ? Amber
+                        : st.DailyPnl < 0 ? Ink : Green,
+                    close >= 2 ? AlarmBack : Panel,
+                    CountScale,
+                    Where);
                 return;
             }
 

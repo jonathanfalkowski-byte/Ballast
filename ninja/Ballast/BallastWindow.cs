@@ -23,6 +23,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using System.Xml.Linq;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
@@ -68,8 +69,28 @@ using Urgency             = Ballast.Urgency;
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
-    public class BallastWindow : NTWindow
+    public class BallastWindow : NTWindow, IWorkspacePersistence
     {
+        // ── Surviving a restart ──────────────────────────────────────────────
+        //
+        // NinjaTrader only writes a window into a saved workspace if that window
+        // says who it is, and it says so by implementing IWorkspacePersistence.
+        // Without it Ballast was closed every time NinjaTrader started, however
+        // the workspace had been saved - so the one thing that is supposed to be
+        // watching an account all session had to be remembered and switched on
+        // by hand, by the person it is watching.
+        //
+        // Nothing of Ballast's own goes in the workspace file. Its settings, its
+        // journal, its overrides and its session baseline all live in their own
+        // files and are the same whichever workspace is open, because they
+        // describe accounts rather than a screen layout. These two methods are
+        // deliberately empty: the interface is here to be reopened, not to store
+        // anything.
+        public WorkspaceOptions WorkspaceOptions { get; set; }
+
+        public void Restore(XDocument document, XElement element) { }
+        public void Save(XDocument document, XElement element) { }
+
         private readonly BallastMonitor monitor = new BallastMonitor();
         private DispatcherTimer timer;
 
@@ -85,6 +106,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly RuleBook ruleBook = new RuleBook();
         private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt;
         private TextBox tbWindowStart, tbWindowEnd;
+        private TextBlock windowClock;
         private CheckBox windowAnyTimeBox;
         private CheckBox automatedBox, planStandingBox;
         private ComboBox acctGenBox;
@@ -178,7 +200,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock tiltTitle, tiltLine, tiltAsk, tiltToday, tiltHistory, tiltStood;
         private TextBox tiltTypeBox;
         private ProgressBar tiltProgress;
-        private Button tiltGoOn, tiltFixConfig;
+        private Button tiltGoOn, tiltFixConfig, tiltStandAll;
+        private StackPanel tiltAllRow;
+        private TextBlock tiltAllNote;
+        /// <summary>One live trigger per account, so the wall can be answered for all of them at once.</summary>
+        private List<TiltTrigger> tiltDue = new List<TiltTrigger>();
         private StackPanel tiltConfigRow;
         private TiltTrigger tiltCurrent;
         private CheckBox tiltOnBox, tiltGiveBackBox;
@@ -205,7 +231,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private TextBlock firmSummary;
         private Button firmToggle;
-        private TextBlock editingScope, applyNote, realisedNote;
+        private TextBlock editingScope, applyNote, realisedNote, coherenceNote;
         private CheckBox trustRealisedBox;
         private StackPanel firmFields;
 
@@ -293,6 +319,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             timer.Start();
 
             Closed += OnClosedCleanup;
+
+            // Claimed on load rather than in the constructor, because a window
+            // being restored FROM a workspace already has one and must keep it -
+            // overwriting it here would give it a new identity every start and
+            // quietly accumulate dead entries in the workspace file.
+            Loaded += delegate
+            {
+                if (WorkspaceOptions == null)
+                    WorkspaceOptions = new WorkspaceOptions(
+                        "BallastWindow-" + Guid.NewGuid().ToString("N"), this);
+            };
         }
 
         // ── UI ───────────────────────────────────────────────────────────────
@@ -637,6 +674,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             standNote.Margin = new Thickness(0, 8, 0, 0);
             p.Children.Add(standNote);
 
+            // When several accounts are at a line at once, answering one at a
+            // time means the same wall four times. Shown only when it applies.
+            tiltAllRow = new StackPanel();
+            tiltAllRow.Margin = new Thickness(0, 12, 0, 0);
+            tiltAllRow.Visibility = Visibility.Collapsed;
+
+            tiltStandAll = new Button();
+            tiltStandAll.Content = "I'm done on every account";
+            tiltStandAll.FontSize = 14;
+            tiltStandAll.Padding = new Thickness(18, 9, 18, 9);
+            tiltStandAll.HorizontalAlignment = HorizontalAlignment.Left;
+            tiltStandAll.Background = ColTransparent;
+            tiltStandAll.Foreground = Brushes.White;
+            tiltStandAll.BorderBrush = Brushes.White;
+            tiltStandAll.Click += delegate { OnTiltStandDownAll(); };
+            tiltAllRow.Children.Add(tiltStandAll);
+
+            tiltAllNote = new TextBlock();
+            tiltAllNote.Foreground = Frozen(0xff, 0xc9, 0xc9);
+            tiltAllNote.FontSize = 11;
+            tiltAllNote.TextWrapping = TextWrapping.Wrap;
+            tiltAllNote.Margin = new Thickness(0, 6, 0, 0);
+            tiltAllRow.Children.Add(tiltAllNote);
+
+            p.Children.Add(tiltAllRow);
+
             // The configuration escape. Only shown for past-floor, where a wrong
             // account size in Setup is far more likely than a dead account - and
             // being accused of revenge trading by a settings bug is exactly how a
@@ -806,6 +869,29 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             tiltConfigRow.Visibility = t.ConfigSuspect ? Visibility.Visible : Visibility.Collapsed;
 
+            // Whether there is anything else waiting behind this one.
+            int others = 0;
+            System.Text.StringBuilder names = new System.Text.StringBuilder();
+            for (int i = 0; i < tiltDue.Count; i++)
+            {
+                if (string.Equals(tiltDue[i].AccountName, t.AccountName,
+                                  StringComparison.OrdinalIgnoreCase)) continue;
+                others++;
+                if (names.Length > 0) names.Append(", ");
+                names.Append(tiltDue[i].AccountName);
+            }
+
+            if (tiltAllRow != null)
+            {
+                tiltAllRow.Visibility = others > 0 ? Visibility.Visible : Visibility.Collapsed;
+                if (others > 0 && tiltAllNote != null)
+                    tiltAllNote.Text = others == 1
+                        ? names + " is at a line too, and its own wall is next. This answers both "
+                          + "at once and leaves them alone until tomorrow."
+                        : names + " are at a line too, and their walls are next. This answers all "
+                          + (others + 1) + " at once and leaves them alone until tomorrow.";
+            }
+
             tiltTypeBox.Text = "";
             tiltProgress.Value = 0;
             tiltGoOn.IsEnabled = false;
@@ -828,6 +914,35 @@ namespace NinjaTrader.NinjaScript.AddOns
             DateTime now = Core.Globals.Now;
             RecordTilt(tiltCurrent, true, now);
             tiltGate.ReleaseAccountForDay(tiltCurrent.AccountName, now);
+            SaveTiltGate();
+            HideTilt();
+        }
+
+        /// <summary>
+        /// Standing down on everything that is currently at a line. Each account
+        /// is recorded separately, because each is its own decision and the
+        /// record is what the wall shows back later.
+        /// </summary>
+        private void OnTiltStandDownAll()
+        {
+            DateTime now = Core.Globals.Now;
+            List<TiltTrigger> all = new List<TiltTrigger>(tiltDue);
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (all[i] == null || string.IsNullOrEmpty(all[i].AccountName)) continue;
+                RecordTilt(all[i], true, now);
+                tiltGate.ReleaseAccountForDay(all[i].AccountName, now);
+            }
+
+            // The one on screen may not be in the list if it arrived this tick.
+            if (tiltCurrent != null && !tiltGate.IsReleased(tiltCurrent.AccountName, tiltCurrent.Kind, now))
+            {
+                RecordTilt(tiltCurrent, true, now);
+                tiltGate.ReleaseAccountForDay(tiltCurrent.AccountName, now);
+            }
+
+            SaveTiltGate();
             HideTilt();
         }
 
@@ -839,6 +954,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // one, and filing it as tilt would poison the numbers that make the
             // rest of this worth reading.
             tiltGate.ReleaseForDay(tiltCurrent.AccountName, tiltCurrent.Kind, Core.Globals.Now);
+            SaveTiltGate();
             string acct = tiltCurrent.AccountName;
             HideTilt();
 
@@ -862,6 +978,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             DateTime now = Core.Globals.Now;
             RecordTilt(tiltCurrent, false, now);
             tiltGate.Release(tiltCurrent.AccountName, tiltCurrent.Kind, now);
+            SaveTiltGate();
             HideTilt();
         }
 
@@ -913,12 +1030,55 @@ namespace NinjaTrader.NinjaScript.AddOns
                 tiltLog.SettleStale(Core.Globals.Now);
             }
             catch { }
+
+            LoadTiltGate();
         }
 
         private string TiltPath()
         {
             try { return Path.Combine(Core.Globals.UserDataDir, "ballast-overrides.csv"); }
             catch { return "ballast-overrides.csv"; }
+        }
+
+        private string TiltGatePath()
+        {
+            try { return Path.Combine(Core.Globals.UserDataDir, "ballast-standdown.txt"); }
+            catch { return "ballast-standdown.txt"; }
+        }
+
+        /// <summary>
+        /// Write down which walls have been answered and until when.
+        ///
+        /// Standing down said "leaves the account alone until tomorrow" and then
+        /// forgot it the moment Ballast was closed, so the same wall was in front
+        /// of the trader again on the next open, asking the same question about a
+        /// decision he had already made. A promise the software cannot keep
+        /// across a restart is not a promise, and being asked twice is exactly
+        /// the nagging the wall exists to replace.
+        /// </summary>
+        private void SaveTiltGate()
+        {
+            try
+            {
+                List<string> lines = tiltGate.Serialise();
+                File.WriteAllLines(TiltGatePath(), lines.ToArray());
+            }
+            catch { }
+        }
+
+        private void LoadTiltGate()
+        {
+            try
+            {
+                string p = TiltGatePath();
+                if (!File.Exists(p)) return;
+
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+                tiltGate.Restore(new List<string>(File.ReadAllLines(p)), now);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -950,6 +1110,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TiltTrigger firstDue = null;
             bool currentStillTrue = false;
+
+            // One live trigger per account, so the wall can offer to answer for
+            // all of them at once. Standing down on one account and then being
+            // shown the next account's wall, and the next, is the same question
+            // four times over - which is exactly what the wall is supposed to
+            // replace.
+            List<TiltTrigger> due = new List<TiltTrigger>();
 
             for (int n = 0; n < snaps.Count; n++)
             {
@@ -994,6 +1161,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // rather than stopping is the whole point of walking the list.
                     if (tiltGate.IsReleased(t.AccountName, t.Kind, now)) continue;
                     if (firstDue == null) firstDue = t;
+
+                    bool already = false;
+                    for (int j = 0; j < due.Count; j++)
+                        if (string.Equals(due[j].AccountName, t.AccountName,
+                                          StringComparison.OrdinalIgnoreCase)) { already = true; break; }
+                    if (!already) due.Add(t);
                 }
             }
 
@@ -1011,6 +1184,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 HideTilt();
             }
 
+            tiltDue = due;
             if (firstDue != null) ShowTilt(firstDue, now);
         }
 
@@ -1157,7 +1331,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // The stop-cost hint reads the journal, so it is worked out when
             // Setup is opened rather than on every tick.
-            if (index == 2) { RefreshStopCostHint(); RefreshRealisedNote(); }
+            if (index == 2) { RefreshStopCostHint(); RefreshRealisedNote(); RefreshCoherence(); RefreshWindowClock(); }
         }
 
         private void StyleTab(Button b, bool on)
@@ -1639,10 +1813,12 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "number of contracts. Allowance $450, one contract's stop costs $150, so three "
               + "contracts. A bigger number here means fewer contracts, so guessing high is the safe "
               + "direction and guessing low is not.\n\n"
-              + "It is the DOLLAR cost of one contract hitting your stop, not the points. On NQ a "
-              + "20-point stop is $100 a contract ($5 a point); on MNQ it is $10 ($0.50 a point). On "
-              + "ES, $12.50 a point; MES, $1.25. If your ATM already has a stop in it, that stop in "
-              + "dollars on one contract is the number.\n\n"
+              + "It is the DOLLAR cost of one contract hitting your stop, not the points - and mind "
+              + "the difference between a POINT and a TICK, because it is a factor of four and it "
+              + "is the easiest mistake to make here. NQ is $20 a point and $5 a tick, so a "
+              + "20-point stop costs $400 a contract. MNQ is $2 a point, $0.50 a tick. ES is $50 a "
+              + "point, $12.50 a tick; MES is $5 a point, $1.25 a tick. If your ATM already has a "
+              + "stop in it, that stop in dollars on one contract is the number.\n\n"
               + "Nothing live uses it. It is not a rule, it never stops you, and it is never checked "
               + "against a trade. It is only read when you press \"Use this starting point\", and if "
               + "you leave it at 0 the starting point leaves your contract count exactly as you set "
@@ -1738,8 +1914,36 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbMaxTrades = FieldIn(gD, 0, 1, "How many trades", "4");
             dInner.Children.Add(gD);
 
+            // Whether the two numbers above agree with each other, with the size
+            // cap, and with the account's whole drawdown. See RefreshCoherence.
+            coherenceNote = new TextBlock();
+            coherenceNote.FontSize = 12;
+            coherenceNote.TextWrapping = TextWrapping.Wrap;
+            coherenceNote.Margin = new Thickness(0, 10, 0, 0);
+            dInner.Children.Add(coherenceNote);
+
             decisions.Child = dInner;
             p.Children.Add(decisions);
+
+            p.Children.Add(Why("How much should I be willing to lose in a day?",
+                "It is not really chosen, it is derived - and the arithmetic starts somewhere most "
+              + "advice gets wrong.\n\n"
+              + "On a prop account your capital is the DRAWDOWN, not the balance. A 250K evaluation "
+              + "with a $6,500 trailing drawdown has $6,500 of capital. Every \"risk 1% of the "
+              + "account\" rule is written for money you own, and applying it here gives $2,500 a "
+              + "day - 38% of everything you have, on a rule that was meant to be conservative.\n\n"
+              + "So ask the question you can actually answer: how many bad days in a row should this "
+              + "account survive? Five is a reasonable place to start, and it makes the daily limit "
+              + "your drawdown divided by five. On $6,500 that is $1,300. Two red days ending the "
+              + "account is not a limit, it is a coin toss with an extra step.\n\n"
+              + "Then check it against your own trading, which is what the line above does. Your "
+              + "typical loss times the number of losses you will take should land near your daily "
+              + "limit. If they are far apart, one of them is decorative - whichever fires first is "
+              + "your real rule and the other is a number on a page.\n\n"
+              + "None of this is advice, and nobody can pick the number for you without knowing your "
+              + "edge. In a few weeks your own journal will answer it better than any rule of thumb "
+              + "can: the right daily limit is a number you read off your own distribution of "
+              + "losses, not one you inherit."));
 
             // ── The rest of the trader's own limits ──────────────────────────
             p.Children.Add(Label("Your other limits"));
@@ -1767,6 +1971,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbWindowStart = FieldIn(gW, 0, 0, "From", "09:30");
             tbWindowEnd = FieldIn(gW, 0, 1, "To", "11:30");
             p.Children.Add(gW);
+
+            // What time Ballast thinks it is, next to the window it is judging you
+            // against. "Outside your trading window" is unarguable and invisible
+            // otherwise: NinjaTrader's clock is whatever Tools -> Options ->
+            // General -> Time zone says, which need not be the clock on your
+            // charts or the one on your wall.
+            windowClock = new TextBlock();
+            windowClock.FontSize = 11;
+            windowClock.TextWrapping = TextWrapping.Wrap;
+            windowClock.Margin = new Thickness(0, -6, 0, 8);
+            p.Children.Add(windowClock);
 
             windowAnyTimeBox = new CheckBox();
             windowAnyTimeBox.Content = "I trade whenever I like - never mention the clock";
@@ -2830,6 +3045,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             ShowEditingScope();
             RefreshStopCostHint();
             RefreshRealisedNote();
+            RefreshCoherence();
+            RefreshWindowClock();
 
             TrackerConfig c = ConfigForKey(next);
             if (c == null) return;
@@ -3179,6 +3396,23 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// baseline actually came back from disk. Without that guard the first
         /// open of a day would decide the entire morning was a missing trade.
         /// </summary>
+        /// <summary>
+        /// What the reconstructed row says about itself. Rewritten whenever the
+        /// gap grows, so the sentence and the number never drift apart.
+        /// </summary>
+        private string GapNote(string name, BallastTracker t, double total, DateTime from, DateTime to)
+        {
+            return "Reconstructed, not watched. " + Money(total)
+                 + " of today's P&L on this account happened while Ballast was not running"
+                 + (from < to ? ", between " + from.ToString("HH:mm", CultureInfo.InvariantCulture)
+                                + " and " + to.ToString("HH:mm", CultureInfo.InvariantCulture) : "")
+                 + ". The figure is exact - it is the difference between what your broker says today "
+                 + "has made and what Ballast watched - and commission has been allowed for. What it "
+                 + "cannot tell you is how many trades are inside it, or how deep the day went while "
+                 + "Ballast was closed. It counts as one trade, and as one loss if it lost, because "
+                 + "that is the least it can have been.";
+        }
+
         private void ReconcileClosedPeriod(string name, BallastTracker t, DateTime now)
         {
             if (t == null || !t.BaselineAuthoritative) return;
@@ -3204,18 +3438,20 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // How much of a difference is explainable as commission timing.
             //
-            // A flat figure cannot work here. Four dollars is noise for a trader
-            // taking one contract and nothing at all for someone running ten
-            // minis, whose commission on a normal day is well past any threshold
-            // small enough to be safe for the first trader. So the bound is that
-            // trader's own: what the trades Ballast DID watch actually cost,
-            // because that is precisely where the drift comes from - the account
-            // posts commission a beat apart from the fill, and the round trip's
-            // recorded P&L can miss its own.
+            // The account's own commission total for the day is the bound, and it
+            // is the right one for a simple reason: this drift is CAUSED by
+            // commission posting a beat apart from the fill it belongs to, so it
+            // can never exceed the commission actually paid. It is exact, it
+            // needs no history, and it scales by itself - a few dollars for one
+            // contract, forty for ten minis.
             //
-            // A day with no watched trades has nothing to explain away, so the
-            // bound falls to a few dollars and any real gap is reported.
-            double noise = watchedCommission + 5.0;
+            // Summing the journal's own commission was the first attempt and it
+            // failed on the case that matters: rows written before commission was
+            // recorded all read zero, so the bound collapsed to five dollars on
+            // every restart and a $26 commission residue was booked as a trade.
+            // The journal figure is kept only as a fallback for a feed that does
+            // not report commission at all.
+            double noise = Math.Max(t.CurrentCommission, watchedCommission) + 5.0;
 
             // Small change is commission, not a trade.
             //
@@ -3230,10 +3466,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             // and missing one costs nothing: the day's P&L comes from the account
             // either way, so it is already in every number that matters. Only the
             // journal ROW is skipped.
-            // And only in the direction commission actually pushes. Commission
-            // makes the account look WORSE than the journal, never better, so a
-            // difference the other way is real money and is always reported.
-            if (missing < 0 ? missing > -noise : missing < 5.0)
+            // Both directions. The first version only tolerated a gap where the
+            // account looked WORSE than the journal, on the assumption that a
+            // missing commission charge could only ever go one way. It goes both:
+            // a charge that lands after Ballast has closed one round trip is
+            // absorbed by the next one, so the journal can just as easily
+            // over-state the loss. The trader's own case was +$26 - Ballast had
+            // counted MORE loss than the account had.
+            if (missing > -noise && missing < noise)
             {
                 gapSince.Remove(name);
                 return;
@@ -3252,6 +3492,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             DateTime from;
             if (!lastSeenAt.TryGetValue(name, out from)) from = now;
 
+            // One row per account per day. Ballast may be closed and reopened a
+            // dozen times in a session; each time it finds a little more that it
+            // cannot account for, and each of those used to become its own
+            // journal row. Twelve rows is not twelve trades, it is one gap
+            // measured twelve times - and counting them as trades drove accounts
+            // to limits their owner never went near.
+            BallastTrade existing = null;
+            for (int i = 0; i < today.Count; i++)
+            {
+                if (today[i] == null || !today[i].IsReconstructed) continue;
+                if (!string.Equals(today[i].AccountName, name, StringComparison.OrdinalIgnoreCase)) continue;
+                existing = today[i];
+                break;
+            }
+
+            if (existing != null)
+            {
+                existing.Pnl += missing;
+                existing.ExitTime = now;
+                existing.Note = GapNote(name, t, existing.Pnl, existing.EntryTime, now);
+                journalDirty = true;
+                SeedTodaysCounts(monitor.Journal.ForDay(now));
+                return;
+            }
+
             BallastTrade e = new BallastTrade();
             e.AccountName = name;
             e.Instrument = "(Ballast was closed)";
@@ -3268,20 +3533,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             // was opened, so claiming it broke the clock rule would be inventing
             // a discipline failure out of a gap in its own records.
             e.InsideSessionWindow = true;
+
+            // Not a question. "Was that by the book?" is unanswerable about a
+            // trade Ballast cannot describe - it has no entry, no size, and may
+            // be more than one trade. It goes in the journal as a record and
+            // stays out of the queue.
+            e.Dismissed = true;
             e.SessionPlan = monitor.Journal.SessionPlan;
-            e.Note = "Reconstructed, not watched. The account says today has made "
-                   + Money(t.DailyPnl) + " and Ballast could only account for " + Money(accounted)
-                   + ", so " + Money(missing) + " was traded while Ballast was not running"
-                   + (lastSeenAt.ContainsKey(name)
-                        ? " - some time after " + from.ToString("HH:mm", CultureInfo.InvariantCulture)
-                        : "")
-                   + ". The figure is exact, because it comes from your own account. It may cover "
-                   + "more than one trade, there is no chart photograph for it, and Ballast cannot "
-                   + "know how deep the day went while it was closed - only where it ended up."
-                   + (watchedCommission > 0
-                        ? " Commission on the trades Ballast did watch (" + Money(watchedCommission)
-                          + ") has already been allowed for."
-                        : "");
+            e.Note = GapNote(name, t, missing, from, now);
 
             monitor.Journal.Add(e);
             journalDirty = true;
@@ -3739,7 +3998,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 BallastState.PublishCount(s.AccountName,
                     s.Input.TradesToday, s.Input.MaxTrades,
                     s.Input.LossesToday, s.Input.MaxLossesBeforeStop,
-                    room, s.Input.DailyLossLimit > 0,
+                    room, s.Input.DailyLossLimit,
                     s.Input.DailyPnl, s.Input.DailyTarget, Core.Globals.Now);
 
                 if (warn.Length > 0 && warn != "clear")
@@ -3996,6 +4255,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             ApplyEdits();
             editingKey = CurrentEditKey();
             SaveSettings();
+            RefreshCoherence();
             RefreshAccountList(true);
             DescribeAccount(CurrentEditKey());
 
@@ -4084,6 +4344,149 @@ namespace NinjaTrader.NinjaScript.AddOns
                                + "firm, not to you.";
                 applyNote.Foreground = ColAmber;
             }
+        }
+
+        /// <summary>
+        /// Do the trader's own numbers agree with each other?
+        ///
+        /// Four settings describe one decision, and it is entirely possible to
+        /// set them so that three of them can never fire. If your typical loss at
+        /// your size cap times your max-losses rule comes to $3,900 and your
+        /// daily limit is $3,000, the daily limit is your real rule and the loss
+        /// streak is decoration. Worth knowing before a bad Tuesday rather than
+        /// during one.
+        ///
+        /// Everything here is measured against the DRAWDOWN, because on a prop
+        /// account that is the capital. A daily limit worth half the drawdown
+        /// means two red days end it, and that is a fact about the arithmetic
+        /// rather than an opinion about the trader.
+        /// </summary>
+        /// <summary>
+        /// Say what time it is by Ballast's reckoning, and whether that is inside
+        /// the window on screen. Cheap, and it turns an argument into a fact.
+        /// </summary>
+        private void RefreshWindowClock()
+        {
+            if (windowClock == null) return;
+
+            try
+            {
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+                int mins = now.Hour * 60 + now.Minute;
+
+                bool anyTime = windowAnyTimeBox != null && windowAnyTimeBox.IsChecked == true;
+                int start = DisciplineEngine.ParseHourMinute(tbWindowStart == null ? null : tbWindowStart.Text);
+                int end = DisciplineEngine.ParseHourMinute(tbWindowEnd == null ? null : tbWindowEnd.Text);
+
+                string clock = "Ballast's clock says " + DisciplineEngine.HourMinute(mins)
+                             + " - this is NinjaTrader's time zone, the same one your charts use. ";
+
+                if (anyTime || start < 0 || end < 0)
+                {
+                    windowClock.Text = clock + "No window is set, so nothing is said about the clock.";
+                    windowClock.Foreground = ColMuted;
+                    return;
+                }
+
+                bool inside = DisciplineEngine.InSessionWindow(mins, start, end);
+                windowClock.Text = clock + (inside
+                    ? "That is inside " + DisciplineEngine.WindowLabel(start, end) + "."
+                    : "That is OUTSIDE " + DisciplineEngine.WindowLabel(start, end)
+                      + ". If that looks wrong, NinjaTrader's clock is not the one you are reading "
+                      + "the times off - check Tools, Options, General, Time zone.");
+                windowClock.Foreground = inside ? ColMuted : ColAmber;
+            }
+            catch { windowClock.Text = ""; }
+        }
+
+        private void RefreshCoherence()
+        {
+            if (coherenceNote == null) return;
+
+            try
+            {
+                TrackerConfig c = ConfigForKey(CurrentEditKey());
+                if (c == null) { coherenceNote.Text = ""; return; }
+
+                double daily = ParseD(tbDailyLoss, c.DailyLossLimit);
+                int maxLosses = ParseI(tbMaxLosses, c.MaxLossesBeforeStop);
+                int size = ParseI(tbMaxContracts, c.BaseMaxContracts > 0 ? c.BaseMaxContracts : c.MaxContracts);
+                double drawdown = ParseD(tbDrawdown, c.TrailingDrawdown);
+
+                StringBuilder sb = new StringBuilder();
+                bool warn = false;
+
+                // Against the account's whole life.
+                if (daily > 0 && drawdown > 0)
+                {
+                    double pct = daily / drawdown * 100.0;
+                    double days = drawdown / daily;
+
+                    sb.Append(Money(daily)).Append(" is ").Append(pct.ToString("0"))
+                      .Append("% of this account's ").Append(Money(drawdown))
+                      .Append(" drawdown - the drawdown is the real capital here, not the balance. ");
+
+                    if (days < 3)
+                    {
+                        sb.Append("Two red days end it.");
+                        warn = true;
+                    }
+                    else
+                    {
+                        sb.Append("It survives ").Append(Math.Floor(days).ToString("0"))
+                          .Append(" red days in a row.");
+                    }
+                }
+
+                // Against the trader's own losses.
+                List<double> costs = StopCosts(CurrentEditKey());
+                if (costs.Count < 3) costs = StopCosts("");
+
+                if (costs.Count >= 3 && size > 0 && maxLosses > 0 && daily > 0)
+                {
+                    costs.Sort();
+                    double perContract = costs[costs.Count / 2];
+                    double typical = perContract * size;
+                    double streak = typical * maxLosses;
+
+                    sb.Append("\n\nYour typical loss has been ").Append(Money(perContract))
+                      .Append(" a contract, so ").Append(size)
+                      .Append(size == 1 ? " contract" : " contracts").Append(" is about ")
+                      .Append(Money(typical)).Append(" a trade and ").Append(maxLosses)
+                      .Append(maxLosses == 1 ? " loss is " : " losses is ").Append(Money(streak))
+                      .Append(". ");
+
+                    if (streak < daily * 0.8)
+                    {
+                        sb.Append("You will always be stopped by the loss count first - the daily "
+                                + "limit above never gets a chance to bind.");
+                        warn = true;
+                    }
+                    else if (streak > daily * 1.25)
+                    {
+                        sb.Append("The daily limit will stop you after about ")
+                          .Append(Math.Floor(daily / typical).ToString("0"))
+                          .Append(", so the loss count above never gets a chance to bind.");
+                        warn = true;
+                    }
+                    else
+                    {
+                        sb.Append("Those two agree, which is what you want.");
+                    }
+                }
+                else if (costs.Count > 0)
+                {
+                    sb.Append("\n\nToo few losing trades on record yet to check these against what "
+                            + "your losses actually cost. Ballast will start saying so once there "
+                            + "are a few.");
+                }
+
+                coherenceNote.Text = sb.ToString();
+                coherenceNote.Foreground = warn ? ColAmber : ColMuted;
+            }
+            catch { coherenceNote.Text = ""; }
         }
 
         /// <summary>
@@ -4509,6 +4912,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             monitor.Journal.Load(JournalPath());
 
+            // A journal written before reconstructed rows were folded together
+            // may hold several describing the same gap. Now that one of them
+            // counts as a trade, several of them is an account at a limit its
+            // owner never went near - so they are collapsed once, here.
+            if (monitor.Journal.ConsolidateReconstructed() > 0) journalDirty = true;
+
             // Recover today's plan from the trades it was stamped on, so reopening
             // the window mid-session doesn't lose it. Yesterday's plan is not
             // carried forward on purpose: a plan you didn't write this morning is
@@ -4573,9 +4982,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 string a = e.AccountName;
 
-                int n;
-                trades[a] = trades.TryGetValue(a, out n) ? n + 1 : 1;
-
                 double p;
                 double running = pnl.TryGetValue(a, out p) ? p + e.Pnl : e.Pnl;
                 pnl[a] = running;
@@ -4583,10 +4989,36 @@ namespace NinjaTrader.NinjaScript.AddOns
                 double w;
                 if (!worst.TryGetValue(a, out w) || running < w) worst[a] = running < 0 ? running : 0;
 
+                // A reconstructed row counts as ONE trade, and as one loss if it
+                // lost. Not none, and never more than one.
+                //
+                // Both extremes have now been wrong in production. Counting every
+                // row meant a day of restarts showed five trades against a limit
+                // of five and three losses against a limit of three, and Ballast
+                // said STOP on the strength of its own bookkeeping. Counting none
+                // meant a trader who had taken two losing trades was told he had
+                // taken one, against a rule that stops him at three.
+                //
+                // The fix is upstream - there is now at most one of these per
+                // account per day, because a fresh gap is folded into the
+                // existing row instead of adding another. So one row is a
+                // truthful minimum: at least one trade happened, and if the row
+                // is negative at least one of them lost. It may have been three,
+                // and Ballast will say one. Under-counting, never over-counting.
+                int n;
+                trades[a] = trades.TryGetValue(a, out n) ? n + 1 : 1;
+
                 if (e.Pnl < 0)
-                {
                     losses[a] = losses.TryGetValue(a, out n) ? n + 1 : 1;
 
+                // But it can never drive a rule about TIME. The cooldown and the
+                // revenge window ask "how long since your last loss", and the
+                // honest answer for a gap is that nobody knows - its timestamps
+                // are the span Ballast was closed, not when the trade happened.
+                if (e.IsReconstructed) continue;
+
+                if (e.Pnl < 0)
+                {
                     DateTime prev;
                     if (!lastLoss.TryGetValue(a, out prev) || e.ExitTime > prev) lastLoss[a] = e.ExitTime;
                 }
@@ -5841,6 +6273,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // for a session's final P&L to be lost, and that figure is the whole
             // point of the override record.
             try { tiltLog.Save(TiltPath()); } catch { }
+            try { SaveTiltGate(); } catch { }
             try { SaveSettings(); } catch { }
 
             // Last thing written, so tomorrow morning - or five minutes from now -

@@ -3053,6 +3053,27 @@ namespace NinjaTrader.Gui.Tools
 {
     using System.Windows;
     using System.Windows.Media;
+    using System.Xml.Linq;
+
+    /// <summary>
+    /// How a window identifies itself inside a saved workspace. A window that
+    /// has one is written to the workspace file and reopened with it; a window
+    /// that does not is simply gone the next time NinjaTrader starts.
+    /// </summary>
+    public class WorkspaceOptions
+    {
+        public WorkspaceOptions(string name, NTWindow window) { Name = name; Window = window; }
+        public string Name { get; set; }
+        public NTWindow Window { get; set; }
+    }
+
+    /// <summary>Implemented by any AddOn window that should survive a restart.</summary>
+    public interface IWorkspacePersistence
+    {
+        WorkspaceOptions WorkspaceOptions { get; set; }
+        void Restore(XDocument document, XElement element);
+        void Save(XDocument document, XElement element);
+    }
 
     /// <summary>
     /// NinjaTrader's serialisable font. Drawing tools take one of these rather

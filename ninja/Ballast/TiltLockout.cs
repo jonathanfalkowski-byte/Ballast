@@ -173,20 +173,48 @@ namespace Ballast
             return outp;
         }
 
+        /// <summary>
+        /// One day on one account, however many times the wall came up.
+        ///
+        /// These used to count EVENTS, and the difference is not academic: a
+        /// trader who had used Ballast for two days was told he had stood down
+        /// fourteen times in the last thirty. He had pressed the button fourteen
+        /// times, because the wall came back on every restart - but he had made
+        /// the decision twice, on two days, and the decision is what the number
+        /// is supposed to be about.
+        ///
+        /// Counting sessions also makes the figure honest about what it can
+        /// measure. Ballast sees a day and an account. It does not see fourteen
+        /// separate resolutions.
+        /// </summary>
+        private static string SessionKey(TiltEvent e)
+        {
+            return e.At.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+                 + "|" + (e.AccountName == null ? "" : e.AccountName.ToUpperInvariant());
+        }
+
         public int OverrideCount(DateTime now, int days)
         {
-            List<TiltEvent> r = Recent(now, days);
-            int c = 0;
-            for (int n = 0; n < r.Count; n++) if (!r[n].Stood) c++;
-            return c;
+            return SessionCount(now, days, false);
         }
 
         public int StoodCount(DateTime now, int days)
         {
+            return SessionCount(now, days, true);
+        }
+
+        private int SessionCount(DateTime now, int days, bool stood)
+        {
             List<TiltEvent> r = Recent(now, days);
-            int c = 0;
-            for (int n = 0; n < r.Count; n++) if (r[n].Stood) c++;
-            return c;
+            List<string> seen = new List<string>();
+
+            for (int n = 0; n < r.Count; n++)
+            {
+                if (r[n].Stood != stood) continue;
+                string k = SessionKey(r[n]);
+                if (!seen.Contains(k)) seen.Add(k);
+            }
+            return seen.Count;
         }
 
         /// <summary>Overrides today, on this account. Drives the escalation copy.</summary>
@@ -213,14 +241,29 @@ namespace Ballast
         {
             List<TiltEvent> r = Recent(now, days);
 
-            int over = 0, worse = 0, better = 0;
-            double worseSum = 0, betterSum = 0, net = 0;
+            // Grouped by session - one day on one account - because that is what
+            // the sentence says. "Three sessions went on to lose" is a claim
+            // about three days; counting each re-appearance of the wall as its
+            // own session made it a claim about nothing.
+            List<string> keys = new List<string>();
+            List<double> sums = new List<double>();
 
             for (int n = 0; n < r.Count; n++)
             {
                 if (r[n].Stood) continue;
-                over++;
-                double d = r[n].Delta;
+
+                string k = SessionKey(r[n]);
+                int at = keys.IndexOf(k);
+                if (at < 0) { keys.Add(k); sums.Add(r[n].Delta); }
+                else sums[at] = sums[at] + r[n].Delta;
+            }
+
+            int over = keys.Count, worse = 0, better = 0;
+            double worseSum = 0, betterSum = 0, net = 0;
+
+            for (int n = 0; n < sums.Count; n++)
+            {
+                double d = sums[n];
                 net += d;
                 if (d < 0) { worse++; worseSum += d; }
                 else if (d > 0) { better++; betterSum += d; }
@@ -462,6 +505,54 @@ namespace Ballast
         }
 
         public void Clear() { until.Clear(); }
+
+        /// <summary>
+        /// Everything still in force, as text, so it survives a restart.
+        ///
+        /// It did not, and that produced the worst possible behaviour: a trader
+        /// pressed "I'm done for the day", Ballast agreed to leave the account
+        /// alone until tomorrow, and then the next time the window opened the
+        /// same wall was in front of him asking the same question. A promise the
+        /// software forgets the moment it is restarted is not a promise, and
+        /// being asked again is exactly the nag the wall is supposed to replace.
+        /// </summary>
+        public List<string> Serialise()
+        {
+            List<string> lines = new List<string>();
+            foreach (KeyValuePair<string, DateTime> kv in until)
+            {
+                lines.Add(kv.Key.Replace("\n", " ") + "|"
+                        + kv.Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            }
+            return lines;
+        }
+
+        /// <summary>
+        /// Put back the releases that have not expired. Anything already past is
+        /// dropped rather than loaded and ignored, so the file does not grow and
+        /// a stale release can never be resurrected by a clock change.
+        /// </summary>
+        public void Restore(List<string> lines, DateTime now)
+        {
+            if (lines == null) return;
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (string.IsNullOrEmpty(lines[i])) continue;
+
+                // account|kind|until - the key itself contains one pipe.
+                string[] f = lines[i].Split('|');
+                if (f.Length < 3) continue;
+
+                DateTime t;
+                if (!DateTime.TryParse(f[f.Length - 1], CultureInfo.InvariantCulture,
+                                       DateTimeStyles.None, out t)) continue;
+                if (t <= now) continue;
+
+                string key = string.Join("|", f, 0, f.Length - 1);
+                until[key] = t;
+            }
+        }
     }
 
     public static class TiltLockout

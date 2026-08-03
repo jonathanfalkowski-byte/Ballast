@@ -329,6 +329,64 @@ namespace Ballast
             entries.Add(e);
         }
 
+        /// <summary>
+        /// Collapse reconstructed rows to one per account per day, summing what
+        /// they carry. Returns how many rows were removed.
+        ///
+        /// A reconstructed row is Ballast's measurement of what it could not
+        /// watch, and it re-measures every time it opens. Twelve restarts once
+        /// produced twelve rows describing the same gap - and once those rows
+        /// count as trades, twelve of them is an account at a limit its owner
+        /// never went near. Only one can be true, so only one is kept, and the
+        /// money is added up rather than thrown away.
+        ///
+        /// Run on load, so a journal written by an older build is corrected once
+        /// rather than carried.
+        /// </summary>
+        public int ConsolidateReconstructed()
+        {
+            List<string> keys = new List<string>();
+            List<BallastTrade> keep = new List<BallastTrade>();
+            List<BallastTrade> outp = new List<BallastTrade>();
+            int removed = 0;
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                BallastTrade e = entries[i];
+                if (e == null) continue;
+
+                if (!e.IsReconstructed) { outp.Add(e); continue; }
+
+                string k = e.ExitTime.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+                         + "|" + (e.AccountName == null ? "" : e.AccountName.ToUpperInvariant());
+
+                int at = keys.IndexOf(k);
+                if (at < 0)
+                {
+                    keys.Add(k);
+                    keep.Add(e);
+                    outp.Add(e);
+                    continue;
+                }
+
+                // Fold into the one already kept: the earliest start, the latest
+                // finish, and every dollar.
+                BallastTrade first = keep[at];
+                first.Pnl += e.Pnl;
+                first.Commission += e.Commission;
+                if (e.EntryTime < first.EntryTime) first.EntryTime = e.EntryTime;
+                if (e.ExitTime > first.ExitTime) first.ExitTime = e.ExitTime;
+                removed++;
+            }
+
+            if (removed > 0)
+            {
+                entries.Clear();
+                entries.AddRange(outp);
+            }
+            return removed;
+        }
+
         public void Clear() { entries.Clear(); }
 
         /// <summary>Trades still waiting for a tag, oldest first.</summary>

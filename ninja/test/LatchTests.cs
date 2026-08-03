@@ -26,6 +26,7 @@ public static class LatchTests
         ANewDayStartsClean();
         ClosingTheWindowDoesNotUnspendTheDay();
         TheWallDoesNotFollowYouAroundAllDay();
+        StandingDownIsRememberedAndCountedOnce();
     }
 
     static BallastTracker Fresh(DateTime t0, double limit)
@@ -268,6 +269,119 @@ public static class LatchTests
                                                           DisciplineEngine.Evaluate(deeper), false);
         T.Ok(HasKind(again, TiltKind.DailyLossLimit),
              "losing further past the limit puts it straight back up");
+    }
+
+    /// <summary>
+    /// "it asks me this question every time i open up the ballast and i said done
+    /// several times and it is recording it but i have not done it 14 times in 30
+    /// days we have only had this up and running for 2 days."
+    ///
+    /// Two faults, and the second one caused the first. The gate that records
+    /// "leave this account alone until tomorrow" lived only in memory, so every
+    /// restart put the same wall back in front of a decision already made - and
+    /// every press of the button logged another event, so two days of use read as
+    /// fourteen stand-downs.
+    /// </summary>
+    static void StandingDownIsRememberedAndCountedOnce()
+    {
+        T.S("standing down is remembered, and counted once");
+
+        DateTime day = new DateTime(2026, 8, 3);
+        DateTime at = day.AddHours(10);
+
+        // ── The promise has to survive a restart ─────────────────────────────
+        TiltGate gate = new TiltGate();
+        gate.ReleaseAccountForDay("Sim110", at);
+        T.Ok(gate.IsReleased("Sim110", TiltKind.LossStreak, at.AddMinutes(1)),
+             "standing down covers the account");
+        T.Ok(gate.IsReleased("Sim110", TiltKind.DailyLossLimit, at.AddHours(5)),
+             "for every reason, all day");
+
+        // Ballast is closed and reopened.
+        TiltGate reopened = new TiltGate();
+        reopened.Restore(gate.Serialise(), at.AddHours(1));
+        T.Ok(reopened.IsReleased("Sim110", TiltKind.LossStreak, at.AddHours(1)),
+             "and it is still standing after a restart - the wall does not ask again");
+        T.Ok(!reopened.IsReleased("APEX-105", TiltKind.LossStreak, at.AddHours(1)),
+             "while another account is untouched");
+
+        // Tomorrow it is gone, because that is what "until tomorrow" means.
+        TiltGate tomorrow = new TiltGate();
+        tomorrow.Restore(gate.Serialise(), day.AddDays(1).AddHours(9));
+        T.Ok(!tomorrow.IsReleased("Sim110", TiltKind.LossStreak, day.AddDays(1).AddHours(9)),
+             "and a new day starts with the wall armed again");
+
+        // A typed override buys minutes, and only minutes, across a restart too.
+        TiltGate typed = new TiltGate();
+        typed.Release("Sim110", TiltKind.DailyLossLimit, at);
+        TiltGate typedBack = new TiltGate();
+        typedBack.Restore(typed.Serialise(), at.AddMinutes(5));
+        T.Ok(typedBack.IsReleased("Sim110", TiltKind.DailyLossLimit, at.AddMinutes(5)),
+             "five minutes after an override it is still quiet");
+        T.Ok(!typedBack.IsReleased("Sim110", TiltKind.DailyLossLimit, at.AddMinutes(20)),
+             "and twenty minutes later it is not - restarting does not extend it");
+
+        // Rubbish in the file is dropped, not loaded.
+        TiltGate junk = new TiltGate();
+        junk.Restore(new List<string> { "", "nonsense", "a|b", "Sim110|*|not a date" }, at);
+        T.Ok(!junk.IsReleased("Sim110", "*", at), "an unreadable line releases nothing");
+
+        // ── And it is counted once per day per account ───────────────────────
+        TiltLog log = new TiltLog();
+        for (int n = 0; n < 7; n++) log.Add(Stood("Sim110", day.AddHours(10 + n)));
+
+        T.Eq(log.StoodCount(day.AddHours(18), 30), 1,
+             "seven presses on one day on one account is one stand-down");
+
+        log.Add(Stood("Sim110", day.AddDays(1).AddHours(10)));
+        log.Add(Stood("Sim110", day.AddDays(1).AddHours(11)));
+        T.Eq(log.StoodCount(day.AddDays(1).AddHours(18), 30), 2, "two days is two");
+
+        log.Add(Stood("APEX-105", day.AddDays(1).AddHours(12)));
+        T.Eq(log.StoodCount(day.AddDays(1).AddHours(18), 30), 3,
+             "and a different account on the same day is its own");
+
+        T.Ok(log.StoodSummary(day.AddDays(1).AddHours(18), 30).IndexOf("3 times") >= 0,
+             "which is what the wall says back");
+
+        // Overrides group the same way, and the money is summed per session
+        // rather than counted per wall.
+        TiltLog over = new TiltLog();
+        TiltEvent a = Over("Sim110", day.AddHours(10), -500);
+        TiltEvent b = Over("Sim110", day.AddHours(11), -300);
+        over.Add(a); over.Add(b);
+        a.PnlAfter = a.PnlAtEvent - 500;     // the day went on to lose more
+        b.PnlAfter = b.PnlAtEvent - 300;
+
+        T.Eq(over.OverrideCount(day.AddHours(18), 30), 1,
+             "two overrides on one day on one account is one session");
+        string sum = over.Summary(day.AddHours(18), 30);
+        T.Ok(sum.IndexOf("once in the last 30 days") >= 0,
+             "and the sentence says once, not twice");
+        T.Ok(sum.IndexOf("$800") >= 0,
+             "while the money is the whole session - both overrides added up");
+    }
+
+    static TiltEvent Stood(string account, DateTime at)
+    {
+        TiltEvent e = new TiltEvent();
+        e.At = at;
+        e.AccountName = account;
+        e.Kind = TiltKind.LossStreak;
+        e.Stood = true;
+        return e;
+    }
+
+    static TiltEvent Over(string account, DateTime at, double pnl)
+    {
+        TiltEvent e = new TiltEvent();
+        e.At = at;
+        e.AccountName = account;
+        e.Kind = TiltKind.DailyLossLimit;
+        e.Stood = false;
+        e.PnlAtEvent = pnl;
+        e.PnlAfter = pnl;
+        return e;
     }
 
     static bool HasKind(List<TiltTrigger> list, string kind)

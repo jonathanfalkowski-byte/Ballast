@@ -438,9 +438,17 @@ namespace Ballast
         public static void FindCharts(out List<string> instruments, out List<FrameworkElement> visuals,
                                       out List<bool> active)
         {
+            List<string> ignoredAccounts;
+            FindCharts(out instruments, out visuals, out active, out ignoredAccounts);
+        }
+
+        public static void FindCharts(out List<string> instruments, out List<FrameworkElement> visuals,
+                                      out List<bool> active, out List<string> accounts)
+        {
             instruments = new List<string>();
             visuals = new List<FrameworkElement>();
             active = new List<bool>();
+            accounts = new List<string>();
 
             try
             {
@@ -462,6 +470,7 @@ namespace Ballast
                         instruments.Add(InstrumentOf(w));
                         visuals.Add(w);
                         active.Add(IsActiveWindow(w));
+                        accounts.Add(ChartTraderAccountOf(w));
                     }
                     catch { }
                 }
@@ -470,6 +479,44 @@ namespace Ballast
             {
                 LastProblem = "Could not enumerate chart windows: " + ex.Message;
             }
+        }
+
+        /// <summary>
+        /// Which account this chart's Chart Trader is pointed at, or "" when it
+        /// has none or cannot be read.
+        ///
+        /// This is what tells three charts of the same instrument apart. Matching
+        /// on the instrument alone cannot: with NQ open on a 50-tick, an 80-tick
+        /// and a minute chart, every one of them "matches", so the picture came
+        /// from whichever chart happened to be focused - which is how a trade on
+        /// one account was filed with a photograph of a different chart. A
+        /// journal that shows you the wrong chart is worse than one that shows
+        /// you none, because you will draw a conclusion from it.
+        /// </summary>
+        public static string ChartTraderAccountOf(object chartWindow)
+        {
+            try
+            {
+                if (chartWindow == null) return "";
+
+                PropertyInfo traderProp = chartWindow.GetType().GetProperty("ChartTrader");
+                if (traderProp == null) return "";
+
+                object trader = traderProp.GetValue(chartWindow, null);
+                if (trader == null) return "";
+
+                PropertyInfo accountProp = trader.GetType().GetProperty("Account");
+                if (accountProp == null) return "";
+
+                object account = accountProp.GetValue(trader, null);
+                if (account == null) return "";
+
+                PropertyInfo nameProp = account.GetType().GetProperty("Name");
+                if (nameProp == null) return "";
+
+                return (nameProp.GetValue(account, null) as string) ?? "";
+            }
+            catch { return ""; }
         }
 
         /// <summary>
@@ -757,6 +804,46 @@ namespace Ballast
             return -1;
         }
 
+        /// <summary>
+        /// The chart whose Chart Trader is set to this account. Prefers one that
+        /// also shows the traded instrument; falls back to the account alone,
+        /// because a chart bound to the right account is still a better guess
+        /// than a chart that merely happens to be in front.
+        ///
+        /// Returns -1 when the account appears on no chart, or on more than one
+        /// with no instrument to separate them - an ambiguous answer is not an
+        /// answer, and the caller's existing search is a better one.
+        /// </summary>
+        public static int AccountChartIndex(List<string> chartAccounts, List<string> instruments,
+                                            string account, string instrument)
+        {
+            if (chartAccounts == null || string.IsNullOrEmpty(account)) return -1;
+
+            int withInstrument = -1, withInstrumentCount = 0;
+            int accountOnly = -1, accountOnlyCount = 0;
+
+            for (int i = 0; i < chartAccounts.Count; i++)
+            {
+                if (!string.Equals(chartAccounts[i], account, StringComparison.OrdinalIgnoreCase)) continue;
+
+                accountOnlyCount++;
+                if (accountOnly < 0) accountOnly = i;
+
+                if (instruments != null && i < instruments.Count
+                    && MatchScore(instruments[i], instrument) > 0)
+                {
+                    withInstrumentCount++;
+                    if (withInstrument < 0) withInstrument = i;
+                }
+            }
+
+            if (withInstrumentCount == 1) return withInstrument;
+            if (withInstrumentCount > 1) return withInstrument;   // same account, same instrument
+            if (accountOnlyCount == 1) return accountOnly;
+
+            return -1;
+        }
+
         private static void ForgetChart(string account)
         {
             if (string.IsNullOrEmpty(account)) return;
@@ -773,7 +860,8 @@ namespace Ballast
                 List<string> names;
                 List<FrameworkElement> visuals;
                 List<bool> active;
-                FindCharts(out names, out visuals, out active);
+                List<string> chartAccounts;
+                FindCharts(out names, out visuals, out active, out chartAccounts);
 
                 if (names.Count == 0)
                 {
@@ -786,6 +874,12 @@ namespace Ballast
                 // closed, or the entry was never photographed.
                 int idx = -1;
                 if (!isEntry) idx = RememberedIndex(account, visuals);
+
+                // The account this trade belongs to, matched against what each
+                // chart's Chart Trader is pointed at. This outranks everything
+                // else, because it is the only signal that can tell three charts
+                // of the same instrument apart - and being focused is not it.
+                if (idx < 0) idx = AccountChartIndex(chartAccounts, names, account, instrument);
 
                 if (idx < 0) idx = BestChartIndex(names, instrument, active);
 
