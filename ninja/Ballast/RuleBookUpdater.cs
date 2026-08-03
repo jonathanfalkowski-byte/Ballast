@@ -15,9 +15,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Threading;
 
 namespace Ballast
@@ -34,6 +36,18 @@ namespace Ballast
     public static class RuleBookUpdater
     {
         public const string RulesUrl = "https://tradeballast.com/api/rules";
+        public const string SignatureHeader = "X-Ballast-Signature";
+        public const int MaximumPayloadBytes = 1024 * 1024;
+        public const int MinimumRuleRows = 50;
+        public const int RequestTimeoutMs = 5000;
+
+        /// <summary>
+        /// Production must assign a pinned-public-key verifier before remote
+        /// updates are enabled. Null deliberately means "do not trust remote
+        /// rules", not "skip verification". The byte array is the exact UTF-8
+        /// response body and the string is the detached base64 signature header.
+        /// </summary>
+        public static Func<byte[], string, bool> SignatureVerifier;
 
         /// <summary>How often to bother the server. Rules change on the order of months.</summary>
         public static TimeSpan CheckInterval = TimeSpan.FromHours(24);
@@ -99,8 +113,118 @@ namespace Ballast
 
         private static void StampChecked(string rulesPath, DateTime nowUtc)
         {
-            try { File.WriteAllText(StampPath(rulesPath), nowUtc.ToString("o", CultureInfo.InvariantCulture)); }
+            try { AtomicFile.WriteAllText(StampPath(rulesPath), nowUtc.ToString("o", CultureInfo.InvariantCulture)); }
             catch { }
+        }
+
+        private sealed class TimeoutWebClient : WebClient
+        {
+            protected override WebRequest GetWebRequest(Uri address)
+            {
+                WebRequest request = base.GetWebRequest(address);
+                request.Timeout = RequestTimeoutMs;
+                HttpWebRequest http = request as HttpWebRequest;
+                if (http != null) http.ReadWriteTimeout = RequestTimeoutMs;
+                return request;
+            }
+        }
+
+        private static bool RequiredFirmsPresent(RuleBook book)
+        {
+            return book.ForFirm("Apex Trader Funding").Count > 0
+                && book.ForFirm("Topstep").Count > 0;
+        }
+
+        /// <summary>Validate integrity, metadata, completeness, and row invariants.</summary>
+        public static bool ValidateDownloadedPayload(byte[] bytes, string signature,
+                                                     DateTime nowUtc, out RuleBook book,
+                                                     out string error)
+        {
+            book = null;
+            error = null;
+
+            if (bytes == null || bytes.Length == 0)
+            {
+                error = "The server returned an empty rule book.";
+                return false;
+            }
+            if (bytes.Length > MaximumPayloadBytes)
+            {
+                error = "The downloaded rule book exceeded the size limit.";
+                return false;
+            }
+            if (SignatureVerifier == null || string.IsNullOrEmpty(signature)
+                || !SignatureVerifier(bytes, signature))
+            {
+                error = "The downloaded rule book did not have a valid pinned signature.";
+                return false;
+            }
+
+            string payload;
+            try { payload = new UTF8Encoding(false, true).GetString(bytes); }
+            catch
+            {
+                error = "The downloaded rule book was not valid UTF-8.";
+                return false;
+            }
+
+            int version = ParseVersion(payload);
+            if (version <= 0)
+            {
+                error = "The downloaded rule book had no valid version.";
+                return false;
+            }
+
+            string temp = Path.Combine(Path.GetTempPath(),
+                "ballast-rules-validate-" + Guid.NewGuid().ToString("N") + ".txt");
+            try
+            {
+                File.WriteAllBytes(temp, bytes);
+                RuleBook probe = new RuleBook();
+                if (!probe.Load(temp) || probe.Count < MinimumRuleRows)
+                {
+                    error = "The downloaded rule book was incomplete or malformed.";
+                    return false;
+                }
+                if (!RequiredFirmsPresent(probe))
+                {
+                    error = "The downloaded rule book omitted a required firm.";
+                    return false;
+                }
+
+                DateTime verified;
+                if (!DateTime.TryParseExact(probe.VerifiedDate, "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out verified)
+                    || verified.Date > nowUtc.Date.AddDays(1))
+                {
+                    error = "The downloaded rule book had an invalid verification date.";
+                    return false;
+                }
+
+                List<string> firms = probe.Firms();
+                for (int f = 0; f < firms.Count; f++)
+                {
+                    System.Collections.Generic.List<FirmAccountSpec> rows = probe.ForFirm(firms[f]);
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        FirmAccountSpec row = rows[i];
+                        if (row.Size <= 0 || row.Drawdown <= 0 || row.Drawdown >= row.Size
+                            || row.DailyLossLimit < 0 || row.ProfitTarget < 0
+                            || row.FirmMaxContracts < 0)
+                        {
+                            error = "The downloaded rule book contained an unsafe account row.";
+                            return false;
+                        }
+                    }
+                }
+
+                book = probe;
+                return true;
+            }
+            finally
+            {
+                try { File.Delete(temp); } catch { }
+            }
         }
 
         /// <summary>
@@ -112,17 +236,19 @@ namespace Ballast
             RuleUpdateResult r = new RuleUpdateResult();
             r.LocalVersion = LocalVersion(rulesPath);
 
-            string payload = null;
+            byte[] payloadBytes = null;
+            string signature = null;
             try
             {
                 // TLS 1.2 — .NET Framework defaults can be too old for modern hosts.
                 try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; }
                 catch { }
 
-                using (WebClient wc = new WebClient())
+                using (TimeoutWebClient wc = new TimeoutWebClient())
                 {
                     wc.Headers.Add("User-Agent", "Ballast-NinjaTrader-AddOn");
-                    payload = wc.DownloadString(RulesUrl);
+                    payloadBytes = wc.DownloadData(RulesUrl);
+                    signature = wc.ResponseHeaders == null ? null : wc.ResponseHeaders[SignatureHeader];
                 }
                 r.Checked = true;
             }
@@ -134,6 +260,14 @@ namespace Ballast
 
             StampChecked(rulesPath, nowUtc);
 
+            string payload;
+            try { payload = new UTF8Encoding(false, true).GetString(payloadBytes); }
+            catch
+            {
+                r.Message = "Rule update was not valid UTF-8. Using cached rules.";
+                return r;
+            }
+
             r.RemoteVersion = ParseVersion(payload);
             if (r.RemoteVersion <= r.LocalVersion)
             {
@@ -141,22 +275,18 @@ namespace Ballast
                 return r;
             }
 
-            // Validate before writing: never install something that doesn't parse.
-            string temp = rulesPath + ".incoming";
             try
             {
-                File.WriteAllText(temp, payload);
-
-                RuleBook probe = new RuleBook();
-                if (!probe.Load(temp) || probe.Count == 0)
+                RuleBook probe;
+                string validationError;
+                if (!ValidateDownloadedPayload(payloadBytes, signature, nowUtc,
+                                               out probe, out validationError))
                 {
-                    r.Message = "Downloaded rule book failed validation - keeping existing rules.";
-                    try { File.Delete(temp); } catch { }
+                    r.Message = validationError + " Keeping existing rules.";
                     return r;
                 }
 
-                File.Copy(temp, rulesPath, true);
-                try { File.Delete(temp); } catch { }
+                AtomicFile.WriteAllText(rulesPath, payload, new UTF8Encoding(false));
 
                 r.Updated = true;
                 r.Message = "Rule book updated to v" + r.RemoteVersion + " (" + probe.Count + " account types).";
@@ -165,7 +295,6 @@ namespace Ballast
             catch (Exception ex)
             {
                 r.Message = "Could not install rule book: " + ex.Message;
-                try { File.Delete(temp); } catch { }
                 return r;
             }
         }

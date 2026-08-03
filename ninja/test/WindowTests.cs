@@ -23,6 +23,7 @@ public static class WindowTests
         WindowAcrossMidnight();
         ParsingTimes();
         WindowSurvivesTheSettingsFile();
+        FirmTradingDayReset();
         RoomIsNetAndNeverGrows();
     }
 
@@ -171,6 +172,43 @@ public static class WindowTests
         TrackerConfig none = SettingsCodec.Deserialise(
             SettingsCodec.Serialise("APEX-109", anyTime.Config), out key);
         T.Eq(none.SessionStartMinute, none.SessionEndMinute, "and \"any time\" survives as \"any time\"");
+    }
+
+    static void FirmTradingDayReset()
+    {
+        T.S("firm trading-day reset");
+
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 100000;
+        t.Config.DrawdownType = DrawdownType.EndOfDay;
+        t.Config.TradingDayResetMinute = 18 * 60;
+
+        DateTime before = new DateTime(2026, 8, 3, 17, 59, 0);
+        t.EnsureSession(before, 0, 100000);
+        T.Eq(t.SessionDate, new DateTime(2026, 8, 2),
+             "before an evening reset still belongs to the prior trading day");
+        t.TradesToday = 3;
+        t.OnEquity(102000, 2000, 102000);
+
+        t.EnsureSession(before.AddMinutes(1), 2000, 102000);
+        T.Eq(t.SessionDate, new DateTime(2026, 8, 3), "the configured minute starts the new day");
+        T.Eq(t.TradesToday, 0, "daily counters reset at the firm boundary");
+        T.Near(t.EndOfDayHighWater, 102000, 0.01,
+               "the completed session close advances the end-of-day anchor");
+        T.Near(t.PeakEquity, 102000, 0.01,
+               "the account-lifetime high water persists across the boundary");
+
+        t.TradesToday = 2;
+        t.EnsureSession(new DateTime(2026, 8, 4, 17, 59, 0), 2000, 101000);
+        T.Eq(t.TradesToday, 2, "midnight does not reset an evening-boundary account");
+
+        string key;
+        TrackerConfig back = SettingsCodec.Deserialise(SettingsCodec.Serialise("APEX-105", t.Config), out key);
+        T.Eq(back.TradingDayResetMinute, 1080, "the per-account reset survives a restart");
+        TrackerConfig old = SettingsCodec.Deserialise(
+            "old|100000|3000|1|2|500|500|4|1", out key);
+        T.Eq(old.TradingDayResetMinute, 0, "older settings keep the legacy midnight boundary");
     }
 
     // ── what is left to lose today ───────────────────────────────────────────

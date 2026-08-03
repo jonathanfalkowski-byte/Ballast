@@ -999,7 +999,7 @@ namespace Ballast
                 List<string> lines = new List<string>();
                 lines.Add(CsvHeader);
                 for (int i = 0; i < entries.Count; i++) lines.Add(ToCsvLine(entries[i]));
-                File.WriteAllLines(path, lines.ToArray());
+                AtomicFile.WriteAllLines(path, lines.ToArray());
                 return true;
             }
             catch { return false; }

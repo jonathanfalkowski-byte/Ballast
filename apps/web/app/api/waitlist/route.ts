@@ -1,46 +1,59 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
+import {
+  WAITLIST_MAX_BODY_BYTES,
+  clientAddress,
+  normalizeWaitlistInput,
+  waitlistLimiter,
+} from "@/lib/waitlistGuard";
 
 export async function POST(req: Request) {
-  let email = "";
-  let source = "landing";
+  const contentType = req.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.startsWith("application/json")) {
+    return NextResponse.json({ error: "unsupported_media_type" }, { status: 415 });
+  }
+
+  const declaredLength = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > WAITLIST_MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  }
+
+  if (!waitlistLimiter.allow(clientAddress(req.headers))) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  let input;
   try {
-    const body = await req.json();
-    email = String(body.email ?? "").trim().toLowerCase();
-    source = String(body.source ?? "landing");
+    const rawBody = await req.text();
+    if (new TextEncoder().encode(rawBody).byteLength > WAITLIST_MAX_BODY_BYTES) {
+      return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+    }
+    input = normalizeWaitlistInput(JSON.parse(rawBody));
   } catch {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  if (!email || !email.includes("@")) {
+  if (!input) {
     return NextResponse.json({ error: "invalid_email" }, { status: 400 });
   }
 
-  // Graceful in dev with no DB configured: accept and log rather than crash.
   if (!process.env.DATABASE_URL) {
-    console.log(`[waitlist] (no DATABASE_URL) would store: ${email} from ${source}`);
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json({ error: "service_unavailable" }, { status: 503 });
+    }
     return NextResponse.json({ ok: true, stored: false });
   }
 
   try {
-    // Self-provision the table so a fresh database works with no separate migration step.
-    await getPool().query(
-      `CREATE TABLE IF NOT EXISTS waitlist_signups (
-         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-         email text NOT NULL UNIQUE,
-         source text,
-         created_at timestamptz NOT NULL DEFAULT now()
-       )`,
-    );
     await getPool().query(
       `INSERT INTO waitlist_signups (email, source)
        VALUES ($1, $2)
        ON CONFLICT (email) DO NOTHING`,
-      [email, source],
+      [input.email, input.source],
     );
     return NextResponse.json({ ok: true, stored: true });
   } catch (err) {
-    console.error("[waitlist] insert failed", err);
+    console.error("[waitlist] insert failed", err instanceof Error ? err.name : "UnknownError");
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 }

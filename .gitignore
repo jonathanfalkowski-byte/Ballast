@@ -6,5 +6,5 @@ dist
 *.log
 .DS_Store
 
-# npm lockfiles (Vercel builds apps/web; lockfiles not tracked)
-package-lock.json
+# The root lockfile is committed so local, CI, and deployment installs resolve
+# the same tested dependency graph.

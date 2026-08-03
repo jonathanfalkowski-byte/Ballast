@@ -1,16 +1,16 @@
 ﻿// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastWindow.cs  (v2: multi-account)
 //
-// Sits next to your DOM. Polls every monitored account once a second, feeds each
-// into the tested DisciplineEngine, and shows ONE headline action driven by
-// whichever account is in the most trouble — plus a row per account.
+// Sits next to your DOM. Immutable account executions drive the per-instrument
+// journal; a one-second UI timer refreshes balances and verifies that the event
+// ledger still matches NinjaTrader's positions.
 //
 // ADVISORY ONLY. Never submits, modifies or cancels an order. Never flattens.
 // Deliberate v1 decision: software that closes positions costs real money when
 // it's wrong, and this hasn't earned that trust yet.
 //
-// Polling rather than event subscription keeps every read on the UI thread and
-// avoids cross-thread marshalling bugs. One second is far finer than human tilt.
+// Account callbacks are marshalled onto this window's Dispatcher before they
+// touch state or WPF. A mismatch fails closed instead of inventing a trade.
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System;
@@ -105,7 +105,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private AccountGeneration generation = AccountGeneration.Auto;
         private readonly RuleBook ruleBook = new RuleBook();
         private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt;
-        private TextBox tbWindowStart, tbWindowEnd;
+        private TextBox tbWindowStart, tbWindowEnd, tbTradingDayReset;
         private TextBlock windowClock;
         private CheckBox windowAnyTimeBox;
         private CheckBox automatedBox, planStandingBox;
@@ -148,6 +148,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private readonly Dictionary<string, DateTime> lastSeenAt =
             new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Account> eventAccounts =
+            new Dictionary<string, Account>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, DateTime> pendingPositionChecks =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// When a difference between the account's own P&L and the journal was
@@ -170,7 +174,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock outsideNote;
         private TextBox tbEvents;
         private StackPanel planConfirmRow;
-        private bool planPendingConfirm;
         private readonly List<string> events = new List<string>();
         private Button btnToday, btnAllTime;
         private bool tradesTodayOnly = true;
@@ -298,6 +301,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             LoadSessionState();
             LoadJournal();
             RefreshAccountList(true);
+            SyncAccountSubscriptions();
 
             // Land on Setup when there is nothing to watch yet, because then setup
             // IS the task. Otherwise land on Now, which is what a configured
@@ -1061,7 +1065,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 List<string> lines = tiltGate.Serialise();
-                File.WriteAllLines(TiltGatePath(), lines.ToArray());
+                AtomicFile.WriteAllLines(TiltGatePath(), lines.ToArray());
             }
             catch { }
         }
@@ -1971,6 +1975,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbWindowStart = FieldIn(gW, 0, 0, "From", "09:30");
             tbWindowEnd = FieldIn(gW, 0, 1, "To", "11:30");
             p.Children.Add(gW);
+
+            Grid gReset = TwoCol();
+            tbTradingDayReset = FieldIn(gReset, 0, 0,
+                "Firm trading day resets", "00:00");
+            p.Children.Add(gReset);
+            p.Children.Add(Why("Why is the firm's reset time separate?",
+                "The trading window is your plan. This time is the firm's accounting boundary: "
+              + "daily counters and an end-of-day trailing threshold roll only here. Times use "
+              + "NinjaTrader's configured clock. Enter 18:00 when the firm's new session begins "
+              + "at 6 PM, or leave 00:00 for a calendar-day reset."));
 
             // What time Ballast thinks it is, next to the window it is judging you
             // against. "Outside your trading window" is unarguable and invisible
@@ -3028,6 +3042,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (ws >= 0 && ws != c.SessionStartMinute) return true;
                     if (we >= 0 && we != c.SessionEndMinute) return true;
                 }
+                int reset = DisciplineEngine.ParseHourMinute(
+                    tbTradingDayReset == null ? null : tbTradingDayReset.Text);
+                if (reset >= 0 && reset != c.TradingDayResetMinute) return true;
             }
             catch { return false; }
 
@@ -3061,6 +3078,259 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             try { return a.Get(item, Currency.UsDollar); }
             catch { return 0; }
+        }
+
+        private bool TryGet(Account a, AccountItem item, out double value)
+        {
+            value = 0;
+            if (a == null) return false;
+            try
+            {
+                value = a.Get(item, Currency.UsDollar);
+                return !double.IsNaN(value) && !double.IsInfinity(value);
+            }
+            catch { return false; }
+        }
+
+        private void ObserveProviderFloor(Account account, BallastTracker tracker, DateTime when)
+        {
+            if (account == null || tracker == null || !tracker.HasValidEquity) return;
+            double remaining;
+            if (!TryGet(account, AccountItem.TrailingMaxDrawdown, out remaining)) return;
+            tracker.ObserveProviderTrailingRoom(remaining, tracker.CurrentEquity, when);
+        }
+
+        private static double PointValueOf(Instrument instrument)
+        {
+            try
+            {
+                return instrument != null && instrument.MasterInstrument != null
+                    && instrument.MasterInstrument.PointValue > 0
+                    ? instrument.MasterInstrument.PointValue : 1;
+            }
+            catch { return 1; }
+        }
+
+        private void SyncAccountSubscriptions()
+        {
+            List<string> attached = new List<string>(eventAccounts.Keys);
+            for (int i = 0; i < attached.Count; i++)
+            {
+                string name = attached[i];
+                Account current = FindAccount(name);
+                if (!monitor.IsMonitored(name) || current == null
+                    || !object.ReferenceEquals(current, eventAccounts[name]))
+                    DetachAccountEvents(name);
+            }
+
+            foreach (string name in monitor.MonitoredNames)
+            {
+                if (eventAccounts.ContainsKey(name)) continue;
+                Account account = FindAccount(name);
+                if (account == null) continue;
+
+                try
+                {
+                    account.ExecutionUpdate += OnAccountExecutionUpdate;
+                    account.PositionUpdate += OnAccountPositionUpdate;
+                    account.AccountItemUpdate += OnAccountItemUpdate;
+                    eventAccounts[name] = account;
+
+                    BallastTracker tracker = monitor.Get(name);
+                    if (tracker != null)
+                    {
+                        tracker.ResetExecutionTelemetry();
+                        try
+                        {
+                            lock (account.Positions)
+                            {
+                                foreach (Position p in account.Positions)
+                                {
+                                    if (p == null || p.Instrument == null
+                                        || p.MarketPosition == MarketPosition.Flat) continue;
+                                    int q = p.MarketPosition == MarketPosition.Long
+                                        ? p.Quantity : -p.Quantity;
+                                    tracker.SeedOpenInstrument(p.Instrument.FullName, q,
+                                        p.AveragePrice, PointValueOf(p.Instrument), Core.Globals.Now);
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            tracker.MarkExecutionTelemetryGap(
+                                "Ballast could not seed the account's existing positions.");
+                        }
+                        ObserveProviderFloor(account, tracker, Core.Globals.Now);
+                    }
+                }
+                catch
+                {
+                    BallastTracker tracker = monitor.Get(name);
+                    if (tracker != null)
+                        tracker.MarkExecutionTelemetryGap(
+                            "Ballast could not subscribe to NinjaTrader account events.");
+                }
+            }
+        }
+
+        private void DetachAccountEvents(string name)
+        {
+            Account account;
+            if (!eventAccounts.TryGetValue(name, out account)) return;
+            try { account.ExecutionUpdate -= OnAccountExecutionUpdate; } catch { }
+            try { account.PositionUpdate -= OnAccountPositionUpdate; } catch { }
+            try { account.AccountItemUpdate -= OnAccountItemUpdate; } catch { }
+            eventAccounts.Remove(name);
+            pendingPositionChecks.Remove(name);
+        }
+
+        private void OnAccountExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            Account account = sender as Account;
+            if (account == null || e == null) return;
+
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(delegate { ProcessExecution(account, e); }));
+            }
+            catch { }
+        }
+
+        private void OnAccountItemUpdate(object sender, AccountItemEventArgs e)
+        {
+            Account account = sender as Account;
+            if (account == null || e == null
+                || e.AccountItem != AccountItem.TrailingMaxDrawdown) return;
+
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    BallastTracker tracker = monitor.Get(account.Name);
+                    if (tracker == null) return;
+                    double cash = SafeGet(account, AccountItem.CashValue);
+                    double unreal = SafeGet(account, AccountItem.UnrealizedProfitLoss);
+                    double equity = cash + unreal;
+                    if (equity > 0)
+                    {
+                        tracker.OnEquity(equity,
+                            SafeGet(account, AccountItem.RealizedProfitLoss), cash);
+                        tracker.ObserveProviderTrailingRoom(e.Value, equity, Core.Globals.Now);
+                    }
+                }));
+            }
+            catch { }
+        }
+
+        private void ProcessExecution(Account account, ExecutionEventArgs e)
+        {
+            string name = account.Name;
+            if (!monitor.IsMonitored(name)) return;
+
+            Execution execution = e.Execution;
+            if (execution == null) return;
+            Order order = execution.Order;
+            Instrument instrument = execution.Instrument;
+            if (order == null || instrument == null) return;
+
+            int quantity = e.Quantity > 0 ? e.Quantity
+                : execution.Quantity;
+            if (quantity <= 0) return;
+
+            int signed = (order.OrderAction == OrderAction.Buy
+                       || order.OrderAction == OrderAction.BuyToCover)
+                ? quantity : -quantity;
+            string executionId = !string.IsNullOrEmpty(e.ExecutionId)
+                ? e.ExecutionId : execution.ExecutionId;
+            double price = e.Price != 0 ? e.Price : execution.Price;
+            double commission = execution.Commission;
+            DateTime when = e.Time != DateTime.MinValue ? e.Time
+                : (execution.Time != DateTime.MinValue ? execution.Time : Core.Globals.Now);
+
+            BallastTracker tracker = monitor.Get(name);
+            if (tracker == null) return;
+
+            double realised = SafeGet(account, AccountItem.RealizedProfitLoss);
+            double unreal = SafeGet(account, AccountItem.UnrealizedProfitLoss);
+            double cash = SafeGet(account, AccountItem.CashValue);
+            tracker.EnsureSession(when, realised, cash + unreal);
+            tracker.OnEquity(cash + unreal, realised, cash);
+            ObserveProviderFloor(account, tracker, when);
+
+            BallastTrade closed = monitor.OnExecution(name, executionId, instrument.FullName,
+                signed, price, PointValueOf(instrument), commission, when);
+            if (closed != null) journalDirty = true;
+            pendingPositionChecks[name] = Core.Globals.Now.AddSeconds(2);
+        }
+
+        private void OnAccountPositionUpdate(object sender, PositionEventArgs e)
+        {
+            Account account = sender as Account;
+            if (account == null) return;
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (monitor.IsMonitored(account.Name))
+                        pendingPositionChecks[account.Name] = Core.Globals.Now.AddSeconds(2);
+                }));
+            }
+            catch { }
+        }
+
+        private void VerifyExecutionPositions(string name, Account account, BallastTracker tracker)
+        {
+            DateTime verifyAfter;
+            if (!pendingPositionChecks.TryGetValue(name, out verifyAfter)) return;
+            DateTime now;
+            try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+            if (now < verifyAfter) return;
+            pendingPositionChecks.Remove(name);
+
+            Dictionary<string, int> actual = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                lock (account.Positions)
+                {
+                    foreach (Position p in account.Positions)
+                    {
+                        if (p == null || p.Instrument == null
+                            || p.MarketPosition == MarketPosition.Flat) continue;
+                        actual[p.Instrument.FullName] = p.MarketPosition == MarketPosition.Long
+                            ? p.Quantity : -p.Quantity;
+                    }
+                }
+            }
+            catch
+            {
+                tracker.MarkExecutionTelemetryGap("Ballast could not verify NinjaTrader's positions.");
+                return;
+            }
+
+            foreach (KeyValuePair<string, int> pair in actual)
+            {
+                if (tracker.ExecutionPosition(pair.Key) != pair.Value)
+                {
+                    tracker.MarkExecutionTelemetryGap(
+                        "NinjaTrader reports " + pair.Value + " " + pair.Key
+                      + " while Ballast's execution ledger reports "
+                      + tracker.ExecutionPosition(pair.Key) + ".");
+                    return;
+                }
+            }
+
+            List<string> ledger = tracker.ExecutionInstruments;
+            for (int i = 0; i < ledger.Count; i++)
+            {
+                int q;
+                if (!actual.TryGetValue(ledger[i], out q) && tracker.ExecutionPosition(ledger[i]) != 0)
+                {
+                    tracker.MarkExecutionTelemetryGap(
+                        "Ballast's execution ledger still shows " + ledger[i]
+                      + " open while NinjaTrader reports it flat.");
+                    return;
+                }
+            }
         }
 
         // ── Rule book ────────────────────────────────────────────────────────
@@ -3306,76 +3576,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// The account's position, taken from whichever instrument is carrying
-        /// the most contracts.
-        ///
-        /// It used to be the NET of every position on the account: longs added,
-        /// shorts subtracted. Hold two contracts of one instrument and two short
-        /// of another and that nets to zero - which Ballast read as "flat", so it
-        /// closed the round-trip, banked a trade, and then opened a fresh one on
-        /// the very next poll a second later. One trade became two, the loss
-        /// streak counted a trade that never happened, and the journal grew a row
-        /// with an entry time that made no sense.
-        ///
-        /// Taking the dominant instrument instead means flat is only ever
-        /// reported when every position really is flat, and the direction and
-        /// size agree with OpenInstrument, which already picks the same one.
-        /// </summary>
-        private int SignedPosition(Account a)
-        {
-            int best = 0;
-            int bestAbs = 0;
-
-            try
-            {
-                lock (a.Positions)
-                {
-                    foreach (Position p in a.Positions)
-                    {
-                        int q;
-                        if (p.MarketPosition == MarketPosition.Long) q = p.Quantity;
-                        else if (p.MarketPosition == MarketPosition.Short) q = -p.Quantity;
-                        else continue;
-
-                        int abs = q < 0 ? -q : q;
-                        if (abs > bestAbs) { bestAbs = abs; best = q; }
-                    }
-                }
-            }
-            catch { }
-
-            return best;
-        }
-
-        /// <summary>
-        /// Name of whatever is open on this account, for the journal. If several
-        /// instruments are open at once we take the largest, since that is the
-        /// one the trade was really about.
-        /// </summary>
-        private string OpenInstrument(Account a)
-        {
-            string best = "";
-            int bestQty = 0;
-            try
-            {
-                lock (a.Positions)
-                {
-                    foreach (Position p in a.Positions)
-                    {
-                        if (p.MarketPosition == MarketPosition.Flat) continue;
-                        if (p.Quantity > bestQty && p.Instrument != null)
-                        {
-                            bestQty = p.Quantity;
-                            best = p.Instrument.FullName;
-                        }
-                    }
-                }
-            }
-            catch { }
-            return best;
-        }
-
-        /// <summary>
         /// Work out whether this account traded while Ballast was closed, and if
         /// it did, put a row in the journal for it.
         ///
@@ -3425,7 +3625,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             double accounted = 0;
             double watchedCommission = 0;
-            List<BallastTrade> today = monitor.Journal.ForDay(now);
+            List<BallastTrade> today = CurrentTradingDayTrades(now);
             for (int i = 0; i < today.Count; i++)
             {
                 if (today[i] == null) continue;
@@ -3513,7 +3713,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 existing.ExitTime = now;
                 existing.Note = GapNote(name, t, existing.Pnl, existing.EntryTime, now);
                 journalDirty = true;
-                SeedTodaysCounts(monitor.Journal.ForDay(now));
+                SeedTodaysCounts(CurrentTradingDayTrades(now));
                 return;
             }
 
@@ -3548,7 +3748,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Fold it into today's counts, so the trade count and the loss streak
             // include it. One row counts as one trade even if it covered several -
             // under-counting, never over-counting.
-            SeedTodaysCounts(monitor.Journal.ForDay(now));
+            SeedTodaysCounts(CurrentTradingDayTrades(now));
         }
 
         // ── Loop ─────────────────────────────────────────────────────────────
@@ -3558,6 +3758,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 RefreshAccountList(false);
+                SyncAccountSubscriptions();
 
                 DateTime now = Core.Globals.Now;
 
@@ -3580,14 +3781,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     t.CurrentCommission = Math.Abs(SafeGet(a, AccountItem.Commission));
 
                     t.EnsureSession(now, realised, equity);
-                    t.OnEquity(equity, realised);
+                    t.OnEquity(equity, realised, cash);
+                    ObserveProviderFloor(a, t, now);
 
-                    // Routed through the monitor so a completed round-trip lands
-                    // in the journal without the trader doing anything at all.
-                    BallastTrade closed = monitor.OnPosition(
-                        name, SignedPosition(a), realised, now, OpenInstrument(a));
-
-                    if (closed != null) journalDirty = true;
+                    // Executions, not this timer, create journal rows. The timer
+                    // is only the independent reconciliation alarm that proves
+                    // the event ledger still matches NinjaTrader's positions.
+                    VerifyExecutionPositions(name, a, t);
 
                     ReconcileClosedPeriod(name, t, now);
                 }
@@ -3712,6 +3912,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ctx += "  -  balance " + Money(worst.Input.CurrentEquity)
                      + ", closed at " + Money(worst.Input.FloorLevel)
                      + ", so " + Money(worst.Input.CushionToFloor) + " of room"
+                     + (worst.Input.FirmFloorProviderConfirmed
+                        ? "  -  threshold verified from the connected firm account"
+                        : "")
                      + (worst.Input.FloorLocked
                         ? "  -  the floor is fixed at " + Money(worst.Input.FloorLevel)
                           + ", so profit above that is real cushion"
@@ -3968,6 +4171,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 else
                 {
                     cushionText = Money(s.Input.CushionToFloor)
+                                + (s.Input.FirmFloorProviderConfirmed ? "  firm" : "")
                                 + (s.Input.FloorLocked ? "  fixed" : "");
                     cushionCol = s.Input.CushionToFloor < 400 ? ColRed : ColMuted;
                 }
@@ -4190,6 +4394,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 tbWindowStart.Text = DisciplineEngine.HourMinute(c.SessionStartMinute);
             if (tbWindowEnd != null && !anyTime)
                 tbWindowEnd.Text = DisciplineEngine.HourMinute(c.SessionEndMinute);
+            if (tbTradingDayReset != null)
+                tbTradingDayReset.Text = DisciplineEngine.HourMinute(c.TradingDayResetMinute);
 
             // The sentence above the fold has to move with the fields under it.
             RefreshFirmSummary(c);
@@ -4235,6 +4441,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (c.SessionStartMinute == c.SessionEndMinute)
                     c.SessionEndMinute = (c.SessionStartMinute + 1) % 1440;
             }
+
+            int reset = DisciplineEngine.ParseHourMinute(
+                tbTradingDayReset == null ? null : tbTradingDayReset.Text);
+            if (reset >= 0) c.TradingDayResetMinute = reset;
         }
 
         private void ApplyEdits()
@@ -4525,7 +4735,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 double accounted = 0;
                 int rows = 0;
-                List<BallastTrade> today = monitor.Journal.ForDay(now);
+                List<BallastTrade> today = CurrentTradingDayTrades(now);
                 for (int i = 0; i < today.Count; i++)
                 {
                     if (today[i] == null) continue;
@@ -4832,26 +5042,30 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
 
                 List<string> lines = new List<string>();
-                lines.Add("*SESSION*|1");
+                lines.Add("*SESSION*|3");
 
                 foreach (string name in monitor.MonitoredNames)
                 {
                     BallastTracker t = monitor.Get(name);
-                    if (t == null || t.SessionDate != now.Date) continue;
+                    if (t == null || t.SessionDate == DateTime.MinValue.Date) continue;
 
                     lines.Add(string.Join("|", new string[] {
                         name.Replace("|", "/"),
-                        now.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+                        t.SessionDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
                         t.SessionStartRealised.ToString(CultureInfo.InvariantCulture),
                         t.PeakEquity.ToString(CultureInfo.InvariantCulture),
                         t.PeakDailyPnl.ToString(CultureInfo.InvariantCulture),
                         t.WorstDailyPnl.ToString(CultureInfo.InvariantCulture),
                         t.DailyLossLimitHit ? "1" : "0",
-                        now.ToString("HHmm", CultureInfo.InvariantCulture)
+                        now.ToString("HHmm", CultureInfo.InvariantCulture),
+                        t.EndOfDayHighWater.ToString(CultureInfo.InvariantCulture),
+                        t.LastKnownBalance.ToString(CultureInfo.InvariantCulture),
+                        t.AuthoritativeFirmFloor.ToString(CultureInfo.InvariantCulture),
+                        t.FirmFloorProviderConfirmed ? "1" : "0"
                     }));
                 }
 
-                File.WriteAllLines(SessionPath(), lines.ToArray());
+                AtomicFile.WriteAllLines(SessionPath(), lines.ToArray());
             }
             catch { }
         }
@@ -4865,8 +5079,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 DateTime now;
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
-                string today = now.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
-
                 string[] lines = File.ReadAllLines(p);
                 for (int i = 0; i < lines.Length; i++)
                 {
@@ -4874,11 +5086,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     string[] f = lines[i].Split('|');
                     if (f.Length < 7) continue;
-
-                    // Only today's. Yesterday's baseline would describe a day that
-                    // is over, and applying it would make this morning look like
-                    // a continuation of last night.
-                    if (f[1] != today) continue;
 
                     BallastTracker t = monitor.Get(f[0]);
                     if (t == null) continue;
@@ -4889,13 +5096,40 @@ namespace NinjaTrader.NinjaScript.AddOns
                     double.TryParse(f[4], NumberStyles.Any, CultureInfo.InvariantCulture, out peak);
                     double.TryParse(f[5], NumberStyles.Any, CultureInfo.InvariantCulture, out worst);
 
-                    t.SeedSession(now.Date, start, peakEq, peak, worst, f[6] == "1");
+                    DateTime savedDay;
+                    if (!DateTime.TryParseExact(f[1], "yyyyMMdd", CultureInfo.InvariantCulture,
+                                                DateTimeStyles.None, out savedDay)) continue;
+
+                    double eodHigh = peakEq, lastBalance = peakEq;
+                    if (f.Length > 8)
+                        double.TryParse(f[8], NumberStyles.Any, CultureInfo.InvariantCulture, out eodHigh);
+                    if (f.Length > 9)
+                        double.TryParse(f[9], NumberStyles.Any, CultureInfo.InvariantCulture, out lastBalance);
+                    double authoritativeFloor = 0;
+                    bool providerConfirmed = false;
+                    if (f.Length > 10)
+                        double.TryParse(f[10], NumberStyles.Any, CultureInfo.InvariantCulture,
+                                        out authoritativeFloor);
+                    if (f.Length > 11) providerConfirmed = f[11] == "1";
+
+                    DateTime currentTradingDay = t.TradingDay(now);
+                    bool current = savedDay == currentTradingDay;
+                    if (current)
+                        t.SeedSession(savedDay, start, peakEq, peak, worst, f[6] == "1",
+                                      eodHigh, lastBalance, authoritativeFloor, providerConfirmed);
+                    else
+                        t.SeedRiskState(savedDay, peakEq, eodHigh, lastBalance,
+                                        authoritativeFloor, providerConfirmed);
 
                     int hhmm;
-                    if (f.Length > 7 && int.TryParse(f[7], NumberStyles.Integer,
+                    if (current && f.Length > 7 && int.TryParse(f[7], NumberStyles.Integer,
                                                      CultureInfo.InvariantCulture, out hhmm)
                         && hhmm >= 0 && hhmm <= 2359)
-                        lastSeenAt[f[0]] = now.Date.AddHours(hhmm / 100).AddMinutes(hhmm % 100);
+                    {
+                        DateTime seen = now.Date.AddHours(hhmm / 100).AddMinutes(hhmm % 100);
+                        if (seen > now) seen = seen.AddDays(-1);
+                        lastSeenAt[f[0]] = seen;
+                    }
 
                 }
             }
@@ -4906,6 +5140,28 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             try { return Path.Combine(Core.Globals.UserDataDir, "ballast-journal.csv"); }
             catch { return "ballast-journal.csv"; }
+        }
+
+        /// <summary>
+        /// "Today" is account-specific: an overnight firm's 01:00 trade still
+        /// belongs to the session that began the prior evening. Unknown accounts
+        /// retain calendar-day grouping for backward-compatible history views.
+        /// </summary>
+        private List<BallastTrade> CurrentTradingDayTrades(DateTime now)
+        {
+            List<BallastTrade> result = new List<BallastTrade>();
+            List<BallastTrade> all = monitor.Journal.All;
+            for (int i = 0; i < all.Count; i++)
+            {
+                BallastTrade trade = all[i];
+                if (trade == null) continue;
+                BallastTracker tracker = monitor.Get(trade.AccountName);
+                bool current = tracker == null
+                    ? trade.ExitTime.Date == now.Date
+                    : tracker.TradingDay(trade.ExitTime) == tracker.TradingDay(now);
+                if (current) result.Add(trade);
+            }
+            return result;
         }
 
         private void LoadJournal()
@@ -4922,7 +5178,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // the window mid-session doesn't lose it. Yesterday's plan is not
             // carried forward on purpose: a plan you didn't write this morning is
             // one you haven't actually committed to.
-            List<BallastTrade> today = monitor.Journal.ForDay(Core.Globals.Now);
+            List<BallastTrade> today = CurrentTradingDayTrades(Core.Globals.Now);
             for (int i = today.Count - 1; i >= 0; i--)
             {
                 if (today[i].SessionPlan.Length > 0)
@@ -4952,8 +5208,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (today == null) return;
 
-            DateTime day;
-            try { day = Core.Globals.Now.Date; } catch { day = DateTime.Now.Date; }
+            DateTime now;
+            try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
 
             Dictionary<string, int> trades = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             Dictionary<string, int> losses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -5054,7 +5310,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 double dayWorst;
                 worst.TryGetValue(name, out dayWorst);
 
-                t.SeedToday(day, tr, ls, haveLoss ? (DateTime?)ll : null, wasLoss, dayPnl, dayWorst);
+                t.SeedToday(t.TradingDay(now), tr, ls, haveLoss ? (DateTime?)ll : null,
+                            wasLoss, dayPnl, dayWorst);
             }
         }
 
@@ -5076,7 +5333,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 bool on = planStandingBox != null && planStandingBox.IsChecked == true;
                 string plan = tbSessionPlan.Text == null ? "" : tbSessionPlan.Text.Trim();
-                File.WriteAllText(StandingPlanPath(), (on ? "1" : "0") + "\n" + plan);
+                AtomicFile.WriteAllText(StandingPlanPath(), (on ? "1" : "0") + "\n" + plan);
             }
             catch { }
         }
@@ -5111,7 +5368,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (monitor.Journal.SessionPlan.Length > 0) return;
 
                 tbSessionPlan.Text = plan;
-                planPendingConfirm = true;
                 if (planConfirmRow != null) planConfirmRow.Visibility = Visibility.Visible;
             }
             catch { }
@@ -5119,7 +5375,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void ConfirmPlan()
         {
-            planPendingConfirm = false;
             if (planConfirmRow != null) planConfirmRow.Visibility = Visibility.Collapsed;
             CommitSessionPlan();
             SaveStandingPlan();
@@ -5139,7 +5394,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (line.Length == 0) continue;
                     events.Add(line);
                 }
-                File.WriteAllLines(EventsPath(), events.ToArray());
+                AtomicFile.WriteAllLines(EventsPath(), events.ToArray());
             }
             catch { }
         }
@@ -5211,7 +5466,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // Stamp it onto anything already taken today that has no plan yet, so
             // writing the plan late still attaches it to the morning's trades.
-            List<BallastTrade> today = monitor.Journal.ForDay(Core.Globals.Now);
+            List<BallastTrade> today = CurrentTradingDayTrades(Core.Globals.Now);
             for (int i = 0; i < today.Count; i++)
                 if (today[i].SessionPlan.Length == 0) today[i].SessionPlan = plan;
 
@@ -5278,7 +5533,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             List<BallastTrade> all = monitor.Journal.All;
             journalInsight.Text = monitor.Journal.HeadlineInsight(all, monitor.DefaultConfig.CooldownMinutes, 20);
 
-            List<BallastTrade> today = monitor.Journal.ForDay(Core.Globals.Now);
+            List<BallastTrade> today = CurrentTradingDayTrades(Core.Globals.Now);
             List<JournalBucket> adv = monitor.Journal.AdviceSplit(all);
             List<JournalBucket> pl = monitor.Journal.PlannedSplit(all);
 
@@ -6174,7 +6429,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     TrackerConfig c = monitor.RememberedConfig(n);
                     if (c != null) lines.Add(SettingsCodec.Serialise(n, c));
                 }
-                File.WriteAllLines(SettingsPath(), lines.ToArray());
+                AtomicFile.WriteAllLines(SettingsPath(), lines.ToArray());
             }
             catch { /* settings are a convenience, never fatal */ }
         }
@@ -6286,6 +6541,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 timer.Tick -= OnTick;
                 timer = null;
             }
+
+            List<string> attached = new List<string>(eventAccounts.Keys);
+            for (int i = 0; i < attached.Count; i++) DetachAccountEvents(attached[i]);
             Closed -= OnClosedCleanup;
         }
     }

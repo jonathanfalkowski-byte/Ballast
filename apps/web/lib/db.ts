@@ -11,9 +11,11 @@ export function getPool(): Pool {
       !connectionString ||
       connectionString.includes("localhost") ||
       connectionString.includes("127.0.0.1");
+    const encodedCa = process.env.DATABASE_SSL_CA_BASE64;
+    const ca = encodedCa ? Buffer.from(encodedCa, "base64").toString("utf8") : undefined;
     pool = new Pool({
       connectionString,
-      ssl: isLocal ? undefined : { rejectUnauthorized: false },
+      ssl: isLocal ? undefined : { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
     });
   }
   return pool;

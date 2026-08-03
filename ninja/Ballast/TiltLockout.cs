@@ -358,7 +358,7 @@ namespace Ballast
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine(CsvHeader);
                 for (int n = 0; n < items.Count; n++) sb.AppendLine(ToCsvLine(items[n]));
-                File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+                AtomicFile.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
                 return true;
             }
             catch { return false; }

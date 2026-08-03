@@ -30,7 +30,7 @@ export default function CushionPage() {
         <CushionCalculator />
       </div>
       <footer className="mt-14 border-t border-[#2a333f] pt-6 text-sm text-[#7f8b98]">
-        Confirm your firm's exact trailing rules (intraday vs end-of-day) before relying on any number
+        Confirm your firm&apos;s exact trailing rules (intraday vs end-of-day) before relying on any number
         here. Not financial advice.
       </footer>
     </main>
