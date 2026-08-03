@@ -9,6 +9,10 @@
   "scripts": {
     "dev:web": "npm --workspace apps/web run dev",
     "build:web": "npm --workspace apps/web run build",
+    "test:web": "npm --workspace apps/web run test",
+    "lint:web": "npm --workspace apps/web run lint",
+    "test:ninja": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-ninja.ps1",
+    "compile:ninja-real": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/compile-ninja-real.ps1",
     "db:up": "cd infra/docker && docker compose up -d",
     "db:migrate": "node infra/runMigrations.js"
   },

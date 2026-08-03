@@ -464,6 +464,8 @@ function NumField({
   const [raw, setRaw] = useState(String(value));
 
   useEffect(() => {
+    // The account picker is an external source for this local editing buffer.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (parseFloat(raw) !== value) setRaw(value === 0 ? "" : String(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);

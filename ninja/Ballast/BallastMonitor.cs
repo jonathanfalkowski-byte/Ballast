@@ -245,6 +245,7 @@ namespace Ballast
             n.Generation = c.Generation;
             n.SessionStartMinute = c.SessionStartMinute;
             n.SessionEndMinute = c.SessionEndMinute;
+            n.TradingDayResetMinute = c.TradingDayResetMinute;
             return n;
         }
 
@@ -259,6 +260,20 @@ namespace Ballast
             if (t == null) return null;
 
             BallastTrade e = t.OnPosition(signedQuantity, realisedNow, now, instrument, accountName);
+            if (e != null) Journal.Add(e);
+            return e;
+        }
+
+        /// <summary>Route an immutable fill to the account's per-instrument ledger.</summary>
+        public BallastTrade OnExecution(string accountName, string executionId, string instrument,
+                                        int signedQuantity, double price, double pointValue,
+                                        double commission, DateTime now)
+        {
+            BallastTracker t = Get(accountName);
+            if (t == null) return null;
+
+            BallastTrade e = t.OnExecution(executionId, instrument, signedQuantity, price,
+                                           pointValue, commission, now, accountName);
             if (e != null) Journal.Add(e);
             return e;
         }

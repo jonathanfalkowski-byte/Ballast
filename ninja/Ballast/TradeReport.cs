@@ -267,7 +267,7 @@ namespace Ballast
             {
                 if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
                 string path = Path.Combine(folder, fileName);
-                File.WriteAllText(path, html, new UTF8Encoding(false));
+                AtomicFile.WriteAllText(path, html, new UTF8Encoding(false));
                 return path;
             }
             catch { return ""; }

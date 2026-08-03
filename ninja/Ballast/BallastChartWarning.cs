@@ -99,7 +99,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static readonly Brush Ink   = Frozen(0xe8, 0xed, 0xf3);
         // Red is not declared here any more: an alert now fills the strip with
         // AlarmBack rather than tinting text on the chart background.
-        private static readonly Brush Panel = Frozen(0x16, 0x1b, 0x22);
+        private static readonly Brush PanelBrush = Frozen(0x16, 0x1b, 0x22);
         private static readonly Brush Green = Frozen(0x3f, 0xb9, 0x50);
 
         /// <summary>Alarm colours. Solid, because the strip is ours to fill.</summary>
@@ -444,7 +444,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (string.IsNullOrEmpty(account))
             {
                 Say("BALLAST: PICK AN ACCOUNT IN THIS CHART'S CHART TRADER",
-                    Amber, Panel, 0.7, Where);
+                    Amber, PanelBrush, 0.7, Where);
                 return;
             }
 
@@ -477,7 +477,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         + "  (THIS CHART'S ACCOUNT) - TICK IT IN SETUP";
                 }
 
-                Say(why, Amber, Panel, 0.7, Where);
+                Say(why, Amber, PanelBrush, 0.7, Where);
                 return;
             }
 
@@ -522,7 +522,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Say(count,
                     close >= 2 ? AlarmInk : close == 1 ? Amber
                         : st.DailyPnl < 0 ? Ink : Green,
-                    close >= 2 ? AlarmBack : Panel,
+                    close >= 2 ? AlarmBack : PanelBrush,
                     CountScale,
                     Where);
                 return;
@@ -544,7 +544,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             Say(text,
                 alarm ? AlarmInk : Amber,
-                alarm ? AlarmBack : Panel,
+                alarm ? AlarmBack : PanelBrush,
                 st.Locked ? 1.4 : 1.0,
                 where);
         }

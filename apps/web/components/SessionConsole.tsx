@@ -21,7 +21,7 @@ export default function SessionConsole() {
 
   // Live inputs
   const [minutesSinceLastLoss, setMins] = useState(10);
-  const [plannedContracts, setPlanned] = useState(1);
+  const [plannedContracts] = useState(1);
   const [nowMinuteEt, setNow] = useState(600); // 10:00 ET
 
   // Trade log (in-memory demo)

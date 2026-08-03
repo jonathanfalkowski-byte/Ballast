@@ -24,6 +24,8 @@ public static class GapTests
     {
         TradesWhileClosedLandInTheDay();
         TheFloorPeakSurvivesTheGap();
+        IntradayPeakSurvivesDayRollover();
+        EndOfDayFloorOnlyAdvancesAtRollover();
         YesterdaysBaselineIsNeverUsed();
         ReSeedingDoesNotMoveTheDay();
         FirstOpenOfTheDayIsUnchanged();
@@ -522,7 +524,59 @@ public static class GapTests
         T.Ok(!t.SessionRestored, "a baseline from another day is ignored");
         T.Near(t.DailyPnl, 0, 0.01, "today starts at zero");
         T.Ok(!t.DailyLossLimitHit, "with yesterday's spent limit left behind");
-        T.Near(t.PeakEquity, 250000, 0.01, "and yesterday's peak does not set today's floor");
+        T.Near(t.PeakEquity, 260000, 0.01,
+               "but yesterday's account-lifetime peak still sets the trailing floor");
+    }
+
+    static void IntradayPeakSurvivesDayRollover()
+    {
+        T.S("an intraday trailing peak survives midnight");
+
+        DateTime day = new DateTime(2026, 8, 3);
+        BallastTracker t = new BallastTracker();
+        t.Config = Cfg();
+        t.Config.DrawdownType = DrawdownType.Intraday;
+
+        t.EnsureSession(day.AddHours(10), 0, 250000);
+        t.OnEquity(254000, 4000, 254000);
+        t.OnEquity(251000, 1000, 251000);
+
+        t.EnsureSession(day.AddDays(1).AddHours(9), 0, 251000);
+        t.OnEquity(251000, 0, 251000);
+
+        T.Near(t.PeakEquity, 254000, 0.01, "midnight does not erase the account high-water mark");
+        DisciplineInput i = t.BuildInput(day.AddDays(1).AddHours(9));
+        T.Near(i.FloorLevel, 247500, 0.01, "the new day keeps yesterday's ratcheted floor");
+        T.Near(i.CushionToFloor, 3500, 0.01, "and never invents the larger reset cushion");
+    }
+
+    static void EndOfDayFloorOnlyAdvancesAtRollover()
+    {
+        T.S("an end-of-day floor uses the completed session anchor");
+
+        DateTime day = new DateTime(2026, 8, 3);
+        BallastTracker t = new BallastTracker();
+        t.Config = Cfg();
+        t.Config.DrawdownType = DrawdownType.EndOfDay;
+
+        t.SeedRiskState(day.AddDays(-1), 250000, 252000, 252000);
+        t.EnsureSession(day.AddHours(9), 0, 252000);
+
+        // A losing intraday balance must not lower the floor with it.
+        t.OnEquity(249000, -3000, 249000);
+        DisciplineInput losing = t.BuildInput(day.AddHours(12));
+        T.Near(losing.FloorLevel, 245500, 0.01, "a losing day cannot move the EOD floor down");
+
+        // Nor does an intraday winner move the EOD floor before the session is complete.
+        t.OnEquity(255000, 3000, 255000);
+        DisciplineInput winning = t.BuildInput(day.AddHours(15));
+        T.Near(winning.FloorLevel, 245500, 0.01, "an intraday winner waits for the close");
+
+        // The last known cash balance becomes authoritative only at rollover.
+        t.EnsureSession(day.AddDays(1).AddHours(9), 0, 255000);
+        DisciplineInput tomorrow = t.BuildInput(day.AddDays(1).AddHours(9));
+        T.Near(t.EndOfDayHighWater, 255000, 0.01, "the completed close advances the EOD anchor");
+        T.Near(tomorrow.FloorLevel, 248500, 0.01, "the next session starts from that higher floor");
     }
 
     static void ReSeedingDoesNotMoveTheDay()

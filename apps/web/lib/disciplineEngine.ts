@@ -129,6 +129,8 @@ export type FloorParams = {
   trailingDrawdown: number;
   currentBalance: number;
   peakBalance: number;
+  /** Persisted completed-session high-water used by EOD trailing accounts. */
+  endOfDayHighWater?: number;
   drawdownType: "intraday" | "end_of_day";
   /**
    * Balance at which the threshold STOPS following you up, after which it is
@@ -150,7 +152,9 @@ export function floorLevel(params: FloorParams): number {
   const lockFloorAt = params.lockFloorAt ?? 0;
 
   const anchor =
-    drawdownType === "intraday" ? Math.max(peakBalance, currentBalance) : currentBalance;
+    drawdownType === "intraday"
+      ? Math.max(peakBalance, currentBalance)
+      : Math.max(params.endOfDayHighWater ?? peakBalance, startingBalance);
 
   const trailed = anchor - trailingDrawdown;
 
@@ -171,7 +175,7 @@ export function floorIsLocked(params: FloorParams): boolean {
   const anchor =
     params.drawdownType === "intraday"
       ? Math.max(params.peakBalance, params.currentBalance)
-      : params.currentBalance;
+      : Math.max(params.endOfDayHighWater ?? params.peakBalance, params.startingBalance);
 
   return anchor - params.trailingDrawdown >= lockFloorAt;
 }

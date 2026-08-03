@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { evaluateDiscipline, type DisciplineInput } from "../disciplineEngine";
+import {
+  evaluateDiscipline,
+  floorIsLocked,
+  floorLevel,
+  type DisciplineInput,
+} from "../disciplineEngine";
 
 const base: DisciplineInput = {
   lossesToday: 0,
@@ -42,5 +47,47 @@ describe("disciplineEngine", () => {
   });
   it("protects a green day at target", () => {
     expect(evaluateDiscipline({ ...base, dailyPnl: 600, peakDailyPnl: 600 }).action).toBe("protect_green");
+  });
+});
+
+describe("trailing drawdown floor", () => {
+  it("does not let an EOD floor fall with an intraday loss", () => {
+    expect(
+      floorLevel({
+        startingBalance: 250_000,
+        trailingDrawdown: 6_500,
+        currentBalance: 249_000,
+        peakBalance: 255_000,
+        endOfDayHighWater: 252_000,
+        drawdownType: "end_of_day",
+      }),
+    ).toBe(245_500);
+  });
+
+  it("does not advance an EOD floor from an unrealized intraday winner", () => {
+    expect(
+      floorLevel({
+        startingBalance: 250_000,
+        trailingDrawdown: 6_500,
+        currentBalance: 260_000,
+        peakBalance: 260_000,
+        endOfDayHighWater: 252_000,
+        drawdownType: "end_of_day",
+      }),
+    ).toBe(245_500);
+  });
+
+  it("uses the persisted EOD anchor when deciding whether the floor locked", () => {
+    expect(
+      floorIsLocked({
+        startingBalance: 250_000,
+        trailingDrawdown: 6_500,
+        currentBalance: 270_000,
+        peakBalance: 270_000,
+        endOfDayHighWater: 255_000,
+        drawdownType: "end_of_day",
+        lockFloorAt: 250_000,
+      }),
+    ).toBe(false);
   });
 });

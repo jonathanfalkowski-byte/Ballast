@@ -68,6 +68,7 @@ namespace Ballast
         public double FloorLevel;        // the actual dollar level the account dies at
         public double CurrentEquity;
         public bool FloorLocked;         // true once the drawdown has stopped trailing
+        public bool FirmFloorProviderConfirmed; // threshold came directly from the account provider
         public int BaseMaxContracts;     // size before the drawdown throttle
         public bool SizeThrottled;       // true when the throttle has cut the advised size
 
@@ -78,6 +79,8 @@ namespace Ballast
         /// </summary>
         public bool PastFloor { get { return HasValidEquity && CushionToFloor <= 0; } }
         public bool HasValidEquity = true;
+        public bool ExecutionTelemetryHealthy = true;
+        public string ExecutionTelemetryWarning = "";
         public DrawdownType DrawdownType = DrawdownType.Intraday;
 
         /// <summary>Traded by a strategy rather than by hand.</summary>
@@ -148,6 +151,7 @@ namespace Ballast
             if (i == null || d == null) return "";
 
             if (!i.HasValidEquity) return "no balance yet";
+            if (!i.ExecutionTelemetryHealthy) return "execution feed mismatch - verify in Accounts";
             if (i.PastFloor) return "at or below its floor";
 
             if (Has(d.Signals, "daily_loss_limit"))
@@ -276,6 +280,15 @@ namespace Ballast
         public static List<RiskSignal> DetectRiskSignals(DisciplineInput i)
         {
             List<RiskSignal> signals = new List<RiskSignal>();
+
+            if (!i.ExecutionTelemetryHealthy)
+            {
+                string detail = string.IsNullOrEmpty(i.ExecutionTelemetryWarning)
+                    ? "The account position does not match Ballast's execution ledger."
+                    : i.ExecutionTelemetryWarning;
+                signals.Add(new RiskSignal("telemetry_gap", Severity.High,
+                    detail + " Ballast will not clear another trade until the feed is reconciled."));
+            }
 
             if (i.LossesToday >= i.MaxLossesBeforeStop && i.MaxLossesBeforeStop > 0)
             {
@@ -419,7 +432,12 @@ namespace Ballast
             // its own dash or the headline stutters.
             string reason = "conditions are clean, trade your plan";
 
-            if (Has(d.Signals, "past_floor"))
+            if (Has(d.Signals, "telemetry_gap"))
+            {
+                action = DisciplineAction.Lockout; urgency = Urgency.Alert;
+                reason = "execution telemetry is incomplete - verify the account before trading";
+            }
+            else if (Has(d.Signals, "past_floor"))
             {
                 action = DisciplineAction.Lockout; urgency = Urgency.Alert;
                 reason = "this account is at or below its floor";
@@ -510,9 +528,17 @@ namespace Ballast
                                         double currentBalance, double peakBalance,
                                         DrawdownType type, double lockFloorAt)
         {
+            // For EOD accounts peakBalance is the persisted completed-session
+            // high-water anchor. The current intraday balance must not move the
+            // floor down after a losing trade or up before the session closes.
             double anchor = (type == DrawdownType.Intraday)
                 ? Math.Max(peakBalance, currentBalance)
-                : currentBalance;
+                : peakBalance;
+
+            // A missing/migrated anchor is never allowed to lower the initial
+            // floor. Callers should surface missing state separately; this is the
+            // final arithmetic guardrail.
+            if (anchor < startingBalance) anchor = startingBalance;
 
             double trailed = anchor - trailingDrawdown;
 
@@ -543,7 +569,8 @@ namespace Ballast
             if (lockFloorAt <= 0) return false;
             double anchor = (type == DrawdownType.Intraday)
                 ? Math.Max(peakBalance, currentBalance)
-                : currentBalance;
+                : peakBalance;
+            if (anchor < startingBalance) anchor = startingBalance;
             return (anchor - trailingDrawdown) >= lockFloorAt;
         }
     }

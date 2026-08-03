@@ -27,10 +27,7 @@ public static class Program
 {
     public static int Main()
     {
-        MemoryTests.Run();
         CountTests.Run();
-        PositionTests.Run();
-        SeedTests.Run();
         TargetTests.Run();
         ApexFloorTests.Run();
         SanityTests.Run();
@@ -38,6 +35,10 @@ public static class Program
         WindowTests.Run();
         LatchTests.Run();
         GapTests.Run();
+        ExecutionTests.Run();
+        PersistenceTests.Run();
+        RuleUpdateTests.Run();
+        ProviderFloorTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

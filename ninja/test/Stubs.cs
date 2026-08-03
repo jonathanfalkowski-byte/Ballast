@@ -2747,7 +2747,7 @@ namespace NinjaTrader.Cbi
         LookAheadMaintenanceMargin, MaintenanceMargin, NetLiquidation, NetLiquidationByCurrency,
         PositionMargin, RealizedProfitLoss, ShortOptionValue, SodBuyingPower, SodCashValue,
         SodCrossCurrencyValue, SodLiquidatingValue, SodNetLiquidation, TotalCashBalance,
-        UnrealizedProfitLoss
+        UnrealizedProfitLoss, TrailingMaxDrawdown
     }
 
     public enum MarketPosition { Long, Short, Flat }

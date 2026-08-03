@@ -5,13 +5,13 @@
 // needs. Deliberately separated from the UI so the counting logic stays testable
 // and so a bug here can't take the window down.
 //
-// How a "trade" is counted: we watch the position for this account. When it goes
-// from non-flat to flat, one round-trip is complete. The trade's P&L is the change
-// in realised P&L across that round-trip. This avoids trying to pair individual
-// executions, which is fragile with partial fills and scale-outs.
+// Live trades are counted from immutable execution callbacks in a per-instrument
+// fill ledger. The older position-delta path remains for saved journals and the
+// NinjaTrader-independent regression fixtures.
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Generic;
 
 namespace Ballast
 {
@@ -139,6 +139,13 @@ namespace Ballast
         /// </summary>
         public int SessionStartMinute = 0;
         public int SessionEndMinute = 0;
+
+        /// <summary>
+        /// Minute at which the prop firm starts a new trading day, measured on
+        /// NinjaTrader's configured platform clock. Midnight preserves the old
+        /// calendar-day behaviour; firms with an evening boundary can use 18:00.
+        /// </summary>
+        public int TradingDayResetMinute = 0;
     }
 
     /// <summary>
@@ -172,8 +179,20 @@ namespace Ballast
         public bool LastTradeWasLoss;
 
         public int OpenContracts;
-        public double PeakEquity;        // for intraday trailing: highest equity seen
+        public double PeakEquity;        // persistent intraday high-water mark; never resets at day rollover
+        public double EndOfDayHighWater; // highest completed-session balance for EOD trailing accounts
+        public double LastKnownBalance;  // cash/realised balance used to close the previous session
         public double CurrentEquity;
+
+        /// <summary>
+        /// Highest firm threshold reported by NinjaTrader's account provider.
+        /// AccountItem.TrailingMaxDrawdown is the remaining room, so the actual
+        /// threshold is current equity minus that value. Firm thresholds only
+        /// move upward; this value is therefore monotonic and persists.
+        /// </summary>
+        public double AuthoritativeFirmFloor;
+        public bool FirmFloorProviderConfirmed;
+        public DateTime FirmFloorConfirmedAt = DateTime.MinValue;
 
         /// <summary>
         /// False until we've seen a believable equity reading. A disconnected or
@@ -181,6 +200,13 @@ namespace Ballast
         /// produces an alarming nonsense number - so we report "no data" instead.
         /// </summary>
         public bool HasValidEquity;
+
+        /// <summary>
+        /// False after the account's actual positions disagree with the execution
+        /// ledger. Ballast then blocks advice instead of inventing a trade.
+        /// </summary>
+        public bool ExecutionTelemetryHealthy = true;
+        public string ExecutionTelemetryWarning = "";
 
         private double sessionStartRealised;
         private bool haveBaseline;
@@ -238,11 +264,25 @@ namespace Ballast
         private double sessionSeedWorstDailyPnl;
         private bool sessionSeedLimitHit;
 
+        // Drawdown state is account-lifetime state, not daily state. It is kept
+        // separately from the session baseline so yesterday's P&L counters can
+        // reset without quietly lowering a trailing floor.
+        private DateTime riskStateAsOf = DateTime.MinValue.Date;
+
         /// <summary>The realised P&L this session was measured from.</summary>
         public double SessionStartRealised { get { return sessionStartRealised; } }
 
         /// <summary>The trading day this tracker is currently on.</summary>
         public DateTime SessionDate { get { return sessionDate; } }
+
+        /// <summary>Map a wall-clock instant onto the firm's trading-day key.</summary>
+        public DateTime TradingDay(DateTime now)
+        {
+            int reset = Config == null ? 0 : Config.TradingDayResetMinute;
+            if (reset < 0 || reset >= 1440) reset = 0;
+            int minute = now.Hour * 60 + now.Minute;
+            return reset > 0 && minute < reset ? now.Date.AddDays(-1) : now.Date;
+        }
 
         /// <summary>True when this session's baseline came back from disk rather than from today's open.</summary>
         public bool SessionRestored { get { return sessionRestored; } }
@@ -268,6 +308,33 @@ namespace Ballast
         public void SeedSession(DateTime day, double startRealised, double peakEquity,
                                 double peakDailyPnl, double worstDailyPnl, bool limitHit)
         {
+            // Version-1 session files only carried one peak. Treat it as both
+            // anchors during migration. That can be conservative for an EOD
+            // account, but it can never invent extra room.
+            SeedSession(day, startRealised, peakEquity, peakDailyPnl,
+                        worstDailyPnl, limitHit, peakEquity, peakEquity);
+        }
+
+        /// <summary>
+        /// Restore daily session state plus account-lifetime drawdown anchors.
+        /// The latter are applied even when the saved day is yesterday.
+        /// </summary>
+        public void SeedSession(DateTime day, double startRealised, double peakEquity,
+                                double peakDailyPnl, double worstDailyPnl, bool limitHit,
+                                double endOfDayHighWater, double lastKnownBalance)
+        {
+            SeedSession(day, startRealised, peakEquity, peakDailyPnl, worstDailyPnl,
+                        limitHit, endOfDayHighWater, lastKnownBalance, 0, false);
+        }
+
+        public void SeedSession(DateTime day, double startRealised, double peakEquity,
+                                double peakDailyPnl, double worstDailyPnl, bool limitHit,
+                                double endOfDayHighWater, double lastKnownBalance,
+                                double authoritativeFirmFloor, bool providerConfirmed)
+        {
+            SeedRiskState(day, peakEquity, endOfDayHighWater, lastKnownBalance,
+                          authoritativeFirmFloor, providerConfirmed);
+
             sessionSeedPending = true;
             sessionSeedDay = day.Date;
             sessionSeedStartRealised = startRealised;
@@ -277,6 +344,76 @@ namespace Ballast
             sessionSeedLimitHit = limitHit;
 
             if (sessionDate == sessionSeedDay) ApplySessionSeed();
+        }
+
+        /// <summary>
+        /// Restore the risk anchors without restoring yesterday's daily counters
+        /// or realised-P&amp;L baseline.
+        /// </summary>
+        public void SeedRiskState(DateTime asOfDay, double peakEquity,
+                                  double endOfDayHighWater, double lastKnownBalance)
+        {
+            SeedRiskState(asOfDay, peakEquity, endOfDayHighWater, lastKnownBalance, 0, false);
+        }
+
+        public void SeedRiskState(DateTime asOfDay, double peakEquity,
+                                  double endOfDayHighWater, double lastKnownBalance,
+                                  double authoritativeFirmFloor, bool providerConfirmed)
+        {
+            if (riskStateAsOf != DateTime.MinValue.Date && asOfDay.Date < riskStateAsOf) return;
+
+            if (IsPlausibleEquity(peakEquity) && peakEquity > PeakEquity)
+                PeakEquity = peakEquity;
+            if (IsPlausibleEquity(endOfDayHighWater) && endOfDayHighWater > EndOfDayHighWater)
+                EndOfDayHighWater = endOfDayHighWater;
+            if (IsPlausibleEquity(lastKnownBalance)) LastKnownBalance = lastKnownBalance;
+            if (IsPlausibleEquity(authoritativeFirmFloor)
+                && authoritativeFirmFloor > AuthoritativeFirmFloor)
+                AuthoritativeFirmFloor = authoritativeFirmFloor;
+            if (providerConfirmed && AuthoritativeFirmFloor > 0)
+                FirmFloorProviderConfirmed = true;
+
+            riskStateAsOf = asOfDay.Date;
+        }
+
+        /// <summary>
+        /// Accept the provider's remaining trailing-drawdown room and turn it
+        /// into an authoritative threshold. Values outside the active firm's
+        /// published bounds are rejected rather than allowed to change cushion.
+        /// </summary>
+        public bool ObserveProviderTrailingRoom(double remainingRoom,
+                                                double currentEquity, DateTime when)
+        {
+            if (Config == null || !IsPlausibleEquity(currentEquity)) return false;
+            if (double.IsNaN(remainingRoom) || double.IsInfinity(remainingRoom)
+                || remainingRoom <= 0 || remainingRoom > currentEquity) return false;
+
+            double candidate = currentEquity - remainingRoom;
+            double initialFloor = Config.StartingBalance - Config.TrailingDrawdown;
+            const double tolerance = 5.0;
+
+            if (candidate < initialFloor - tolerance) return false;
+            if (Config.LockFloorAt > 0 && candidate > Config.LockFloorAt + tolerance) return false;
+
+            if (candidate < initialFloor) candidate = initialFloor;
+            if (Config.LockFloorAt > 0 && candidate > Config.LockFloorAt)
+                candidate = Config.LockFloorAt;
+
+            if (!IsPlausibleEquity(candidate)) return false;
+            if (candidate > AuthoritativeFirmFloor) AuthoritativeFirmFloor = candidate;
+            FirmFloorProviderConfirmed = true;
+            FirmFloorConfirmedAt = when;
+            return true;
+        }
+
+        private double ValidAuthoritativeFirmFloor()
+        {
+            if (!IsPlausibleEquity(AuthoritativeFirmFloor) || Config == null) return 0;
+            double initialFloor = Config.StartingBalance - Config.TrailingDrawdown;
+            if (AuthoritativeFirmFloor < initialFloor - 5) return 0;
+            if (Config.LockFloorAt > 0 && AuthoritativeFirmFloor > Config.LockFloorAt + 5) return 0;
+            return Config.LockFloorAt > 0 && AuthoritativeFirmFloor > Config.LockFloorAt
+                ? Config.LockFloorAt : AuthoritativeFirmFloor;
         }
 
         private void ApplySessionSeed()
@@ -403,6 +540,239 @@ namespace Ballast
         private string openAdvice = "";
         private string openImage = "";
 
+        // Exact, per-instrument execution state. This is separate from the
+        // legacy position-polling fields above so old journals and tests keep
+        // loading while the live add-on uses immutable fills.
+        private sealed class ExecutionTradeState
+        {
+            public int Quantity;
+            public double AveragePrice;
+            public double PointValue = 1;
+            public double GrossPnl;
+            public double Commission;
+            public bool IsLong;
+            public int MaxContracts;
+            public DateTime OpenedAt;
+            public double DailyPnlBefore;
+            public double CushionAtEntry;
+            public double FloorAtEntry;
+            public int MinutesSincePreviousLoss;
+            public bool PreviousTradeWasLoss;
+            public bool InsideSessionWindow;
+            public string AdviceAtEntry = "";
+            public string EntryImage = "";
+            public string Note = "";
+        }
+
+        private readonly Dictionary<string, ExecutionTradeState> executionTrades =
+            new Dictionary<string, ExecutionTradeState>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> seenExecutionIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        private readonly Queue<string> executionIdOrder = new Queue<string>();
+        private const int MaxRememberedExecutionIds = 4096;
+
+        public List<string> ExecutionInstruments
+        {
+            get { return new List<string>(executionTrades.Keys); }
+        }
+
+        public int ExecutionPosition(string instrument)
+        {
+            ExecutionTradeState s;
+            return instrument != null && executionTrades.TryGetValue(instrument, out s)
+                ? s.Quantity : 0;
+        }
+
+        private void RememberExecution(string executionId)
+        {
+            if (string.IsNullOrEmpty(executionId)) return;
+            seenExecutionIds.Add(executionId);
+            executionIdOrder.Enqueue(executionId);
+            while (executionIdOrder.Count > MaxRememberedExecutionIds)
+                seenExecutionIds.Remove(executionIdOrder.Dequeue());
+        }
+
+        private void RecountExecutionContracts()
+        {
+            int total = 0;
+            foreach (ExecutionTradeState s in executionTrades.Values)
+                total += Math.Abs(s.Quantity);
+            OpenContracts = total;
+        }
+
+        private ExecutionTradeState NewExecutionTrade(string instrument, int quantity,
+                                                       double price, double pointValue,
+                                                       DateTime now, string note)
+        {
+            ExecutionTradeState s = new ExecutionTradeState();
+            s.Quantity = quantity;
+            s.AveragePrice = price;
+            s.PointValue = pointValue > 0 ? pointValue : 1;
+            s.IsLong = quantity > 0;
+            s.MaxContracts = Math.Abs(quantity);
+            s.OpenedAt = now;
+            s.DailyPnlBefore = DailyPnl;
+            s.MinutesSincePreviousLoss = MinutesSinceLastLoss(now);
+            s.PreviousTradeWasLoss = LastTradeWasLoss;
+            s.Note = note ?? "";
+
+            DisciplineInput snap = BuildInput(now);
+            s.CushionAtEntry = HasValidEquity ? snap.CushionToFloor : 0;
+            s.FloorAtEntry = snap.FloorLevel;
+            s.InsideSessionWindow = DisciplineEngine.InSessionWindow(
+                snap.NowMinuteEt, Config.SessionStartMinute, Config.SessionEndMinute);
+            s.AdviceAtEntry = DisciplineEngine.Evaluate(snap).Action.ToString();
+
+            if (CaptureChart != null)
+            {
+                try { s.EntryImage = CaptureChart(instrument, now, true) ?? ""; }
+                catch { s.EntryImage = ""; }
+            }
+
+            return s;
+        }
+
+        /// <summary>
+        /// Seed a position that was already open when Ballast attached. Entry
+        /// time/context are explicitly marked approximate rather than invented.
+        /// </summary>
+        public void SeedOpenInstrument(string instrument, int signedQuantity,
+                                       double averagePrice, double pointValue, DateTime now)
+        {
+            if (string.IsNullOrEmpty(instrument) || signedQuantity == 0) return;
+            if (executionTrades.ContainsKey(instrument)) return;
+
+            executionTrades[instrument] = NewExecutionTrade(
+                instrument, signedQuantity, averagePrice, pointValue, now,
+                "Ballast began watching after this position was already open; entry time and entry context are approximate.");
+            RecountExecutionContracts();
+        }
+
+        public void MarkExecutionTelemetryGap(string warning)
+        {
+            ExecutionTelemetryHealthy = false;
+            ExecutionTelemetryWarning = string.IsNullOrEmpty(warning)
+                ? "Position state does not match the execution ledger." : warning;
+        }
+
+        public void ResetExecutionTelemetry()
+        {
+            ExecutionTelemetryHealthy = true;
+            ExecutionTelemetryWarning = "";
+        }
+
+        private BallastTrade FinishExecutionTrade(string instrument, string accountName,
+                                                  ExecutionTradeState s, DateTime now)
+        {
+            TradesToday++;
+            if (s.GrossPnl < 0)
+            {
+                LossesToday++;
+                LastLossAt = now;
+                LastTradeWasLoss = true;
+            }
+            else LastTradeWasLoss = false;
+
+            BallastTrade e = new BallastTrade();
+            e.AccountName = accountName ?? "";
+            e.Instrument = instrument ?? "";
+            e.IsLong = s.IsLong;
+            e.MaxContracts = s.MaxContracts;
+            e.EntryTime = s.OpenedAt;
+            e.ExitTime = now;
+            e.Pnl = s.GrossPnl;
+            e.Commission = s.Commission > 0 ? s.Commission : 0;
+            e.TradeNumberToday = TradesToday;
+            e.DailyPnlBefore = s.DailyPnlBefore;
+            e.CushionAtEntry = s.CushionAtEntry;
+            e.FloorAtEntry = s.FloorAtEntry;
+            e.MinutesSincePreviousLoss = s.MinutesSincePreviousLoss;
+            e.PreviousTradeWasLoss = s.PreviousTradeWasLoss;
+            e.InsideSessionWindow = s.InsideSessionWindow;
+            e.AdviceAtEntry = s.AdviceAtEntry;
+            e.Automated = Config.IsAutomated;
+            e.EntryImage = s.EntryImage;
+            e.Note = s.Note;
+
+            if (CaptureChart != null)
+            {
+                try { e.ExitImage = CaptureChart(instrument, now, false) ?? ""; }
+                catch { e.ExitImage = ""; }
+            }
+
+            return e;
+        }
+
+        /// <summary>
+        /// Apply one immutable fill. signedQuantity is positive for buys and
+        /// buy-to-cover, negative for sells and sell-short. Stable duplicate IDs
+        /// are ignored and reversals close then reopen at the same fill.
+        /// </summary>
+        public BallastTrade OnExecution(string executionId, string instrument,
+                                        int signedQuantity, double price,
+                                        double pointValue, double commission,
+                                        DateTime now, string accountName)
+        {
+            if (signedQuantity == 0 || string.IsNullOrEmpty(instrument)) return null;
+            if (!string.IsNullOrEmpty(executionId) && seenExecutionIds.Contains(executionId)) return null;
+            RememberExecution(executionId);
+
+            ExecutionTradeState s;
+            if (!executionTrades.TryGetValue(instrument, out s))
+            {
+                s = NewExecutionTrade(instrument, signedQuantity, price, pointValue, now, "");
+                s.Commission = commission > 0 ? commission : 0;
+                executionTrades[instrument] = s;
+                RecountExecutionContracts();
+                return null;
+            }
+
+            int oldQuantity = s.Quantity;
+            int newQuantity = oldQuantity + signedQuantity;
+            double fillCommission = commission > 0 ? commission : 0;
+
+            if ((oldQuantity > 0 && signedQuantity > 0) || (oldQuantity < 0 && signedQuantity < 0))
+            {
+                s.Commission += fillCommission;
+                int oldAbs = Math.Abs(oldQuantity), addAbs = Math.Abs(signedQuantity);
+                s.AveragePrice = ((s.AveragePrice * oldAbs) + (price * addAbs)) / (oldAbs + addAbs);
+                s.Quantity = newQuantity;
+                if (Math.Abs(newQuantity) > s.MaxContracts) s.MaxContracts = Math.Abs(newQuantity);
+                RecountExecutionContracts();
+                return null;
+            }
+
+            int closing = Math.Min(Math.Abs(oldQuantity), Math.Abs(signedQuantity));
+            double closingCommission = fillCommission * closing / Math.Abs(signedQuantity);
+            s.Commission += closingCommission;
+            double multiplier = s.PointValue > 0 ? s.PointValue : (pointValue > 0 ? pointValue : 1);
+            s.GrossPnl += oldQuantity > 0
+                ? (price - s.AveragePrice) * multiplier * closing
+                : (s.AveragePrice - price) * multiplier * closing;
+
+            if (newQuantity != 0 && ((newQuantity > 0) == (oldQuantity > 0)))
+            {
+                s.Quantity = newQuantity;
+                RecountExecutionContracts();
+                return null;
+            }
+
+            BallastTrade closed = FinishExecutionTrade(instrument, accountName, s, now);
+            executionTrades.Remove(instrument);
+
+            if (newQuantity != 0)
+            {
+                ExecutionTradeState reversed = NewExecutionTrade(
+                    instrument, newQuantity, price, pointValue, now,
+                    "Position reversed in a single execution.");
+                reversed.Commission = fillCommission - closingCommission;
+                executionTrades[instrument] = reversed;
+            }
+
+            RecountExecutionContracts();
+            return closed;
+        }
+
         /// <summary>
         /// Set by the host so the tracker can photograph the chart without knowing
         /// anything about NinjaTrader or WPF. Null in tests, which is the point:
@@ -439,9 +809,17 @@ namespace Ballast
         /// <summary>Reset accumulators when a new trading day starts.</summary>
         public void EnsureSession(DateTime now, double realisedNow, double equityNow)
         {
-            if (sessionDate != now.Date)
+            DateTime tradingDay = TradingDay(now);
+            if (sessionDate != tradingDay)
             {
-                sessionDate = now.Date;
+                // An EOD threshold advances from the completed session's closing
+                // balance, not from the account's fluctuating intraday balance.
+                // Do this before replacing any of yesterday's state.
+                if (sessionDate != DateTime.MinValue.Date && IsPlausibleEquity(LastKnownBalance)
+                    && LastKnownBalance > EndOfDayHighWater)
+                    EndOfDayHighWater = LastKnownBalance;
+
+                sessionDate = tradingDay;
                 TradesToday = 0;
                 LossesToday = 0;
                 DailyPnl = 0;
@@ -462,7 +840,10 @@ namespace Ballast
                 seedBaselineApplied = false;
                 inPosition = false;
                 bool ok = IsPlausibleEquity(equityNow);
-                PeakEquity = ok ? equityNow : 0;
+                if (ok && (!IsPlausibleEquity(PeakEquity) || equityNow > PeakEquity))
+                    PeakEquity = equityNow;
+                if (!IsPlausibleEquity(EndOfDayHighWater) && ok)
+                    EndOfDayHighWater = Math.Max(Config.StartingBalance, equityNow);
                 CurrentEquity = ok ? equityNow : 0;
                 HasValidEquity = ok;
 
@@ -510,6 +891,15 @@ namespace Ballast
         /// <summary>Call whenever account equity/balance changes.</summary>
         public void OnEquity(double equityNow, double realisedNow)
         {
+            OnEquity(equityNow, realisedNow, equityNow);
+        }
+
+        /// <summary>
+        /// Update live equity while retaining the cash/realised balance needed to
+        /// advance an end-of-day threshold at the next session boundary.
+        /// </summary>
+        public void OnEquity(double equityNow, double realisedNow, double balanceNow)
+        {
             if (!IsPlausibleEquity(equityNow))
             {
                 HasValidEquity = false;
@@ -518,6 +908,7 @@ namespace Ballast
 
             HasValidEquity = true;
             CurrentEquity = equityNow;
+            if (IsPlausibleEquity(balanceNow)) LastKnownBalance = balanceNow;
 
             // Heal a peak that was poisoned before we could judge it.
             if (!IsPlausibleEquity(PeakEquity)) PeakEquity = equityNow;
@@ -692,19 +1083,29 @@ namespace Ballast
 
             i.DrawdownType = Config.DrawdownType;
             i.HasValidEquity = HasValidEquity;
+            i.ExecutionTelemetryHealthy = ExecutionTelemetryHealthy;
+            i.ExecutionTelemetryWarning = ExecutionTelemetryWarning;
             i.CurrentEquity = CurrentEquity;
 
             if (HasValidEquity)
             {
+                double drawdownAnchor = Config.DrawdownType == DrawdownType.Intraday
+                    ? PeakEquity : EndOfDayHighWater;
+
                 i.FloorLevel = DisciplineEngine.FloorLevel(
                     Config.StartingBalance, Config.TrailingDrawdown,
-                    CurrentEquity, PeakEquity, Config.DrawdownType, Config.LockFloorAt);
+                    CurrentEquity, drawdownAnchor, Config.DrawdownType, Config.LockFloorAt);
+
+                double firmFloor = ValidAuthoritativeFirmFloor();
+                if (firmFloor > i.FloorLevel) i.FloorLevel = firmFloor;
+                i.FirmFloorProviderConfirmed = firmFloor > 0 && FirmFloorProviderConfirmed;
 
                 i.CushionToFloor = CurrentEquity - i.FloorLevel;
 
                 i.FloorLocked = DisciplineEngine.FloorIsLocked(
                     Config.StartingBalance, Config.TrailingDrawdown,
-                    CurrentEquity, PeakEquity, Config.DrawdownType, Config.LockFloorAt);
+                    CurrentEquity, drawdownAnchor, Config.DrawdownType, Config.LockFloorAt)
+                    || (Config.LockFloorAt > 0 && i.FloorLevel >= Config.LockFloorAt - 0.01);
 
                 // Throttle the advised size by how much of the drawdown is gone.
                 // Only meaningful when we actually know the cushion, so it lives
@@ -723,6 +1124,7 @@ namespace Ballast
                 i.FloorLevel = 0;
                 i.CushionToFloor = double.MaxValue;
                 i.FloorLocked = false;
+                i.FirmFloorProviderConfirmed = false;
                 i.MaxContracts = Config.MaxContracts;
                 i.BaseMaxContracts = Config.BaseMaxContracts > 0 ? Config.BaseMaxContracts : Config.MaxContracts;
                 i.SizeThrottled = false;
