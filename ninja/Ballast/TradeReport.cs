@@ -136,7 +136,7 @@ namespace Ballast
             sb.Append("<section class=\"card\">");
 
             sb.Append("<h2><span class=\"acct\">").Append(Esc(e.AccountName)).Append("</span> ")
-              .Append(Esc(e.DirectionLabel)).Append(" ").Append(e.MaxContracts).Append(" ")
+              .Append(Esc(e.SizeLabel)).Append(e.SizeLabel.Length > 0 ? " " : "")
               .Append(Esc(e.Instrument.Length > 0 ? e.Instrument : "position"))
               .Append(" <span class=\"pnl ").Append(cls).Append("\">").Append(Money(e.Pnl))
               .Append("</span></h2>");

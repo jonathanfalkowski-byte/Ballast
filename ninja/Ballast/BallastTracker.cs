@@ -81,14 +81,64 @@ namespace Ballast
         public int FirmMaxContracts = 0;
 
         /// <summary>
+        /// The firm's published daily loss limit, 0 when it publishes none.
+        ///
+        /// Recorded separately from DailyLossLimit for the same reason the
+        /// contract cap is: they are two different facts that used to share one
+        /// box. Picking an account type wrote the firm's figure straight over the
+        /// trader's, so choosing "Apex 250K" - which publishes no daily limit at
+        /// all - silently erased "stop me at $500 today" and left the account
+        /// running with no daily stop. Now the firm's number is kept here, the
+        /// trader's stays where they put it, and the tighter of the two is what
+        /// actually binds.
+        /// </summary>
+        public double FirmDailyLossLimit = 0;
+
+        /// <summary>
+        /// Take the day's P&L straight from the account's own realised figure
+        /// rather than from the change since Ballast opened.
+        ///
+        /// Ballast used to measure the day as "realised now, less realised when I
+        /// opened". That is exact while Ballast is watching and silently wrong
+        /// the moment it is not: a trade taken with the window closed fell
+        /// outside the measurement, so the trader was shown a smaller loss than
+        /// they had taken and more room than they had left. Saving the baseline
+        /// fixes the next restart, but it cannot fix a restart that already
+        /// happened, and it cannot fix the very first open of a day.
+        ///
+        /// A broker that reports realised P&L per session - Rithmic, and every
+        /// prop feed built on it - already knows the answer. Taking it directly
+        /// means Ballast agrees with the platform's own Accounts tab whether it
+        /// saw the trade or not, which is the only number a trader will believe
+        /// when the two disagree.
+        ///
+        /// Turn it off for a feed whose realised figure accumulates across days
+        /// rather than resetting each session - NinjaTrader's own Sim accounts
+        /// behave that way until they are reset. With it off, Ballast goes back
+        /// to measuring from its own baseline.
+        /// </summary>
+        public bool TrustAccountRealised = true;
+
+        /// <summary>
         /// Which generation THIS account belongs to. Per account, because a trader
         /// can hold legacy and current side by side, and the same balance means a
         /// different drawdown in each.
         /// </summary>
         public AccountGeneration Generation = AccountGeneration.Auto;
 
-        public int SessionStartMinute = 570; // 09:30
-        public int SessionEndMinute = 690;   // 11:30
+        /// <summary>
+        /// The trader's own trading window, as minutes past midnight on
+        /// NinjaTrader's clock. Start == end means no window, and that is the
+        /// default now.
+        ///
+        /// It used to default to 09:30-11:30 with no setting anywhere to change
+        /// it, so every trader who did not happen to trade that exact window was
+        /// told "outside your trading window" all day, every day, about a rule
+        /// they never chose. A warning that fires when nothing is wrong teaches
+        /// people to stop reading the warnings that matter.
+        /// </summary>
+        public int SessionStartMinute = 0;
+        public int SessionEndMinute = 0;
     }
 
     /// <summary>
@@ -104,6 +154,20 @@ namespace Ballast
         public int LossesToday;
         public double DailyPnl;          // realised, this session
         public double PeakDailyPnl;      // best realised point this session
+
+        /// <summary>
+        /// The worst today has been, and whether it ever reached the daily loss
+        /// limit. Both are latched for the session and never walk back up.
+        ///
+        /// Hitting the limit is an event. Reading it as a state - "am I down more
+        /// than my limit right now?" - meant a trader who blew through the limit,
+        /// took one more trade and won went from a hard stop back to a caution.
+        /// The rule un-fired, as a reward for taking exactly the trade it existed
+        /// to prevent.
+        /// </summary>
+        public double WorstDailyPnl;
+        public bool DailyLossLimitHit;
+        public DateTime? DailyLossLimitHitAt;
         public DateTime? LastLossAt;
         public bool LastTradeWasLoss;
 
@@ -144,6 +208,109 @@ namespace Ballast
         private DateTime? seedLastLossAt;
         private bool seedLastWasLoss;
         private double seedDailyPnl;
+        private double seedWorstDailyPnl;
+
+        /// <summary>
+        /// The baseline is wound back by the journal's total ONCE per session.
+        /// Re-seeding is otherwise safe and happens whenever the journal gains a
+        /// row that Ballast did not watch - but winding the baseline a second
+        /// time would move the whole day by the morning's P&L again.
+        /// </summary>
+        private bool seedBaselineApplied;
+
+        // ── The session baseline, recovered from disk ────────────────────────
+        //
+        // The journal seed can only put back what Ballast SAW. A trade opened and
+        // closed while the window was shut leaves no journal row, so the day's
+        // P&L came back short by exactly that trade - and "left to lose" was
+        // therefore too generous, which is the dangerous direction to be wrong in.
+        //
+        // The fix does not need to know what the trade was. Ballast measures the
+        // day as the change in the account's realised P&L since a baseline, so if
+        // the baseline itself survives the restart, everything that happened in
+        // between is inside the measurement whether Ballast watched it or not.
+        private bool sessionSeedPending;
+        private bool sessionRestored;
+        private DateTime sessionSeedDay = DateTime.MinValue.Date;
+        private double sessionSeedStartRealised;
+        private double sessionSeedPeakEquity;
+        private double sessionSeedPeakDailyPnl;
+        private double sessionSeedWorstDailyPnl;
+        private bool sessionSeedLimitHit;
+
+        /// <summary>The realised P&L this session was measured from.</summary>
+        public double SessionStartRealised { get { return sessionStartRealised; } }
+
+        /// <summary>The trading day this tracker is currently on.</summary>
+        public DateTime SessionDate { get { return sessionDate; } }
+
+        /// <summary>True when this session's baseline came back from disk rather than from today's open.</summary>
+        public bool SessionRestored { get { return sessionRestored; } }
+
+        /// <summary>
+        /// True when the day's P&L can be trusted to include trading Ballast did
+        /// not watch - either because the baseline came back from disk, or
+        /// because the figure is the account's own. Only then is a difference
+        /// between the day's P&L and the journal evidence of a missing trade
+        /// rather than evidence of a missing baseline.
+        /// </summary>
+        public bool BaselineAuthoritative { get { return sessionRestored; } }
+
+        /// <summary>
+        /// Hand back the exact baseline this session was being measured from
+        /// before Ballast closed, so anything traded while it was shut is still
+        /// inside the day's figure.
+        ///
+        /// The peak equity comes back too: an intraday trailing floor ratchets up
+        /// with equity and never comes down, so forgetting a peak makes the
+        /// cushion look bigger than it is.
+        /// </summary>
+        public void SeedSession(DateTime day, double startRealised, double peakEquity,
+                                double peakDailyPnl, double worstDailyPnl, bool limitHit)
+        {
+            sessionSeedPending = true;
+            sessionSeedDay = day.Date;
+            sessionSeedStartRealised = startRealised;
+            sessionSeedPeakEquity = peakEquity;
+            sessionSeedPeakDailyPnl = peakDailyPnl;
+            sessionSeedWorstDailyPnl = worstDailyPnl;
+            sessionSeedLimitHit = limitHit;
+
+            if (sessionDate == sessionSeedDay) ApplySessionSeed();
+        }
+
+        private void ApplySessionSeed()
+        {
+            if (!sessionSeedPending) return;
+            if (sessionDate != sessionSeedDay) return;
+
+            // The baseline on disk is Ballast's OWN measuring point, and it only
+            // applies when Ballast is doing the measuring. With the account's own
+            // realised figure in use the day starts at zero and the platform
+            // supplies the rest - restoring a saved baseline on top of that
+            // subtracts this morning twice and hands back exactly the too-small
+            // loss the whole change exists to stop.
+            //
+            // This bit hard on the very first run of the new build: the file on
+            // disk had been written minutes earlier by the old one, so the
+            // account said the day had cost $2,126 and Ballast still said $754.
+            if (Config == null || !Config.TrustAccountRealised)
+                sessionStartRealised = sessionSeedStartRealised;
+
+            haveBaseline = true;
+            sessionRestored = true;
+
+            if (sessionSeedPeakDailyPnl > PeakDailyPnl) PeakDailyPnl = sessionSeedPeakDailyPnl;
+            if (sessionSeedWorstDailyPnl < WorstDailyPnl) WorstDailyPnl = sessionSeedWorstDailyPnl;
+            if (sessionSeedLimitHit) DailyLossLimitHit = true;
+
+            // Only ever upward. A peak that has been reached cannot be unreached,
+            // and the floor that follows it does not come back down.
+            if (IsPlausibleEquity(sessionSeedPeakEquity) && sessionSeedPeakEquity > PeakEquity)
+                PeakEquity = sessionSeedPeakEquity;
+
+            sessionSeedPending = false;
+        }
 
         /// <summary>
         /// Tell this tracker what the journal says has already happened today.
@@ -153,6 +320,20 @@ namespace Ballast
         public void SeedToday(DateTime day, int trades, int losses,
                               DateTime? lastLossAt, bool lastWasLoss, double dailyPnl)
         {
+            SeedToday(day, trades, losses, lastLossAt, lastWasLoss, dailyPnl, dailyPnl);
+        }
+
+        /// <summary>
+        /// As above, but also restoring the worst the day has been. The trough
+        /// matters on its own: a trader who was down past their limit at 10:30
+        /// and has since won some of it back has still spent the day, and closing
+        /// the window must not be a way to un-spend it.
+        /// </summary>
+        public void SeedToday(DateTime day, int trades, int losses,
+                              DateTime? lastLossAt, bool lastWasLoss, double dailyPnl,
+                              double worstDailyPnl)
+        {
+            seedWorstDailyPnl = worstDailyPnl < dailyPnl ? worstDailyPnl : dailyPnl;
             seedPending = true;
             seedDay = day.Date;
             seedTrades = trades < 0 ? 0 : trades;
@@ -182,12 +363,25 @@ namespace Ballast
             // loss vanished and the day appeared to start again at zero. Winding
             // the baseline back by what the journal says has already been made
             // puts the real figure back.
-            if (haveBaseline)
+            // Winding the baseline back by what the journal says has already been
+            // made is only right when the baseline was set at THIS open. If the
+            // real baseline came back from disk it is already exact, and it
+            // covers trades the journal never saw - subtracting the journal's
+            // total from it as well would count the morning twice.
+            if (haveBaseline && !sessionRestored && !seedBaselineApplied)
             {
+                seedBaselineApplied = true;
                 sessionStartRealised -= seedDailyPnl;
                 DailyPnl = seedDailyPnl;
                 if (DailyPnl > PeakDailyPnl) PeakDailyPnl = DailyPnl;
             }
+
+            // The worst point of the morning, from the journal. Without it,
+            // closing and reopening the window would clear a daily loss limit
+            // that had already been hit - the same "a rule with an off switch
+            // nobody documented" problem the trade count had.
+            if (seedWorstDailyPnl < WorstDailyPnl) WorstDailyPnl = seedWorstDailyPnl;
+            NoteTrough(DateTime.MinValue);
 
             // Once only. A second application would double the count the first
             // time a new trade arrived.
@@ -205,6 +399,7 @@ namespace Ballast
         private int openMinsSinceLoss = -1;
         private bool openPrevWasLoss;
         private bool openInWindow;
+        private double openCommission;
         private string openAdvice = "";
         private string openImage = "";
 
@@ -214,6 +409,32 @@ namespace Ballast
         /// the counting logic stays testable and a capture bug cannot reach it.
         /// </summary>
         public Func<string, DateTime, bool, string> CaptureChart;
+
+        /// <summary>
+        /// The account's running commission total, set by the host before each
+        /// position update so a completed round trip can record what it cost.
+        ///
+        /// Set rather than passed because it is a courtesy figure, not part of
+        /// the counting logic: if the host never sets it, every trade records 0
+        /// commission and nothing else behaves differently.
+        /// </summary>
+        public double CurrentCommission;
+
+        /// <summary>
+        /// Record the day's low-water mark and latch the daily loss limit the
+        /// first time it is reached. Called wherever DailyPnl moves.
+        /// </summary>
+        private void NoteTrough(DateTime when)
+        {
+            if (DailyPnl < WorstDailyPnl) WorstDailyPnl = DailyPnl;
+
+            if (!DailyLossLimitHit && Config != null && Config.DailyLossLimit > 0
+                && WorstDailyPnl <= -Math.Abs(Config.DailyLossLimit))
+            {
+                DailyLossLimitHit = true;
+                if (when != DateTime.MinValue) DailyLossLimitHitAt = when;
+            }
+        }
 
         /// <summary>Reset accumulators when a new trading day starts.</summary>
         public void EnsureSession(DateTime now, double realisedNow, double equityNow)
@@ -225,15 +446,31 @@ namespace Ballast
                 LossesToday = 0;
                 DailyPnl = 0;
                 PeakDailyPnl = 0;
+                WorstDailyPnl = 0;
+                DailyLossLimitHit = false;
+                DailyLossLimitHitAt = null;
                 LastLossAt = null;
                 LastTradeWasLoss = false;
-                sessionStartRealised = realisedNow;
+                // The account's own figure for the day, when the feed reports one.
+                // See TrackerConfig.TrustAccountRealised - this is what makes
+                // Ballast agree with the platform's Accounts tab about a trade it
+                // never saw.
+                bool trust = Config != null && Config.TrustAccountRealised;
+                sessionStartRealised = trust ? 0 : realisedNow;
                 haveBaseline = true;
+                sessionRestored = trust;
+                seedBaselineApplied = false;
                 inPosition = false;
                 bool ok = IsPlausibleEquity(equityNow);
                 PeakEquity = ok ? equityNow : 0;
                 CurrentEquity = ok ? equityNow : 0;
                 HasValidEquity = ok;
+
+                // The baseline Ballast was measuring this day from before it was
+                // closed, if it was open earlier today. This comes FIRST, because
+                // the journal seed below behaves differently when the baseline is
+                // already exact.
+                ApplySessionSeed();
 
                 // Put back what the journal says already happened today. Only
                 // ever for today - yesterday's trades must not follow the trader
@@ -242,7 +479,7 @@ namespace Ballast
             }
             else if (!haveBaseline)
             {
-                sessionStartRealised = realisedNow;
+                sessionStartRealised = Config != null && Config.TrustAccountRealised ? 0 : realisedNow;
                 haveBaseline = true;
             }
         }
@@ -291,6 +528,7 @@ namespace Ballast
             {
                 DailyPnl = realisedNow - sessionStartRealised;
                 if (DailyPnl > PeakDailyPnl) PeakDailyPnl = DailyPnl;
+                NoteTrough(DateTime.MinValue);
             }
         }
 
@@ -331,12 +569,13 @@ namespace Ballast
                 openDailyPnl = DailyPnl;
                 openMinsSinceLoss = MinutesSinceLastLoss(now);
                 openPrevWasLoss = LastTradeWasLoss;
+                openCommission = CurrentCommission;
 
                 DisciplineInput snap = BuildInput(now);
                 openCushion = HasValidEquity ? snap.CushionToFloor : 0;
                 openFloor = snap.FloorLevel;
-                openInWindow = snap.NowMinuteEt >= Config.SessionStartMinute
-                            && snap.NowMinuteEt <= Config.SessionEndMinute;
+                openInWindow = DisciplineEngine.InSessionWindow(
+                    snap.NowMinuteEt, Config.SessionStartMinute, Config.SessionEndMinute);
                 openAdvice = DisciplineEngine.Evaluate(snap).Action.ToString();
 
                 // Photograph what the trader is looking at, right now, before the
@@ -396,6 +635,10 @@ namespace Ballast
                 e.Automated = Config.IsAutomated;
                 e.EntryImage = openImage;
 
+                // What the round trip cost, from the account's own running total.
+                double cost = CurrentCommission - openCommission;
+                e.Commission = cost > 0 ? cost : 0;
+
                 if (CaptureChart != null)
                 {
                     try { e.ExitImage = CaptureChart(openInstrument, now, false) ?? ""; }
@@ -428,6 +671,18 @@ namespace Ballast
             i.StartingBalance = Config.StartingBalance;
             i.DailyPnl = DailyPnl;
             i.PeakDailyPnl = PeakDailyPnl;
+            i.WorstDailyPnl = WorstDailyPnl;
+
+            // Latched here as well as on every equity tick, because a limit that
+            // was lowered mid-session must start biting against the day already
+            // had rather than only against what happens next.
+            if (!DailyLossLimitHit && Config.DailyLossLimit > 0
+                && WorstDailyPnl <= -Math.Abs(Config.DailyLossLimit))
+            {
+                DailyLossLimitHit = true;
+                if (!DailyLossLimitHitAt.HasValue) DailyLossLimitHitAt = nowExchange;
+            }
+            i.DailyLossLimitHit = DailyLossLimitHit;
 
             i.DailyLossLimit = Config.DailyLossLimit;
             i.DailyTarget = Config.DailyTarget;

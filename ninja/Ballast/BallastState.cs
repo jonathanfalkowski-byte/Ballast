@@ -59,6 +59,8 @@ namespace Ballast
         public int MaxLosses;
         /// <summary>Dollars left before today's loss limit is hit. 0 when no limit is set.</summary>
         public double RoomToday;
+        /// <summary>Today's target and whether one is set - the other end of the same decision as RoomToday.</summary>
+        public double DailyTarget;
         public bool HasDailyLimit;
         public double DailyPnl;
     }
@@ -105,7 +107,7 @@ namespace Ballast
         public static void PublishCount(string account, int tradesToday, int maxTrades,
                                         int lossesToday, int maxLosses,
                                         double roomToday, bool hasDailyLimit,
-                                        double dailyPnl, DateTime now)
+                                        double dailyPnl, double dailyTarget, DateTime now)
         {
             if (string.IsNullOrEmpty(account)) return;
 
@@ -121,6 +123,7 @@ namespace Ballast
                 s.RoomToday = roomToday;
                 s.HasDailyLimit = hasDailyLimit;
                 s.DailyPnl = dailyPnl;
+                s.DailyTarget = dailyTarget;
                 if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
             }
         }
@@ -150,8 +153,26 @@ namespace Ballast
             if (s.MaxLosses > 0) sb.Append('/').Append(s.MaxLosses);
             sb.Append(s.MaxLosses <= 0 && s.LossesToday == 1 ? " LOSS" : " LOSSES");
 
+            // Shorter than the window's wording on purpose. This line competes
+            // for space with a price chart and gets read sideways, in a second,
+            // while a position is on - so every word that is not carrying a
+            // number comes out.
+
+            // What is left of today's budget, and what would let you stop. These
+            // belong together: one is the most this day can cost, the other is
+            // the number that makes walking away a decision rather than a
+            // sacrifice. The budget never grows on a green day - see RoomToday
+            // in the window - so a good morning does not quietly buy a bigger
+            // afternoon to lose.
             if (s.HasDailyLimit)
-                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT TODAY");
+                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT");
+
+            if (s.DailyTarget > 0)
+            {
+                if (s.DailyPnl >= s.DailyTarget) sb.Append("   TARGET HIT");
+                else sb.Append("   ").Append(Money(s.DailyPnl > 0 ? s.DailyPnl : 0))
+                       .Append('/').Append(Money(s.DailyTarget)).Append(" TARGET");
+            }
 
             if (s.HasCushion)
                 sb.Append("   ").Append(Money(s.CanLose)).Append(" TO FLOOR");

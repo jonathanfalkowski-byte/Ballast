@@ -14,6 +14,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Ballast
 {
@@ -92,9 +93,32 @@ namespace Ballast
         public int MinutesSinceLastLoss = -1;   // -1 == no loss yet today
         public int CooldownMinutes = 5;
 
-        public int NowMinuteEt;                 // minutes since midnight, exchange time
-        public int SessionStartMinute = 570;    // 09:30
-        public int SessionEndMinute = 690;      // 11:30
+        /// <summary>
+        /// True once today's P&L has been at or past the daily loss limit, even
+        /// if it has since come back.
+        ///
+        /// Hitting a daily loss limit is an EVENT, not a state. It used to be
+        /// read as a state - "are you down more than your limit right now?" -
+        /// which meant a trader who went past their limit, took one more trade
+        /// and won, watched the account go from a hard stop back to a caution.
+        /// The rule un-fired. Worse, it un-fired as a direct reward for taking
+        /// the trade the rule existed to prevent, and it taught the exact lesson
+        /// the whole product argues against: that you can trade your way back out
+        /// of a bad day.
+        ///
+        /// You cannot un-lose the money. The day has already cost you the most
+        /// you said you were willing to lose, and that stays true whatever
+        /// happens next.
+        /// </summary>
+        public bool DailyLossLimitHit;
+
+        /// <summary>The worst today has been, so the limit can say what it cost.</summary>
+        public double WorstDailyPnl;
+
+        public int NowMinuteEt;                 // minutes since midnight, platform clock
+        /// <summary>Trading window. Start == end means none is set, and nothing is said about the clock.</summary>
+        public int SessionStartMinute = 0;
+        public int SessionEndMinute = 0;
     }
 
     public class DisciplineDecision
@@ -127,7 +151,10 @@ namespace Ballast
             if (i.PastFloor) return "at or below its floor";
 
             if (Has(d.Signals, "daily_loss_limit"))
-                return "past the daily loss limit - done for the day";
+                return i.DailyPnl <= -Math.Abs(i.DailyLossLimit)
+                    ? "past the daily loss limit - done for the day"
+                    : "hit the " + Money(i.DailyLossLimit) + " daily limit earlier today - winning "
+                      + "some back does not give the day back";
 
             if (Has(d.Signals, "loss_streak"))
                 return i.LossesToday + " losses - this is your stop line";
@@ -155,7 +182,7 @@ namespace Ballast
                 return "size down to " + i.MaxContracts + " while this account is down";
 
             if (Has(d.Signals, "out_of_window"))
-                return "outside your trading window";
+                return "outside your trading window (" + WindowLabel(i.SessionStartMinute, i.SessionEndMinute) + ")";
 
             if (i.DailyPnl > 0) return "green " + Money(i.DailyPnl) + " - protect it";
             return "clear";
@@ -168,6 +195,84 @@ namespace Ballast
             return (r < 0 ? "-$" : "$") + s;
         }
 
+        /// <summary>
+        /// Is this minute inside the trader's trading window?
+        ///
+        /// Three cases, and the first two were both wrong before this existed.
+        ///
+        /// A window that was never set up: Ballast shipped with 09:30-11:30
+        /// built in and no way to change it, so anyone trading the afternoon -
+        /// or the overnight session - was told every single day that they were
+        /// outside a window they had never chosen. Start == end now means no
+        /// window at all, and nothing is ever said about the clock.
+        ///
+        /// A window that crosses midnight: 18:00-02:00 is a normal futures
+        /// session and used to be read as "start 1080, end 120", which is empty -
+        /// so it was outside the window for all twenty-four hours.
+        ///
+        /// And the ordinary case, start before end.
+        /// </summary>
+        public static bool InSessionWindow(int nowMinute, int startMinute, int endMinute)
+        {
+            if (startMinute == endMinute) return true;
+            if (startMinute < endMinute) return nowMinute >= startMinute && nowMinute <= endMinute;
+            return nowMinute >= startMinute || nowMinute <= endMinute;
+        }
+
+        /// <summary>"09:30-11:30", or "any time" when no window is set.</summary>
+        public static string WindowLabel(int startMinute, int endMinute)
+        {
+            if (startMinute == endMinute) return "any time";
+            return HourMinute(startMinute) + "-" + HourMinute(endMinute);
+        }
+
+        public static string HourMinute(int minuteOfDay)
+        {
+            int m = minuteOfDay;
+            if (m < 0) m = 0;
+            m = m % 1440;
+            int h = m / 60;
+            int mm = m % 60;
+            return (h < 10 ? "0" : "") + h.ToString(CultureInfo.InvariantCulture)
+                 + ":" + (mm < 10 ? "0" : "") + mm.ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Parse "09:30", "9:30", "930" or "9" into minutes past midnight.
+        /// Returns -1 when it cannot be read, so a typo never silently becomes
+        /// midnight and locks a trader out of their own afternoon.
+        /// </summary>
+        public static int ParseHourMinute(string text)
+        {
+            if (text == null) return -1;
+            string s = text.Trim();
+            if (s.Length == 0) return -1;
+
+            int h, m;
+            int colon = s.IndexOf(':');
+            if (colon < 0) colon = s.IndexOf('.');
+
+            if (colon >= 0)
+            {
+                string hp = s.Substring(0, colon).Trim();
+                string mp = s.Substring(colon + 1).Trim();
+                if (!int.TryParse(hp, NumberStyles.Integer, CultureInfo.InvariantCulture, out h)) return -1;
+                if (mp.Length == 0) m = 0;
+                else if (!int.TryParse(mp, NumberStyles.Integer, CultureInfo.InvariantCulture, out m)) return -1;
+            }
+            else
+            {
+                int raw;
+                if (!int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out raw)) return -1;
+                if (raw < 0) return -1;
+                if (s.Length <= 2) { h = raw; m = 0; }
+                else { h = raw / 100; m = raw % 100; }
+            }
+
+            if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+            return h * 60 + m;
+        }
+
         public static List<RiskSignal> DetectRiskSignals(DisciplineInput i)
         {
             List<RiskSignal> signals = new List<RiskSignal>();
@@ -178,10 +283,30 @@ namespace Ballast
                     "You've taken " + i.LossesToday + " losses - your stop-after-" + i.MaxLossesBeforeStop + " line."));
             }
 
-            if (i.DailyLossLimit > 0 && i.DailyPnl <= -Math.Abs(i.DailyLossLimit))
+            if (i.DailyLossLimit > 0)
             {
-                signals.Add(new RiskSignal("daily_loss_limit", Severity.High,
-                    "Down " + Money(-i.DailyPnl) + " - at or past your " + Money(i.DailyLossLimit) + " daily limit."));
+                bool downNow = i.DailyPnl <= -Math.Abs(i.DailyLossLimit);
+
+                if (downNow)
+                {
+                    signals.Add(new RiskSignal("daily_loss_limit", Severity.High,
+                        "Down " + Money(-i.DailyPnl) + " - at or past your "
+                        + Money(i.DailyLossLimit) + " daily limit."));
+                }
+                else if (i.DailyLossLimitHit)
+                {
+                    // Won some of it back. The limit still stands - see
+                    // DailyLossLimitHit for why this is not an oversight.
+                    double worst = i.WorstDailyPnl < 0 ? -i.WorstDailyPnl : Math.Abs(i.DailyLossLimit);
+
+                    signals.Add(new RiskSignal("daily_loss_limit", Severity.High,
+                        "You hit your " + Money(i.DailyLossLimit) + " daily limit today - down "
+                        + Money(worst) + " at the worst of it. You are back to "
+                        + Money(i.DailyPnl) + " now, and that does not give the day back: your limit "
+                        + "is the most you were willing to lose today, and today has already cost "
+                        + "you that. Winning some of it afterwards is the trade that was not "
+                        + "supposed to happen, not a reason to take the next one."));
+                }
             }
 
             if (i.LastTradeWasLoss && i.MinutesSinceLastLoss >= 0 && i.MinutesSinceLastLoss < i.CooldownMinutes)
@@ -247,10 +372,11 @@ namespace Ballast
                     "That's " + i.TradesToday + " trades on this account - its max is " + i.MaxTrades + ". Other accounts have their own count."));
             }
 
-            if (i.NowMinuteEt < i.SessionStartMinute || i.NowMinuteEt > i.SessionEndMinute)
+            if (!InSessionWindow(i.NowMinuteEt, i.SessionStartMinute, i.SessionEndMinute))
             {
                 signals.Add(new RiskSignal("out_of_window", Severity.Low,
-                    "Outside your trading window. This is where afternoon revenge trades happen."));
+                    "Outside your trading window (" + WindowLabel(i.SessionStartMinute, i.SessionEndMinute)
+                    + "). This is where afternoon revenge trades happen."));
             }
 
             return signals;

@@ -504,8 +504,28 @@ namespace Ballast
             c.StartingBalance  = s.Size;
             c.TrailingDrawdown = s.Drawdown;
             c.DrawdownType     = s.DrawdownType;
-            c.DailyLossLimit   = s.DailyLossLimit;   // 0 == firm publishes none
             c.LockFloorAt      = s.LockFloorAt;      // 0 == assume it trails forever
+
+            // The daily loss limit is TWO numbers wearing one name, and treating
+            // them as one was quietly disarming accounts.
+            //
+            // "How much am I willing to lose today" is the trader's own decision
+            // and the single most-used setting in Ballast. The firm's published
+            // daily limit - where a firm publishes one at all - is a hard rule
+            // that breaches the account. Picking an account type used to write
+            // the second straight over the first, so a trader who set $500 and
+            // then told Ballast the account was an Apex 250K (Apex publishes no
+            // daily limit) got a silent 0: no daily stop, no warning, nothing.
+            //
+            // Now the firm's figure is recorded on its own, the trader's is left
+            // exactly where they put it, and the tighter of the two binds -
+            // because the firm's is a ceiling, never a suggestion.
+            c.FirmDailyLossLimit = s.DailyLossLimit;
+            if (s.DailyLossLimit > 0)
+            {
+                if (c.DailyLossLimit <= 0 || c.DailyLossLimit > s.DailyLossLimit)
+                    c.DailyLossLimit = s.DailyLossLimit;
+            }
             // The firm's number is what it takes to PASS, over however many days
             // that takes. It is recorded, and shown, but it is never allowed to
             // become the trader's target for one session - $15,000 as a daily

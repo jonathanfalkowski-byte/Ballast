@@ -228,6 +228,7 @@ namespace Ballast
             n.MaxLossesBeforeStop = c.MaxLossesBeforeStop;
             n.DailyLossLimit = c.DailyLossLimit;
             n.DailyTarget = c.DailyTarget;
+            n.ProfitTarget = c.ProfitTarget;
             n.MaxTrades = c.MaxTrades;
             n.MaxContracts = c.MaxContracts;
             n.CooldownMinutes = c.CooldownMinutes;
@@ -239,6 +240,8 @@ namespace Ballast
             n.BaseMaxContracts = c.BaseMaxContracts;
             n.IsAutomated = c.IsAutomated;
             n.FirmMaxContracts = c.FirmMaxContracts;
+            n.FirmDailyLossLimit = c.FirmDailyLossLimit;
+            n.TrustAccountRealised = c.TrustAccountRealised;
             n.Generation = c.Generation;
             n.SessionStartMinute = c.SessionStartMinute;
             n.SessionEndMinute = c.SessionEndMinute;

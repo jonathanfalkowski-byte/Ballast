@@ -58,6 +58,21 @@ namespace Ballast
         public DateTime ExitTime;
         public double Pnl;
 
+        /// <summary>
+        /// What this round trip cost in commission, taken from the account's own
+        /// running total across the trade. 0 when it is not known.
+        ///
+        /// It is recorded for its own sake - a trader taking four trades a day on
+        /// ten minis is paying real money and ought to see it - but it also has a
+        /// job. The account's realised P&L and Ballast's round-trip figures do
+        /// not always post commission at the same instant, so they drift by a few
+        /// dollars per contract. Knowing what the watched trades cost puts a
+        /// bound on that drift, instead of a flat guess that would be far too
+        /// small for someone trading size and far too big for someone trading
+        /// one lot.
+        /// </summary>
+        public double Commission;
+
         // ── Context at the moment of entry. This is the interesting half.
         public int TradeNumberToday;
         public double DailyPnlBefore;
@@ -140,7 +155,28 @@ namespace Ballast
             }
         }
 
-        public string DirectionLabel { get { return IsLong ? "Long" : "Short"; } }
+        /// <summary>
+        /// True for a row Ballast reconstructed from the account rather than
+        /// watched. It has no direction and no size - it is a difference, not a
+        /// position - so the places that print "Long 2 NQ SEP26" have to print
+        /// something else for it.
+        /// </summary>
+        public bool IsReconstructed { get { return MaxContracts <= 0; } }
+
+        public string DirectionLabel
+        {
+            get { return IsReconstructed ? "" : (IsLong ? "Long" : "Short"); }
+        }
+
+        /// <summary>"Long 2" for a watched trade, and nothing at all for a reconstructed one.</summary>
+        public string SizeLabel
+        {
+            get
+            {
+                if (IsReconstructed) return "";
+                return DirectionLabel + " " + MaxContracts;
+            }
+        }
 
         /// <summary>One-line description for the pending-tag strip.</summary>
         public string ShortLabel
@@ -148,7 +184,8 @@ namespace Ballast
             get
             {
                 string ins = Instrument.Length > 0 ? Instrument : "position";
-                return DirectionLabel + " " + MaxContracts + " " + ins
+                string size = SizeLabel;
+                return (size.Length > 0 ? size + " " : "") + ins
                      + "  " + EntryTime.ToString("HH:mm", CultureInfo.InvariantCulture)
                      + "-" + ExitTime.ToString("HH:mm", CultureInfo.InvariantCulture)
                      + "  " + Money(Pnl);
@@ -753,7 +790,7 @@ namespace Ballast
             "Account,Instrument,Direction,Contracts,EntryTime,ExitTime,DurationMin,PnL," +
             "TradeNoToday,DailyPnLBefore,CushionAtEntry,FloorAtEntry,MinSincePrevLoss," +
             "PrevWasLoss,InWindow,AdviceAtEntry,Planned,Feeling,SessionPlan,Note," +
-            "EntryImage,ExitImage,Done,Automated,Moved";
+            "EntryImage,ExitImage,Done,Automated,Moved,Commission";
 
         private static string Esc(string s)
         {
@@ -801,7 +838,8 @@ namespace Ballast
             sb.Append(Esc(e.ExitImage)).Append(',');
             sb.Append(e.Dismissed ? "1" : "0").Append(',');
             sb.Append(e.Automated ? "1" : "0").Append(',');
-            sb.Append(Esc(e.Moved));
+            sb.Append(Esc(e.Moved)).Append(',');
+            sb.Append(N(e.Commission));
             return sb.ToString();
         }
 
@@ -880,6 +918,13 @@ namespace Ballast
             // question existed leave it blank, which reads as "not said" rather
             // than as "held" - a journal must never answer on the trader's behalf.
             if (f.Count > 24) e.Moved = f[24];
+
+            // Commission arrived last. An older row simply does not know what it
+            // cost, which is different from having cost nothing - so it reports 0
+            // and is left out of any figure that would be wrong without it.
+            if (f.Count > 25 && double.TryParse(f[25], NumberStyles.Any,
+                                                CultureInfo.InvariantCulture, out dv))
+                e.Commission = dv;
 
             return e;
         }

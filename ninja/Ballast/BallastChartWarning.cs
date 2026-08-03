@@ -154,6 +154,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                  Description = "A hard stop is centred and fills the strip. The quiet count stays where you put it.")]
         public bool CentreAlarms { get; set; }
 
+        /// <summary>
+        /// What NinjaTrader prints as this indicator's label on the panel.
+        ///
+        /// By default that is the class name with every parameter after it -
+        /// "BallastChartWarning(NQ SEP26 (50 AlgoBars ROCK))" - forty-odd
+        /// characters of nothing useful, printed in the top left of Ballast's own
+        /// strip, directly into the line Ballast is trying to make readable. The
+        /// warning then had to start somewhere to the right of it and the whole
+        /// thing read as a jumble.
+        ///
+        /// One word instead. It still says which indicator this is, which is the
+        /// only job the label had.
+        /// </summary>
+        public override string DisplayName { get { return "Ballast"; } }
+
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)

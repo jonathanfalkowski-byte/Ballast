@@ -591,7 +591,18 @@ namespace Ballast
                 outp.Add(t);
             }
 
-            if (Has(d.Signals, TiltKind.DailyLossLimit))
+            // Only while the account is ACTUALLY down past the limit right now.
+            //
+            // The signal itself is latched for the rest of the day once the limit
+            // has been reached - winning some back does not give the day back,
+            // and the account's advice stays red saying so. The WALL is for the
+            // acute moment, though. Throwing it again every fifteen minutes for
+            // the rest of a session the trader has already typed their way past
+            // would turn the one thing in Ballast that is supposed to stop
+            // somebody into wallpaper, and the next wall - the one for a real
+            // breach - would be dismissed on reflex.
+            if (Has(d.Signals, TiltKind.DailyLossLimit)
+                && i.DailyLossLimit > 0 && i.DailyPnl <= -Math.Abs(i.DailyLossLimit))
             {
                 TiltTrigger t = New(name, TiltKind.DailyLossLimit, i);
                 t.Title = "You are done for the day.";

@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 22;
+        public const int CurrentFieldCount = 24;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -61,7 +61,9 @@ namespace Ballast
                 I(c.SessionEndMinute),                                             // 18
                 I(c.CooldownMinutes),                                              // 19
                 I(c.FirmMaxContracts),                                             // 20
-                D(c.ProfitTarget)                                                  // 21
+                D(c.ProfitTarget),                                                 // 21
+                D(c.FirmDailyLossLimit),                                           // 22
+                c.TrustAccountRealised ? "1" : "0"                                 // 23
             });
         }
 
@@ -134,6 +136,19 @@ namespace Ballast
             if (f.Length >= 21 && int.TryParse(f[20], out n) && n >= 0)               c.FirmMaxContracts = n;
             if (f.Length >= 22 && double.TryParse(f[21], NumberStyles.Any, CultureInfo.InvariantCulture, out d))
                 c.ProfitTarget = d;
+
+            // Field 23 separates the firm's published daily loss limit from the
+            // trader's own. An older file has only the one number, and whatever
+            // is in it is treated as the trader's - which is the safe reading,
+            // because it is the one that keeps stopping them.
+            if (f.Length >= 23 && double.TryParse(f[22], NumberStyles.Any, CultureInfo.InvariantCulture, out d))
+                c.FirmDailyLossLimit = d;
+
+            // Field 24 decides whether the day's P&L is the account's own figure
+            // or Ballast's measurement from its own baseline. Absent means ON:
+            // an older file predates the choice, and agreeing with the platform
+            // is the behaviour that cannot silently under-report a loss.
+            if (f.Length >= 24) c.TrustAccountRealised = f[23] != "0";
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.
