@@ -19,7 +19,7 @@
 # Lines starting with # are ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION|12
+VERSION|13
 VERIFIED|2026-08-04
 
 # -- Apex Trader Funding (4.0, effective 1 March 2026) ------------------------
@@ -65,14 +65,14 @@ Apex Trader Funding|Evaluation end-of-day (Tradovate)|25000|1000|EOD|500|1500|4.
 Apex Trader Funding|Evaluation end-of-day (Tradovate)|50000|2000|EOD|1000|3000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $1,000 daily loss limit.|0|6
 Apex Trader Funding|Evaluation end-of-day (Tradovate)|100000|3000|EOD|1500|6000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $1,500 daily loss limit.|0|8
 Apex Trader Funding|Evaluation end-of-day (Tradovate)|150000|4000|EOD|2000|9000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $2,000 daily loss limit.|0|12
-Apex Trader Funding|PA / funded (intraday)|25000|1000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|25100|2
-Apex Trader Funding|PA / funded (intraday)|50000|2000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|50100|4
-Apex Trader Funding|PA / funded (intraday)|100000|3000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|100100|6
-Apex Trader Funding|PA / funded (intraday)|150000|4000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|150100|10
-Apex Trader Funding|PA / funded (end-of-day)|25000|1000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|25100|2
-Apex Trader Funding|PA / funded (end-of-day)|50000|2000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|50100|4
-Apex Trader Funding|PA / funded (end-of-day)|100000|3000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|100100|6
-Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|150100|10
+Apex Trader Funding|PA / funded (intraday)|25000|1000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $26,100 (drawdown + $100) must be held for the life of the account; $26,600 to request a payout.|25100|2
+Apex Trader Funding|PA / funded (intraday)|50000|2000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $52,100 (drawdown + $100) must be held for the life of the account; $52,600 to request a payout.|50100|4
+Apex Trader Funding|PA / funded (intraday)|100000|3000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $103,100 (drawdown + $100) must be held for the life of the account; $103,600 to request a payout.|100100|6
+Apex Trader Funding|PA / funded (intraday)|150000|4000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $154,100 (drawdown + $100) must be held for the life of the account; $154,600 to request a payout.|150100|10
+Apex Trader Funding|PA / funded (end-of-day)|25000|1000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $26,100 (drawdown + $100) must be held for the life of the account; $26,600 to request a payout.|25100|2
+Apex Trader Funding|PA / funded (end-of-day)|50000|2000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $52,100 (drawdown + $100) must be held for the life of the account; $52,600 to request a payout.|50100|4
+Apex Trader Funding|PA / funded (end-of-day)|100000|3000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $103,100 (drawdown + $100) must be held for the life of the account; $103,600 to request a payout.|100100|6
+Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in. Safety Net $154,100 (drawdown + $100) must be held for the life of the account; $154,600 to request a payout.|150100|10
 
 
 # -- Apex Trader Funding (LEGACY accounts) ------------------------------------
@@ -103,13 +103,13 @@ Apex Trader Funding|Legacy evaluation (Tradovate)|100000|3000|INTRADAY|0|6000|Le
 Apex Trader Funding|Legacy evaluation (Tradovate)|150000|5000|INTRADAY|0|9000|Legacy. Trails forever on Tradovate. Apex cap 17 minis.|0|17
 Apex Trader Funding|Legacy evaluation (Tradovate)|250000|6500|INTRADAY|0|15000|Legacy. Trails forever on Tradovate. Apex cap 27 minis.|0|27
 Apex Trader Funding|Legacy evaluation (Tradovate)|300000|7500|INTRADAY|0|20000|Legacy. Trails forever on Tradovate. Apex cap 35 minis.|0|35
-Apex Trader Funding|Legacy PA / funded|25000|1500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|25100|4
-Apex Trader Funding|Legacy PA / funded|50000|2500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|50100|10
-Apex Trader Funding|Legacy PA / funded|75000|2750|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|75100|12
-Apex Trader Funding|Legacy PA / funded|100000|3000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|100100|14
-Apex Trader Funding|Legacy PA / funded|150000|5000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|150100|17
-Apex Trader Funding|Legacy PA / funded|250000|6500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|250100|27
-Apex Trader Funding|Legacy PA / funded|300000|7500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100.|300100|35
+Apex Trader Funding|Legacy PA / funded|25000|1500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|25100|4
+Apex Trader Funding|Legacy PA / funded|50000|2500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|50100|10
+Apex Trader Funding|Legacy PA / funded|75000|2750|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|75100|12
+Apex Trader Funding|Legacy PA / funded|100000|3000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|100100|14
+Apex Trader Funding|Legacy PA / funded|150000|5000|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|150100|17
+Apex Trader Funding|Legacy PA / funded|250000|6500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|250100|27
+Apex Trader Funding|Legacy PA / funded|300000|7500|INTRADAY|0|0|Legacy funded. Threshold stops rising at starting balance + $100. Legacy safety net and payout minimum NOT verified - check your dashboard.|300100|35
 Apex Trader Funding|Legacy 100K Static|100000|625|EOD|0|2000|Legacy STATIC drawdown - the floor never moves. Apex cap 2 minis.|99375|2
 
 # -- Topstep (Trading Combine) ------------------------------------------------

@@ -225,12 +225,49 @@ namespace Ballast
     {
         /// <summary>
         /// Fixed labels, chosen so a trader can hit one without deliberating.
-        /// "Wanted it back" is deliberately its own option rather than folded
-        /// into "Angry" — chasing a loss is the specific behaviour worth naming.
+        ///
+        /// Picked from a list rather than typed, on purpose. Naming a feeling
+        /// from a short set is a second's work and produces something countable;
+        /// a free text box produces prose nobody can tally and most people leave
+        /// empty. The cost is that a state with no label here goes unrecorded,
+        /// which is why the list is longer than the original six.
+        ///
+        /// Ordered roughly best-to-worst rather than alphabetically, so the eye
+        /// lands where it usually needs to. Several are deliberately kept apart
+        /// even though they overlap, because the BEHAVIOUR differs:
+        ///
+        ///   "Wanted it back" is not "Angry" - chasing a loss is its own thing.
+        ///   "Afraid to miss it" is not "Impatient" - one is about the market
+        ///   leaving, the other about being bored of waiting for it.
+        ///   "Confident" is not "Invincible" - the second one is the tell that
+        ///   shows up right before a size-up.
+        ///   "Hesitant" is not "Unsure" - hesitating means you knew and did not
+        ///   act; unsure means you did not know.
+        ///
+        /// Adding to this list is safe: journal rows store the label as text, so
+        /// old entries keep whatever they were tagged with.
         /// </summary>
         public static readonly string[] Feelings = new string[]
         {
-            "Calm", "Rushed", "Wanted it back", "Afraid to miss it", "Bored", "Unsure"
+            "Calm",
+            "Focused",
+            "Confident",
+            "Invincible",
+            "Relieved",
+            "Unsure",
+            "Hesitant",
+            "Impatient",
+            "Bored",
+            "Distracted",
+            "Tired",
+            "Rushed",
+            "Anxious",
+            "Afraid to miss it",
+            "Scared to lose",
+            "Frustrated",
+            "Angry",
+            "Wanted it back",
+            "Numb"
         };
 
         /// <summary>
