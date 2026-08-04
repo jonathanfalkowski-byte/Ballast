@@ -19,7 +19,7 @@
 # Lines starting with # are ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION|13
+VERSION|14
 VERIFIED|2026-08-04
 
 # -- Apex Trader Funding (4.0, effective 1 March 2026) ------------------------
@@ -142,17 +142,17 @@ Take Profit Trader|PRO+ (live)|150000|4500|EOD|0|0|PRO+ reverts to end-of-day tr
 
 # ── MyFundedFutures ──────────────────────────────────────────────────────────
 # No daily loss limit on Rapid or Pro; Builder has a $1,000 soft pause.
-MyFundedFutures|Builder|50000|2000|EOD|1000|3000|$1,000 soft-pause daily loss; $1,500 max-loss option at checkout.|50100
-MyFundedFutures|Rapid (intraday)|25000|1000|INTRADAY|0|1500|Trail updates on every new equity high during the session.|25100
-MyFundedFutures|Rapid (intraday)|50000|2000|INTRADAY|0|3000|Trail updates on every new equity high during the session.|50100
-MyFundedFutures|Rapid (intraday)|100000|3000|INTRADAY|0|6000|Trail updates on every new equity high during the session.|100100
-MyFundedFutures|Rapid (intraday)|150000|4500|INTRADAY|0|9000|Trail updates on every new equity high during the session.|150100
-MyFundedFutures|Pro (EOD)|50000|2000|EOD|0|3000|End-of-day trailing.|50100
-MyFundedFutures|Pro (EOD)|100000|3000|EOD|0|6000|End-of-day trailing.|100100
-MyFundedFutures|Pro (EOD)|150000|4500|EOD|0|9000|End-of-day trailing.|150100
+MyFundedFutures|Builder|50000|2000|EOD|1000|3000|$1,000 soft-pause daily loss; $1,500 max-loss option at checkout. MyFundedFutures: the Max EOD trailing "locks in at $100 plus the initial starting balance", reached when your balance is start + drawdown + $100.|50100
+MyFundedFutures|Rapid (intraday)|25000|1000|INTRADAY|0|1500|Trail updates on every new equity high during the session. The limit "will not exceed the starting balance" - so it locks at $25,000, NOT start + $100. That is MyFundedFutures' intraday rule; their EOD accounts do use start + $100.|25000
+MyFundedFutures|Rapid (intraday)|50000|2000|INTRADAY|0|3000|Trail updates on every new equity high during the session. The limit "will not exceed the starting balance" - so it locks at $50,000, NOT start + $100. That is MyFundedFutures' intraday rule; their EOD accounts do use start + $100.|50000
+MyFundedFutures|Rapid (intraday)|100000|3000|INTRADAY|0|6000|Trail updates on every new equity high during the session. The limit "will not exceed the starting balance" - so it locks at $100,000, NOT start + $100. That is MyFundedFutures' intraday rule; their EOD accounts do use start + $100.|100000
+MyFundedFutures|Rapid (intraday)|150000|4500|INTRADAY|0|9000|Trail updates on every new equity high during the session. The limit "will not exceed the starting balance" - so it locks at $150,000, NOT start + $100. That is MyFundedFutures' intraday rule; their EOD accounts do use start + $100.|150000
+MyFundedFutures|Pro (EOD)|50000|2000|EOD|0|3000|End-of-day trailing. MyFundedFutures: the Max EOD trailing "locks in at $100 plus the initial starting balance", reached when your balance is start + drawdown + $100.|50100
+MyFundedFutures|Pro (EOD)|100000|3000|EOD|0|6000|End-of-day trailing. MyFundedFutures: the Max EOD trailing "locks in at $100 plus the initial starting balance", reached when your balance is start + drawdown + $100.|100100
+MyFundedFutures|Pro (EOD)|150000|4500|EOD|0|9000|End-of-day trailing. MyFundedFutures: the Max EOD trailing "locks in at $100 plus the initial starting balance", reached when your balance is start + drawdown + $100.|150100
 MyFundedFutures|Core (legacy)|50000|1500|EOD|0|3000|Legacy plan - verify, no longer sold.|50100
-MyFundedFutures|Flex (legacy, static)|25000|1000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|25100
-MyFundedFutures|Flex (legacy, static)|50000|2000|EOD|0|0|Legacy STATIC drawdown - does not trail. Verify.|50100
+MyFundedFutures|Flex (legacy, static)|25000|1000|EOD|0|0|Legacy STATIC drawdown - the floor never moves and sits below the start, at $24,000. No longer sold; verify.|24000
+MyFundedFutures|Flex (legacy, static)|50000|2000|EOD|0|0|Legacy STATIC drawdown - the floor never moves and sits below the start, at $48,000. No longer sold; verify.|48000
 
 # -- Bulenox --------------------------------------------------------------------
 # Rithmic feed; usable on NinjaTrader 8. Two eval options per size: "No Scaling"
@@ -227,12 +227,12 @@ Legends Trading|Elite evaluation (EOD)|150000|4500|EOD|0|9000|Rithmic/Tradovate/
 # LOCKAT = size+100. Static never trails (fixed floor = size - max loss). Only the
 # sizes read directly are listed; 1-Step 250K, EOD 150K, Static 25K/50K, Diamond
 # Hands, Direct-to-Funded and Fast Track are not yet added.
-Elite Trader Funding|1-Step (Live Trailing, intraday)|50000|2000|INTRADAY|0|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis.|50100|8
-Elite Trader Funding|1-Step (Live Trailing, intraday)|100000|3000|INTRADAY|0|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis.|100100|14
-Elite Trader Funding|1-Step (Live Trailing, intraday)|150000|5000|INTRADAY|0|9000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 18 minis.|150100|18
-Elite Trader Funding|End of Day (EOD trailing)|50000|2000|EOD|1100|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis.|50100|8
-Elite Trader Funding|End of Day (EOD trailing)|100000|3500|EOD|2200|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis.|100100|14
-Elite Trader Funding|Static (fixed floor)|10000|500|EOD|0|1000|NT/Rithmic/Tradovate. Fixed floor, never trails. Cap 1 mini.|9500|1
+Elite Trader Funding|1-Step (Live Trailing, intraday)|50000|2000|INTRADAY|0|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis. Start+$100 lock NOT re-verified against Elite's own docs - check it.|50100|8
+Elite Trader Funding|1-Step (Live Trailing, intraday)|100000|3000|INTRADAY|0|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis. Start+$100 lock NOT re-verified against Elite's own docs - check it.|100100|14
+Elite Trader Funding|1-Step (Live Trailing, intraday)|150000|5000|INTRADAY|0|9000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 18 minis. Start+$100 lock NOT re-verified against Elite's own docs - check it.|150100|18
+Elite Trader Funding|End of Day (EOD trailing)|50000|2000|EOD|1100|3000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 8 minis. Start+$100 lock NOT re-verified against Elite's own docs - check it.|50100|8
+Elite Trader Funding|End of Day (EOD trailing)|100000|3500|EOD|2200|6000|NT/Rithmic/Tradovate. Locks at start+$100 after safety net. Cap 14 minis. Start+$100 lock NOT re-verified against Elite's own docs - check it.|100100|14
+Elite Trader Funding|Static (fixed floor)|10000|500|EOD|0|1000|NT/Rithmic/Tradovate. Fixed floor, never trails. Cap 1 mini. Start+$100 lock NOT re-verified against Elite's own docs - check it.|9500|1
 
 # -- Your own account (not a prop firm) ---------------------------------------
 # For an Interactive Brokers, NinjaTrader Brokerage or any self-funded account.
