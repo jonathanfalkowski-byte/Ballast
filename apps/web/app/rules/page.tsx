@@ -231,7 +231,8 @@ export default function RulesPage() {
                   <th className="px-4 py-3 font-semibold">Size</th>
                   <th className="px-4 py-3 font-semibold">Drawdown</th>
                   <th className="px-4 py-3 font-semibold">Trails</th>
-                  <th className="px-4 py-3 font-semibold">Stops trailing at</th>
+                  <th className="px-4 py-3 font-semibold">Floor rests at</th>
+                  <th className="px-4 py-3 font-semibold">Once you reach</th>
                   <th className="px-4 py-3 font-semibold">To pass</th>
                   <th className="px-4 py-3 font-semibold">Firm cap</th>
                 </tr>
@@ -260,6 +261,21 @@ export default function RulesPage() {
                           money(r.lockAt)
                         ) : (
                           <span className="text-[#e3b341]">never</span>
+                        )}
+                      </td>
+                      {/* The balance that gets the floor there. The floor is your peak
+                          less the drawdown, so it only rests at its final level once
+                          your peak is that level plus the drawdown. Without this
+                          column the previous one reads as an account balance, and on
+                          a Topstep 50K "stops trailing at $50,000" looks like it has
+                          already happened - $50,000 is where you started. */}
+                      <td className="whitespace-nowrap px-4 py-3 text-[#9aa7b4]">
+                        {r.lockAt <= 0 ? (
+                          <span className="text-[#6f7a87]">—</span>
+                        ) : r.lockAt + r.drawdown <= r.size ? (
+                          <span className="text-[#6f7a87]">fixed from the start</span>
+                        ) : (
+                          <span className="text-white">{money(r.lockAt + r.drawdown)}</span>
                         )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-[#9aa7b4]">
@@ -307,11 +323,23 @@ export default function RulesPage() {
             </Link>
           </p>
           <p>
-            <strong className="text-white">&ldquo;Stops trailing at&rdquo; is the number people
-            miss.</strong> Until your floor reaches that balance, profit buys you nothing — the
-            floor follows you up and your room stays exactly the same. After it, every dollar is
-            genuine cushion. Where this column says <em className="not-italic text-[#e3b341]">never</em>,
-            the floor follows you forever and your room never grows, however well you trade.
+            <strong className="text-white">Read the last two columns together — this is where
+            almost everyone goes wrong.</strong> &ldquo;Floor rests at&rdquo; is a level your FLOOR
+            reaches, not a balance you reach. Your floor is your peak less the drawdown, so it only
+            gets there once your peak balance is that level plus the drawdown — which is what
+            &ldquo;Once you reach&rdquo; spells out. On a Topstep 50K the floor rests at $50,000,
+            but you have to be at <strong className="text-white">$52,000</strong> before it does;
+            at $50,000 nothing has happened, because that is where you started. On a 250K Apex
+            legacy evaluation the floor rests at $265,000 and you need
+            <strong className="text-white"> $271,500</strong> to get it there.
+          </p>
+          <p>
+            Until you reach that balance, profit buys you nothing — the floor follows you up and
+            your room stays exactly the same. After it, every dollar is genuine cushion. Where the
+            floor column says <em className="not-italic text-[#e3b341]">never</em>, it follows you
+            forever and your room never grows, however well you trade. Where the second column says
+            <em className="not-italic"> fixed from the start</em>, the floor never moved in the
+            first place — that is a static account.
           </p>
           <p>
             <strong className="text-white">Where we are not certain, we assume the tighter

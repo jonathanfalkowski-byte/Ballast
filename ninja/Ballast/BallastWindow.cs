@@ -2617,7 +2617,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             else
             {
                 trail = c.DrawdownType == DrawdownType.Intraday ? "intraday trail" : "end-of-day trail";
-                if (c.LockFloorAt > 0) trail += " stopping at " + Money(c.LockFloorAt);
+                // The level AND the balance that gets you there. "stopping at
+                // $265,000" reads as a balance, and it is not - it is where the
+                // FLOOR comes to rest. The floor is your peak less the drawdown,
+                // so it only rests there once your peak is that much higher. On a
+                // Topstep 50K the floor rests at $50,000, which sounds like it has
+                // already happened, and you actually need $52,000.
+                if (c.LockFloorAt > 0)
+                    trail += " stopping at " + Money(c.LockFloorAt)
+                           + " once you reach " + Money(c.LockFloorAt + c.TrailingDrawdown);
                 else trail += ", never stops";
             }
 
@@ -2953,7 +2961,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             string text = "Ballast has this as " + Money(c.StartingBalance)
                         + " with " + Money(c.TrailingDrawdown) + " " + dd;
 
-            if (c.LockFloorAt > 0) text += ", floor fixed once it reaches " + Money(c.LockFloorAt);
+            if (c.LockFloorAt > 0)
+                text += ", floor fixed at " + Money(c.LockFloorAt)
+                      + " once your peak balance reaches " + Money(c.LockFloorAt + c.TrailingDrawdown);
             else text += ", floor never stops trailing";
 
             if (c.FirmMaxContracts > 0)
