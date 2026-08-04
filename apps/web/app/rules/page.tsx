@@ -167,7 +167,14 @@ export default function RulesPage() {
             <li>
               <strong className="text-white">Performance (funded) accounts:</strong>{" "}
               &ldquo;Once the
-              Intraday Threshold reaches Starting Balance + $100, it stops increasing.&rdquo;
+              Intraday Threshold reaches Starting Balance + $100, it stops increasing.&rdquo; Note
+              what that means in balance terms: the threshold is your peak less the drawdown, so it
+              only gets there once your{" "}
+              <strong className="text-white">highest balance</strong> reaches Starting Balance + Max
+              Drawdown + $100. Apex&apos;s own example is a 50K performance account with a $2,000
+              drawdown: the threshold fixes at $50,100, reached when the balance touches $52,100 —
+              not at $50,100. On a 100K performance account with a $3,000 drawdown it is $103,100
+              you have to reach before the floor stops following you.
             </li>
             <li>
               <strong className="text-white">Evaluations on Rithmic and WealthCharts:</strong>{" "}
