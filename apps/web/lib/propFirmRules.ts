@@ -27,10 +27,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Bump on every rule change. Clients compare this to decide whether to update. */
-export const RULES_VERSION = 11;
+export const RULES_VERSION = 12;
 
 /** Date the figures below were last checked against the firms' own pages. */
-export const RULES_VERIFIED = "2026-08-01";
+export const RULES_VERIFIED = "2026-08-04";
 
 /** Pages a maintenance job should re-check for changes. */
 export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
@@ -105,26 +105,30 @@ VERIFIED|${RULES_VERIFIED}
 #     balance" and never stops.
 # So LOCKAT below is (size + profit target) on Rithmic/WealthCharts and 0 on
 # Tradovate. NinjaTrader normally reaches Apex over Rithmic.
-Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|25000|1000|INTRADAY|0|1500|Threshold fixes at the target profit balance.|26500
-Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|50000|2000|INTRADAY|0|3000|Threshold fixes at the target profit balance.|53000
-Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|Threshold fixes at the target profit balance.|106000
-Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|150000|4000|INTRADAY|0|9000|Threshold fixes at the target profit balance.|159000
-Apex Trader Funding|Evaluation intraday (Tradovate)|25000|1000|INTRADAY|0|1500|Tradovate evals trail forever - no lock.|0
-Apex Trader Funding|Evaluation intraday (Tradovate)|50000|2000|INTRADAY|0|3000|Tradovate evals trail forever - no lock.|0
-Apex Trader Funding|Evaluation intraday (Tradovate)|100000|3000|INTRADAY|0|6000|Tradovate evals trail forever - no lock.|0
-Apex Trader Funding|Evaluation intraday (Tradovate)|150000|4000|INTRADAY|0|9000|Tradovate evals trail forever - no lock.|0
-Apex Trader Funding|Evaluation (end-of-day)|25000|1000|EOD|0|1500|Eval threshold keeps trailing - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (end-of-day)|50000|2000|EOD|0|3000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (end-of-day)|100000|3000|EOD|0|6000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
-Apex Trader Funding|Evaluation (end-of-day)|150000|4000|EOD|0|9000|Eval threshold keeps trailing - no lock. Verify for your platform.|0
-Apex Trader Funding|PA / funded (intraday)|25000|1000|INTRADAY|0|1500|Threshold stops rising at starting balance + $100.|25100
-Apex Trader Funding|PA / funded (intraday)|50000|2000|INTRADAY|0|3000|Threshold stops rising at starting balance + $100.|50100
-Apex Trader Funding|PA / funded (intraday)|100000|3000|INTRADAY|0|6000|Threshold stops rising at starting balance + $100.|100100
-Apex Trader Funding|PA / funded (intraday)|150000|4000|INTRADAY|0|9000|Threshold stops rising at starting balance + $100.|150100
-Apex Trader Funding|PA / funded (end-of-day)|25000|1000|EOD|0|1500|Threshold stops rising at starting balance + $100.|25100
-Apex Trader Funding|PA / funded (end-of-day)|50000|2000|EOD|0|3000|Threshold stops rising at starting balance + $100.|50100
-Apex Trader Funding|PA / funded (end-of-day)|100000|3000|EOD|0|6000|Threshold stops rising at starting balance + $100.|100100
-Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|9000|Threshold stops rising at starting balance + $100.|150100
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|25000|1000|INTRADAY|0|1500|4.0. Threshold fixes at the target profit balance, reached when your peak balance is target balance + drawdown. No daily loss limit on intraday evals.|26500|4
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|50000|2000|INTRADAY|0|3000|4.0. Threshold fixes at the target profit balance, reached when your peak balance is target balance + drawdown. No daily loss limit on intraday evals.|53000|6
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|100000|3000|INTRADAY|0|6000|4.0. Threshold fixes at the target profit balance, reached when your peak balance is target balance + drawdown. No daily loss limit on intraday evals.|106000|8
+Apex Trader Funding|Evaluation intraday (Rithmic/WealthCharts)|150000|4000|INTRADAY|0|9000|4.0. Threshold fixes at the target profit balance, reached when your peak balance is target balance + drawdown. No daily loss limit on intraday evals.|159000|12
+Apex Trader Funding|Evaluation intraday (Tradovate)|25000|1000|INTRADAY|0|1500|4.0. Tradovate evals trail forever - no lock. No daily loss limit on intraday evals.|0|4
+Apex Trader Funding|Evaluation intraday (Tradovate)|50000|2000|INTRADAY|0|3000|4.0. Tradovate evals trail forever - no lock. No daily loss limit on intraday evals.|0|6
+Apex Trader Funding|Evaluation intraday (Tradovate)|100000|3000|INTRADAY|0|6000|4.0. Tradovate evals trail forever - no lock. No daily loss limit on intraday evals.|0|8
+Apex Trader Funding|Evaluation intraday (Tradovate)|150000|4000|INTRADAY|0|9000|4.0. Tradovate evals trail forever - no lock. No daily loss limit on intraday evals.|0|12
+Apex Trader Funding|Evaluation end-of-day (Rithmic/WealthCharts)|25000|1000|EOD|500|1500|4.0. EOD evals DO lock on Rithmic - at the target profit balance. Apex publishes a $500 daily loss limit.|26500|4
+Apex Trader Funding|Evaluation end-of-day (Rithmic/WealthCharts)|50000|2000|EOD|1000|3000|4.0. EOD evals DO lock on Rithmic - at the target profit balance. Apex publishes a $1,000 daily loss limit.|53000|6
+Apex Trader Funding|Evaluation end-of-day (Rithmic/WealthCharts)|100000|3000|EOD|1500|6000|4.0. EOD evals DO lock on Rithmic - at the target profit balance. Apex publishes a $1,500 daily loss limit.|106000|8
+Apex Trader Funding|Evaluation end-of-day (Rithmic/WealthCharts)|150000|4000|EOD|2000|9000|4.0. EOD evals DO lock on Rithmic - at the target profit balance. Apex publishes a $2,000 daily loss limit.|159000|12
+Apex Trader Funding|Evaluation end-of-day (Tradovate)|25000|1000|EOD|500|1500|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $500 daily loss limit.|0|4
+Apex Trader Funding|Evaluation end-of-day (Tradovate)|50000|2000|EOD|1000|3000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $1,000 daily loss limit.|0|6
+Apex Trader Funding|Evaluation end-of-day (Tradovate)|100000|3000|EOD|1500|6000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $1,500 daily loss limit.|0|8
+Apex Trader Funding|Evaluation end-of-day (Tradovate)|150000|4000|EOD|2000|9000|4.0. Tradovate EOD evals trail forever - no lock. Apex publishes a $2,000 daily loss limit.|0|12
+Apex Trader Funding|PA / funded (intraday)|25000|1000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|25100|2
+Apex Trader Funding|PA / funded (intraday)|50000|2000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|50100|4
+Apex Trader Funding|PA / funded (intraday)|100000|3000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|100100|6
+Apex Trader Funding|PA / funded (intraday)|150000|4000|INTRADAY|0|0|4.0 funded. Threshold stops at start + $100, reached when your peak balance is start + drawdown + $100. Platform does not matter on funded accounts. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|150100|10
+Apex Trader Funding|PA / funded (end-of-day)|25000|1000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|25100|2
+Apex Trader Funding|PA / funded (end-of-day)|50000|2000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|50100|4
+Apex Trader Funding|PA / funded (end-of-day)|100000|3000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|100100|6
+Apex Trader Funding|PA / funded (end-of-day)|150000|4000|EOD|0|0|4.0 funded. Threshold stops at start + $100. Apex sets a TIER-BASED daily loss limit - read yours off your dashboard and type it in.|150100|10
 
 
 # -- Apex Trader Funding (LEGACY accounts) ------------------------------------
