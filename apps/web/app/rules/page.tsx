@@ -167,19 +167,32 @@ export default function RulesPage() {
             <li>
               <strong className="text-white">Performance (funded) accounts:</strong>{" "}
               &ldquo;Once the
-              Intraday Threshold reaches Starting Balance + $100, it stops increasing.&rdquo;
+              Intraday Threshold reaches Starting Balance + $100, it stops increasing.&rdquo; Note
+              what that means in balance terms: the threshold is your peak less the drawdown, so it
+              only gets there once your{" "}
+              <strong className="text-white">highest balance</strong> reaches Starting Balance + Max
+              Drawdown + $100. Apex&apos;s own example is a 50K performance account with a $2,000
+              drawdown: the threshold fixes at $50,100, reached when the balance touches $52,100 —
+              not at $50,100. On a 100K performance account with a $3,000 drawdown it is $103,100
+              you have to reach before the floor stops following you.
             </li>
             <li>
               <strong className="text-white">Evaluations on Rithmic and WealthCharts:</strong>{" "}
               the
-              threshold &ldquo;stops trailing and becomes fixed when it reaches an amount equal to
-              the Target Profit balance.&rdquo; On a 50K with a $3,000 target that is a threshold
-              fixed at $53,000, reached once your highest balance touches $55,000.
+              threshold stops trailing and becomes fixed at the Target Profit balance. Apex&apos;s
+              own worked example, on a 50K with a $3,000 target: &ldquo;Profit Target Balance =
+              $53,000. Threshold locks when balance reaches = $55,000. Final Threshold Stop Level =
+              $53,000.&rdquo; Read the prose on that page carefully — it says trailing stops once
+              the threshold reaches &ldquo;Profit Target Balance + $2,000&rdquo;, but its own
+              example shows $2,000 is the drawdown, so it is the BALANCE that has to reach $55,000
+              and the threshold rests at $53,000. This applies to end-of-day evaluations on Rithmic
+              too, which do lock.
             </li>
             <li>
               <strong className="text-white">Evaluations on Tradovate:</strong>{" "}
               the drawdown
               &ldquo;trails indefinitely with the peak account balance&rdquo; and never stops.
+              Intraday and end-of-day alike.
             </li>
           </ul>
           <p>
@@ -192,6 +205,15 @@ export default function RulesPage() {
             NinjaTrader normally reaches Apex over Rithmic. If you have been assuming your threshold
             keeps trailing, it probably stops — and if you have been assuming it stops, on Tradovate
             it does not.
+          </p>
+          <p className="text-[#9aa7b4]">
+            The platform split is an <strong className="text-white">evaluation</strong> phenomenon.
+            Apex states the funded-account rule once, with no platform attached, in both its
+            intraday and end-of-day performance-account articles, and its legacy documentation scopes
+            the Tradovate never-stops behaviour explicitly to evaluations. So on a funded account the
+            threshold stops at Starting Balance + $100 whichever feed you use. Apex does not say this
+            in so many words, so we are reading it off the structure of their own rules rather than
+            quoting it — check your dashboard.
           </p>
         </div>
       </section>
