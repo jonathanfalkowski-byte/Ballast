@@ -308,17 +308,15 @@ namespace Ballast
         };
 
         /// <summary>
-        /// The seed a brand-new setup book starts from. Empty on purpose: Ballast
-        /// never invents setups for a trader — every trader trades differently, so
-        /// each defines their own, stored per-trader in ballast-setups.txt and
-        /// managed by <see cref="SetupBook"/>. Kept as a named constant so a
-        /// specific deployment has one obvious place to add starter examples if it
-        /// ever wants them.
+        /// The trader's own setups, in their own words - "A", "B", "C", or
+        /// "opening drive", "failed breakout", whatever they actually run.
         ///
-        /// Setup labels are stored as text on each row, so editing a trader's book
-        /// never rewrites history — a retired setup's old trades keep their label.
+        /// Empty by default and filled in by the trader, because a list of
+        /// setups invented by software is a list nobody recognises and therefore
+        /// nobody tags honestly. It is held as text on each row, so retiring a
+        /// setup never rewrites the trades that used it.
         /// </summary>
-        public static readonly string[] Setups = new string[] { };
+        public static List<string> Setups = new List<string>();
 
         /// <summary>
         /// Four verdicts, not two.

@@ -1,0 +1,21 @@
+# Line endings are settled here, once, so they stop showing up as changes.
+#
+# Every file in this repo was committed with LF. Windows editors — the
+# NinjaScript editor among them — save with CRLF, so a file that was merely
+# opened came back looking entirely rewritten: nineteen thousand lines of
+# "change" carrying no change at all. That buries the real edits and makes
+# git blame useless.
+#
+# text=auto tells git to store LF in history regardless of what the working
+# copy uses, so this cannot happen again.
+* text=auto eol=lf
+
+# Left alone byte for byte.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.dll  binary
+*.zip  binary

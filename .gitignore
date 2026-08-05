@@ -8,3 +8,7 @@ dist
 
 # The root lockfile is committed so local, CI, and deployment installs resolve
 # the same tested dependency graph.
+
+# Scratch: files moved aside instead of deleted (the remote bridge cannot
+# delete, so they are parked here for you to remove by hand).
+_to_delete/

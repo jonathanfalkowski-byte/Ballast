@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ballast — Edge Experiment</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b21; --panel2:#1e242c; --line:#2a323c;
+    --ink:#e7edf3; --muted:#8b97a5; --good:#3fb950; --bad:#f85149;
+    --warn:#d29922; --accent:#4c8dff; --chip:#243040;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);
+    display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+  h1{font-size:16px;margin:0;letter-spacing:.3px}
+  h1 small{color:var(--muted);font-weight:400}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px;display:grid;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 12px}
+  .row{display:flex;flex-wrap:wrap;gap:10px}
+  label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
+  input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:7px;padding:8px 10px;font:inherit;width:100%}
+  textarea{resize:vertical;min-height:38px}
+  .f{flex:1;min-width:120px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:9px 14px;
+    font:inherit;font-weight:600;cursor:pointer}
+  button.ghost{background:var(--chip);color:var(--ink)}
+  button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .banner{border-radius:10px;padding:14px 16px;font-weight:600;display:none}
+  .banner.show{display:block}
+  .banner.stop{background:#3a1416;border:1px solid var(--bad);color:#ffb3ad}
+  .banner.ok{background:#11291a;border:1px solid var(--good);color:#a6e3b4}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:12px}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{font-size:22px;font-weight:700;margin-top:3px}
+  .pos{color:var(--good)} .neg{color:var(--bad)} .neutral{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child,th.l,td.l{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .tag{display:inline-block;background:var(--chip);border-radius:20px;padding:1px 8px;font-size:11px}
+  .flag{color:var(--bad);font-size:11px;font-weight:700}
+  .prog{height:8px;background:var(--panel2);border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+  .prog > i{display:block;height:100%;background:var(--accent)}
+  .verdict{font-size:15px;font-weight:600;line-height:1.4}
+  .muted{color:var(--muted)}
+  .split{display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+  details summary{cursor:pointer;color:var(--muted);font-size:12px}
+  .xbtn{background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚓ Ballast — Edge Experiment <small>&nbsp;prove it, then size it</small></h1>
+  <div class="row" style="align-items:center">
+    <button class="ghost" id="exportBtn">Export CSV</button>
+    <button class="danger" id="clearBtn">Reset all</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="banner stop" id="lockBanner"></div>
+  <div class="banner ok" id="doneBanner"></div>
+
+  <!-- SAMPLE PROGRESS -->
+  <div class="panel">
+    <h2>The sample — the only goal right now</h2>
+    <div class="grid">
+      <div class="stat"><div class="k">Trades logged</div><div class="v" id="sTotal">0</div>
+        <div class="prog" style="margin-top:8px"><i id="sBar" style="width:0%"></i></div>
+        <div class="muted" id="sGoal" style="margin-top:6px">0 / 40 — no changing the strategy until this is done</div></div>
+      <div class="stat"><div class="k">Setup A trades</div><div class="v" id="sA">0</div></div>
+      <div class="stat"><div class="k">Setup B trades</div><div class="v" id="sB">0</div></div>
+      <div class="stat"><div class="k">Trailing buffer used<br><span class="muted" style="font-size:10px">peak → now (approx)</span></div>
+        <div class="v" id="sBuf">$0</div><div class="muted" id="sBufRem" style="margin-top:4px"></div></div>
+    </div>
+  </div>
+
+  <!-- LOG A TRADE -->
+  <div class="panel">
+    <h2>Log a trade</h2>
+    <div class="row">
+      <div class="f"><label>Setup</label>
+        <select id="fSetup">
+          <option value="A">A — EMA cross + vol-delta dot</option>
+          <option value="B">B — pivot confirmed, first dot after</option>
+        </select></div>
+      <div class="f"><label>Direction</label>
+        <select id="fDir"><option value="long">Long</option><option value="short">Short</option></select></div>
+      <div class="f"><label>Entry price</label><input id="fEntry" type="number" step="0.25" inputmode="decimal" placeholder="e.g. 23150.00"></div>
+      <div class="f"><label>Exit price</label><input id="fExit" type="number" step="0.25" inputmode="decimal" placeholder="e.g. 23185.25"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="f"><label>Was this the plan?</label>
+        <select id="fTag">
+          <option value="planned">Planned — took the rule as written</option>
+          <option value="aplus">A+ — textbook setup</option>
+          <option value="revenge">Revenge — chasing a loss</option>
+          <option value="fomo">FOMO — afraid of missing it</option>
+          <option value="boredom">Boredom — nothing was there</option>
+          <option value="broke">Broke a rule (moved stop, added size, off-plan)</option>
+        </select></div>
+      <div class="f" style="flex:2"><label>Note (optional — one honest line)</label><textarea id="fNote" placeholder="What actually happened?"></textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;align-items:center">
+      <button id="logBtn">Log trade</button>
+      <span class="muted" id="calcHint"></span>
+    </div>
+  </div>
+
+  <!-- THE READ -->
+  <div class="split">
+    <div class="panel">
+      <h2>The honest read — Setup A</h2>
+      <div id="readA"></div>
+    </div>
+    <div class="panel">
+      <h2>The honest read — Setup B</h2>
+      <div id="readB"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Verdict (combined)</h2>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <!-- TRADES -->
+  <div class="panel">
+    <h2>Trades</h2>
+    <div style="overflow-x:auto">
+      <table id="tbl">
+        <thead><tr>
+          <th class="l">When</th><th>Setup</th><th>Dir</th><th>Entry</th><th>Exit</th>
+          <th>Ticks</th><th>Net $</th><th class="l">Tag</th><th class="l">Flags</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="panel">
+    <details>
+      <summary>Settings (defaults are set for MNQ on your Apex 250k — change only if you must)</summary>
+      <div class="row" style="margin-top:12px">
+        <div class="f"><label>Instrument</label>
+          <select id="cInstr"><option value="MNQ">MNQ (micro — $0.50/tick)</option><option value="NQ">NQ (mini — $5/tick)</option></select></div>
+        <div class="f"><label>Round-turn commission ($)</label><input id="cComm" type="number" step="0.01" value="1.04"></div>
+        <div class="f"><label>Sample size (trades)</label><input id="cSample" type="number" value="40"></div>
+        <div class="f"><label>Daily loss limit</label><input id="cDaily" type="number" value="2"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="f"><label>Session start (ET)</label><input id="cStart" type="time" value="09:30"></div>
+        <div class="f"><label>Session end (ET)</label><input id="cEnd" type="time" value="12:00"></div>
+        <div class="f"><label>Trailing drawdown buffer ($)</label><input id="cBuffer" type="number" value="6500"></div>
+      </div>
+      <p class="muted" style="margin-top:10px">Tick size assumed 0.25 index points. MNQ tick = $0.50, NQ tick = $5.00.
+      The point of MNQ is that the <em>edge you measure is identical</em> to NQ — only the risk to the account changes.</p>
+    </details>
+  </div>
+
+  <p class="muted" style="text-align:center;font-size:12px">
+    Advisory tool. Not financial advice. It measures your process — it does not predict markets or place orders.
+  </p>
+</div>
+
+<script>
+(function(){
+  var LS_TRADES="ballast_edge_trades_v1", LS_CFG="ballast_edge_cfg_v1";
+  var $=function(id){return document.getElementById(id)};
+  var trades=[], cfg={};
+
+  var CFG_FIELDS={cInstr:"instr",cComm:"comm",cSample:"sample",cDaily:"daily",cStart:"start",cEnd:"end",cBuffer:"buffer"};
+  var CFG_DEFAULTS={instr:"MNQ",comm:1.04,sample:40,daily:2,start:"09:30",end:"12:00",buffer:6500};
+
+  function load(){
+    try{trades=JSON.parse(localStorage.getItem(LS_TRADES))||[]}catch(e){trades=[]}
+    try{cfg=Object.assign({},CFG_DEFAULTS,JSON.parse(localStorage.getItem(LS_CFG))||{})}catch(e){cfg=Object.assign({},CFG_DEFAULTS)}
+    for(var id in CFG_FIELDS){ if($(id)) $(id).value=cfg[CFG_FIELDS[id]]; }
+  }
+  function saveTrades(){localStorage.setItem(LS_TRADES,JSON.stringify(trades))}
+  function saveCfg(){
+    for(var id in CFG_FIELDS){ var v=$(id).value; cfg[CFG_FIELDS[id]]=(id==="cInstr"||id==="cStart"||id==="cEnd")?v:parseFloat(v); }
+    localStorage.setItem(LS_CFG,JSON.stringify(cfg)); render();
+  }
+  for(var id in CFG_FIELDS){ (function(id){ if($(id)) $(id).addEventListener("change",saveCfg); })(id); }
+
+  function tickVal(){return cfg.instr==="NQ"?5:0.5}
+  function money(n){var s=(n<0?"-$":"$")+Math.abs(n).toFixed(2);return s}
+  function cls(n){return n>0?"pos":n<0?"neg":"neutral"}
+
+  // ── ET time helpers (works regardless of local tz) ─────────────────
+  function etParts(d){
+    var f=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour12:false,
+      year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+    var o={}; f.formatToParts(d).forEach(function(p){o[p.type]=p.value});
+    return {date:o.year+"-"+o.month+"-"+o.day, minutes:(+o.hour)*60+(+o.minute),
+      hhmm:o.hour+":"+o.minute};
+  }
+  function toMin(hhmm){var a=(hhmm||"0:0").split(":");return (+a[0])*60+(+a[1])}
+
+  // ── compute one trade ──────────────────────────────────────────────
+  function computeTrade(t){
+    var raw=t.dir==="long"?(t.exit-t.entry):(t.entry-t.exit);
+    var ticks=Math.round(raw/0.25);
+    var gross=ticks*tickVal();
+    var net=gross-cfg.comm;
+    return {ticks:ticks, net:net, win:net>0};
+  }
+
+  // ── daily lock state ────────────────────────────────────────────────
+  function todayET(){return etParts(new Date()).date}
+  function lossesToday(){
+    var d=todayET(),n=0;
+    trades.forEach(function(t){var c=computeTrade(t); if(t.etDate===d && c.net<0) n++;});
+    return n;
+  }
+
+  // ── stats for a subset ──────────────────────────────────────────────
+  function stats(list){
+    var n=list.length, wins=0, gW=0, gL=0, sum=0, sumSq=0, nets=[];
+    list.forEach(function(t){
+      var c=computeTrade(t); nets.push(c.net); sum+=c.net; sumSq+=c.net*c.net;
+      if(c.net>0){wins++; gW+=c.ticks;} else if(c.net<0){gL+=c.ticks;}
+    });
+    var mean=n?sum/n:0;
+    var variance=n>1?(sumSq-n*mean*mean)/(n-1):0;
+    var sd=Math.sqrt(Math.max(variance,0));
+    var t=(n>1&&sd>0)?mean/(sd/Math.sqrt(n)):0;   // one-sample t vs zero
+    return {n:n, wins:wins, winRate:n?wins/n:0, avgWin:wins?gW/wins:0,
+      avgLoss:(n-wins)?gL/(n-wins):0, exp:mean, total:sum, sd:sd, t:t};
+  }
+
+  function luckRead(s){
+    if(s.n<15) return {c:"neutral", txt:"Not enough trades yet ("+s.n+"). Need ~15+ before this means anything. Keep going."};
+    if(s.exp<=0) return {c:"neg", txt:"Expectancy is "+money(s.exp)+"/trade — you are paying to play this setup. No edge here."};
+    if(s.t<1.7) return {c:"warn", txt:"Positive, but inside the noise (t="+s.t.toFixed(2)+"). This could easily be luck. More trades or it's not real."};
+    if(s.t<2.5) return {c:"pos", txt:"Positive and probably real (t="+s.t.toFixed(2)+"). Promising — don't touch anything, finish the sample."};
+    return {c:"pos", txt:"Positive and unlikely to be luck (t="+s.t.toFixed(2)+"). This looks like a genuine edge. Prove it out, then size up slowly."};
+  }
+
+  function renderRead(el, s){
+    if(s.n===0){el.innerHTML='<p class="muted">No trades logged for this setup yet.</p>';return;}
+    var lr=luckRead(s);
+    el.innerHTML=
+      '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(90px,1fr))">'+
+        stat("Trades",s.n)+
+        stat("Win rate",(s.winRate*100).toFixed(0)+"%")+
+        stat("Avg win",s.avgWin.toFixed(0)+"t")+
+        stat("Avg loss",s.avgLoss.toFixed(0)+"t")+
+        stat("Exp / trade",money(s.exp),cls(s.exp))+
+        stat("Net total",money(s.total),cls(s.total))+
+      '</div>'+
+      '<p class="verdict '+lr.c+'" style="margin:12px 0 0">'+lr.txt+'</p>';
+  }
+  function stat(k,v,c){return '<div class="stat"><div class="k">'+k+'</div><div class="v '+(c||"")+'">'+v+'</div></div>'}
+
+  // ── main render ─────────────────────────────────────────────────────
+  function render(){
+    var all=stats(trades), A=stats(trades.filter(function(t){return t.setup==="A"})),
+        B=stats(trades.filter(function(t){return t.setup==="B"}));
+
+    $("sTotal").textContent=trades.length;
+    $("sA").textContent=A.n; $("sB").textContent=B.n;
+    var pct=Math.min(100,Math.round(trades.length/cfg.sample*100));
+    $("sBar").style.width=pct+"%";
+    $("sGoal").textContent=trades.length+" / "+cfg.sample+" — no changing the strategy until this is done";
+
+    // trailing buffer (approx, on realized cumulative)
+    var cum=0,peak=0;
+    trades.forEach(function(t){cum+=computeTrade(t).net; if(cum>peak)peak=cum;});
+    var used=peak-cum;
+    $("sBuf").textContent=money(used);
+    $("sBuf").className="v "+(used> cfg.buffer*0.6?"neg":used>cfg.buffer*0.3?"":"");
+    $("sBufRem").textContent=money(Math.max(0,cfg.buffer-used))+" of "+money(cfg.buffer)+" left";
+
+    renderRead($("readA"),A); renderRead($("readB"),B);
+
+    // combined verdict
+    var v=$("verdict");
+    if(trades.length<cfg.sample){
+      var lr=luckRead(all);
+      v.className="verdict "+lr.c;
+      v.innerHTML="Sample "+trades.length+"/"+cfg.sample+" — hold the line. "+lr.txt+
+        '<br><span class="muted" style="font-weight:400">The number you\'re chasing does not exist until this bar is full.</span>';
+    } else {
+      var lrA=luckRead(A),lrB=luckRead(B);
+      v.className="verdict";
+      v.innerHTML="Sample complete. Now honour the deal:<br>"+
+        '<span class="'+lrA.c+'">Setup A: '+lrA.txt+'</span><br>'+
+        '<span class="'+lrB.c+'">Setup B: '+lrB.txt+'</span><br>'+
+        '<span class="muted" style="font-weight:400">Green and real → size up slowly. Not real → it goes in the drawer. No account #201 on a hunch.</span>';
+    }
+
+    // lock banner
+    var lt=lossesToday(), limit=cfg.daily;
+    var lb=$("lockBanner");
+    if(lt>=limit){ lb.className="banner stop show";
+      lb.innerHTML="🛑 "+lt+" losses today. You're done. The deal was "+limit+" and out.<br>"+
+        '<span style="font-weight:400">Any trade you log now is tagged a rule-break — because it is one.</span>'; }
+    else lb.className="banner stop";
+
+    var db=$("doneBanner");
+    if(trades.length>=cfg.sample){ db.className="banner ok show";
+      db.textContent="✓ You finished a full sample without switching strategies. That alone is a first in ten years."; }
+    else db.className="banner ok";
+
+    renderTable();
+  }
+
+  function renderTable(){
+    var tb=$("tbody"); tb.innerHTML="";
+    for(var i=trades.length-1;i>=0;i--){
+      var t=trades[i], c=computeTrade(t);
+      var flags=[];
+      if(t.outOfSession) flags.push("off-hours");
+      if(t.afterStop) flags.push("after-stop");
+      if(t.tag==="broke"||t.tag==="revenge"||t.tag==="fomo") flags.push(t.tag);
+      var tr=document.createElement("tr");
+      tr.innerHTML=
+        '<td class="l">'+t.etDate+' '+t.etTime+'</td>'+
+        '<td>'+t.setup+'</td>'+
+        '<td>'+t.dir+'</td>'+
+        '<td>'+t.entry+'</td>'+
+        '<td>'+t.exit+'</td>'+
+        '<td class="'+cls(c.ticks)+'">'+(c.ticks>0?"+":"")+c.ticks+'</td>'+
+        '<td class="'+cls(c.net)+'">'+money(c.net)+'</td>'+
+        '<td class="l"><span class="tag">'+t.tag+'</span></td>'+
+        '<td class="l">'+(flags.length?'<span class="flag">'+flags.join(" · ")+'</span>':'')+'</td>'+
+        '<td><button class="xbtn" data-i="'+i+'">✕</button></td>';
+      tb.appendChild(tr);
+    }
+    Array.prototype.forEach.call(tb.querySelectorAll(".xbtn"),function(b){
+      b.addEventListener("click",function(){
+        var i=+b.getAttribute("data-i");
+        if(confirm("Delete this trade? Deleting losers you don't like is exactly the leak. Only delete genuine mis-entries.")){
+          trades.splice(i,1); saveTrades(); render();
+        }
+      });
+    });
+  }
+
+  // live calc hint
+  function hint(){
+    var e=parseFloat($("fEntry").value), x=parseFloat($("fExit").value);
+    if(isNaN(e)||isNaN(x)){$("calcHint").textContent="";return;}
+    var t={dir:$("fDir").value,entry:e,exit:x}, c=computeTrade(t);
+    $("calcHint").textContent=(c.ticks>0?"+":"")+c.ticks+" ticks  →  "+money(c.net)+" net";
+    $("calcHint").className="muted "+cls(c.net);
+  }
+  ["fEntry","fExit","fDir"].forEach(function(id){$(id).addEventListener("input",hint)});
+
+  // log
+  $("logBtn").addEventListener("click",function(){
+    var e=parseFloat($("fEntry").value), x=parseFloat($("fExit").value);
+    if(isNaN(e)||isNaN(x)){alert("Enter both entry and exit prices.");return;}
+    var now=new Date(), et=etParts(now);
+    var oos = et.minutes<toMin(cfg.start) || et.minutes>toMin(cfg.end);
+    var after = lossesToday()>=cfg.daily;
+    if(oos && !confirm("This is outside your "+cfg.start+"–"+cfg.end+" window. It'll be flagged off-hours. Log it anyway?")) return;
+    if(after && !confirm("You're past your daily loss limit. This will be flagged a rule-break. Log it anyway?")) return;
+    trades.push({
+      setup:$("fSetup").value, dir:$("fDir").value, entry:e, exit:x,
+      tag:$("fTag").value, note:$("fNote").value.trim(),
+      etDate:et.date, etTime:et.hhmm, ts:now.toISOString(),
+      outOfSession:oos, afterStop:after
+    });
+    saveTrades();
+    $("fEntry").value=""; $("fExit").value=""; $("fNote").value=""; $("calcHint").textContent="";
+    render(); $("fEntry").focus();
+  });
+
+  // export
+  $("exportBtn").addEventListener("click",function(){
+    var head=["date_ET","time_ET","setup","direction","entry","exit","ticks","net_usd","tag","off_hours","after_stop","note"];
+    var rows=[head.join(",")];
+    trades.forEach(function(t){var c=computeTrade(t);
+      rows.push([t.etDate,t.etTime,t.setup,t.dir,t.entry,t.exit,c.ticks,c.net.toFixed(2),
+        t.tag,t.outOfSession?1:0,t.afterStop?1:0,'"'+(t.note||"").replace(/"/g,'""')+'"'].join(","));
+    });
+    var blob=new Blob([rows.join("\n")],{type:"text/csv"});
+    var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download="ballast-edge-"+todayET()+".csv"; a.click();
+  });
+
+  // reset
+  $("clearBtn").addEventListener("click",function(){
+    if(confirm("Erase ALL logged trades? Export first if you want to keep them.")){
+      trades=[]; saveTrades(); render();
+    }
+  });
+
+  load(); render();
+})();
+</script>
+</body>
+</html>

@@ -101,8 +101,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private StackPanel bulletPanel, rowsPanel;
         private Border card;
         private TextBlock statCushion, statPnl, statAccounts, statCushionWho, statCushionCap;
-        private ComboBox editTargetBox, ddTypeBox, firmBox, accountTypeBox, generationBox;
-        private AccountGeneration generation = AccountGeneration.Auto;
+        private ComboBox editTargetBox, ddTypeBox, firmBox, accountTypeBox;
         private readonly RuleBook ruleBook = new RuleBook();
         private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt;
         private TextBox tbWindowStart, tbWindowEnd, tbTradingDayReset;
@@ -236,6 +235,18 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Button firmToggle;
         private TextBlock editingScope, applyNote, realisedNote, coherenceNote;
         private StackPanel setupListView, setupAccountView;
+        private CheckBox watchedOnlyBox;
+        private TextBox tbSetups;
+        private TextBlock setupsNote;
+
+        /// <summary>
+        /// The trader's playbook. Held here rather than rebuilt from the text box
+        /// each time so the cap and the duplicate rule are applied in one place.
+        /// </summary>
+        private readonly SetupBook setupBook = new SetupBook();
+
+        /// <summary>Lines the book refused on the last save, so the note can say so.</summary>
+        private int setupsDropped;
         private TextBlock setupAccountTitle, setupAccountSub;
         private CheckBox trustRealisedBox;
         private StackPanel firmFields;
@@ -311,7 +322,6 @@ namespace NinjaTrader.NinjaScript.AddOns
             LoadTiltLog();
 
             ApplyZoom();
-            if (generationBox != null) generationBox.SelectedIndex = (int)generation;
             if (tiltOnBox != null) tiltOnBox.IsChecked = tiltEnabled;
             if (tiltGiveBackBox != null) tiltGiveBackBox.IsChecked = tiltOnGiveBack;
             ShowTab(monitor.Count == 0 ? 2 : 0);
@@ -1843,17 +1853,37 @@ namespace NinjaTrader.NinjaScript.AddOns
             monitorAllBox.Unchecked += delegate { SetAllAccounts(false); };
             list.Children.Add(monitorAllBox);
 
+            // NinjaTrader hands back every Sim, Playback and Backtest account it
+            // has ever made - twenty-five rows to find four in.
+            watchedOnlyBox = new CheckBox();
+            watchedOnlyBox.Content = "Only show accounts I am watching";
+            watchedOnlyBox.Foreground = ColMuted;
+            watchedOnlyBox.FontSize = 12;
+            watchedOnlyBox.Margin = new Thickness(0, 0, 0, 8);
+            watchedOnlyBox.Checked += delegate { RefreshAccountList(true); };
+            watchedOnlyBox.Unchecked += delegate { RefreshAccountList(true); };
+            list.Children.Add(watchedOnlyBox);
+
             Border accBorder = new Border();
             accBorder.CornerRadius = new CornerRadius(8);
             accBorder.Background = ColPanel;
             accBorder.Padding = new Thickness(12, 8, 12, 8);
             accBorder.Margin = new Thickness(0, 0, 0, 20);
 
-            // No inner scroller any more. A 260px scrolling box inside a
-            // scrolling page is how you end up scrolling the wrong thing - and
-            // the list is now a view of its own with the whole window to use.
+            // The cap is back, and taller.
+            //
+            // Taking it away was a mistake: with twenty-five accounts each
+            // printing two wrapped lines, the list ran to thousands of pixels and
+            // buried everything under it. The original complaint was never the
+            // cap - it was that "set its rules" jumped to a form at the BOTTOM of
+            // the page, and the two views fixed that.
+            ScrollViewer accScroll = new ScrollViewer();
+            accScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            accScroll.MaxHeight = 380;
+
             accountListPanel = new StackPanel();
-            accBorder.Child = accountListPanel;
+            accScroll.Content = accountListPanel;
+            accBorder.Child = accScroll;
             list.Children.Add(accBorder);
 
             // 2. What kind of account
@@ -1867,26 +1897,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             list.Children.Add(Spacer(22));
             list.Children.Add(SectionHeader("EVERYTHING ELSE"));
-            list.Children.Add(Note("These apply to every account, not to one. The per-account rules live behind \"set its rules\" above."));
-            list.Children.Add(Label("Which generation of accounts do you hold?"));
-            generationBox = new ComboBox();
-            generationBox.Margin = new Thickness(0, 0, 0, 10);
-            generationBox.Items.Add("Work it out from the balance (cautious)");
-            generationBox.Items.Add("Legacy accounts");
-            generationBox.Items.Add("Current accounts (Apex 4.0)");
-            generationBox.SelectedIndex = 0;
-            generationBox.SelectionChanged += delegate { OnGenerationChanged(); };
-            list.Children.Add(generationBox);
-
-            list.Children.Add(Why("Why does this matter?",
-                "The same account size can carry different drawdowns depending on when you bought "
-              + "it. A legacy Apex 50K trails $2,500; a 4.0 50K trails $2,000. A 150K is $5,000 "
-              + "legacy against $4,000 on 4.0. Your balance is identical either way, so nothing in "
-              + "the account itself can tell Ballast which you hold.\n\n"
-              + "Left on cautious, it picks the TIGHTER drawdown - reporting less room than you may "
-              + "really have, which is the safe way to be wrong. Say Legacy once here and every "
-              + "account gets the right figure instead. Sizes that only exist in one generation "
-              + "(75K, 250K, 300K are legacy-only) are never ambiguous."));
+            list.Children.Add(Note("Ballast\u2019s own behaviour, your setups, and the rule book every account is checked against. Nothing here describes an account - an account\u2019s size, drawdown, firm, generation and limits all live behind \"set its rules\" above, because those differ from one account to the next and several of yours do."));
 
             // Picking a type IS the instruction. There is nothing a trader could
             // mean by choosing "Evaluation (intraday) - 250K" other than "this
@@ -1912,10 +1923,38 @@ namespace NinjaTrader.NinjaScript.AddOns
             typeNote.Margin = new Thickness(0, 0, 0, 8);
             acct.Children.Add(typeNote);
 
+            list.Children.Add(SectionHeader("MY SETUPS"));
+
+            list.Children.Add(Note("One per line. These appear on every trade in the journal so you can "
+                + "say which plan you were running - and then find out which of them is actually "
+                + "making money. Call them A, B and C, or name them; Ballast never invents one, "
+                + "because a list you do not recognise is a list you will not tag honestly."));
+
+            tbSetups = new TextBox();
+            tbSetups.AcceptsReturn = true;
+            tbSetups.TextWrapping = TextWrapping.NoWrap;
+            tbSetups.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            tbSetups.MinHeight = 76;
+            tbSetups.MaxHeight = 150;
+            tbSetups.FontSize = 13;
+            tbSetups.Background = ColPanel;
+            tbSetups.Foreground = ColInk;
+            tbSetups.BorderBrush = ColLine;
+            tbSetups.Padding = new Thickness(8, 6, 8, 6);
+            tbSetups.Margin = new Thickness(0, 0, 0, 6);
+            tbSetups.LostFocus += delegate { SaveSetups(); };
+            list.Children.Add(tbSetups);
+
+            setupsNote = new TextBlock();
+            setupsNote.Foreground = ColFaint;
+            setupsNote.FontSize = 11;
+            setupsNote.TextWrapping = TextWrapping.Wrap;
+            setupsNote.Margin = new Thickness(0, 0, 0, 18);
+            list.Children.Add(setupsNote);
+
             StackPanel firmBtns = new StackPanel();
             firmBtns.Orientation = Orientation.Horizontal;
             firmBtns.Margin = new Thickness(0, 0, 0, 8);
-            firmBtns.Children.Add(QuietButton("Match all my accounts by balance", delegate { AutoConfigure(); }));
             firmBtns.Children.Add(QuietButton("Check for updates", delegate { CheckForRuleUpdates(true); }));
             list.Children.Add(firmBtns);
 
@@ -2656,7 +2695,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             TrackerConfig kept = monitor.RememberedConfig(name);
             if (kept != null)
             {
-                sub.Text = "not watched - rules kept: " + ConfigSummary(name, kept);
+                // Just the fact, not the figures. Four lines about rules that are
+                // not running, twenty times over, is how the accounts you ARE
+                // watching disappear.
+                sub.Text = "not watched - its rules are kept";
                 sub.Foreground = ColFaint;
             }
             else
@@ -2724,9 +2766,21 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             accountListPanel.Children.Add(defRow);
 
+            // Default to watched-only once the list is long enough to be a
+            // problem, but decide it once - after that it is the trader's.
+            // Deliberately NOT ticked for you. Hiding two thirds of the list on
+            // a guess about what you wanted is how the list appears to break -
+            // you come back from an account's rules and half your accounts have
+            // gone. It is there when you want it and off until you say so.
+
+            bool watchedOnly = watchedOnlyBox != null && watchedOnlyBox.IsChecked == true;
+            int hidden = 0;
+
             for (int i = 0; i < names.Count; i++)
             {
                 string name = names[i];
+
+                if (watchedOnly && !monitor.IsMonitored(name)) { hidden++; continue; }
 
                 StackPanel rowSp = new StackPanel();
                 rowSp.Margin = new Thickness(0, 3, 0, 7);
@@ -2777,6 +2831,20 @@ namespace NinjaTrader.NinjaScript.AddOns
                 accountBoxes[name] = cb;
                 accountSubs[name] = sub;
                 DescribeAccount(name);
+            }
+
+            if (hidden > 0)
+            {
+                TextBlock more = new TextBlock();
+                more.Text = hidden + (hidden == 1 ? " account is" : " accounts are")
+                          + " hidden because you are not watching "
+                          + (hidden == 1 ? "it" : "them")
+                          + ". Untick the box above to see everything.";
+                more.Foreground = ColFaint;
+                more.FontSize = 11;
+                more.TextWrapping = TextWrapping.Wrap;
+                more.Margin = new Thickness(0, 8, 0, 2);
+                accountListPanel.Children.Add(more);
             }
 
             RefreshEditTargets();
@@ -3050,8 +3118,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (ruleBook == null || ruleBook.Count == 0) return;
 
                 bool preferIntraday = monitor.DefaultConfig.DrawdownType == DrawdownType.Intraday;
-                AccountGeneration g = t.Config.Generation != AccountGeneration.Auto
-                    ? t.Config.Generation : generation;
+                AccountGeneration g = t.Config.Generation;
                 string platform = PlatformOf(FindAccount(name));
                 FirmAccountSpec s = ruleBook.AutoDetect(name, balance, preferIntraday, g, platform);
                 if (s == null) return;
@@ -3636,29 +3703,6 @@ namespace NinjaTrader.NinjaScript.AddOns
             });
         }
 
-        /// <summary>
-        /// Hide the generation the trader has said they do not hold. Offering a
-        /// legacy-only trader ten current-generation drawdowns is ten chances to
-        /// pick a wrong one.
-        /// </summary>
-        private List<FirmAccountSpec> FilterByGeneration(List<FirmAccountSpec> all)
-        {
-            if (generation == AccountGeneration.Auto || all == null) return all;
-
-            List<FirmAccountSpec> keep = new List<FirmAccountSpec>();
-            for (int i = 0; i < all.Count; i++)
-            {
-                bool legacy = RuleBook.IsLegacyPlanName(all[i].Plan);
-                if (generation == AccountGeneration.Legacy && !legacy) continue;
-                if (generation == AccountGeneration.Current && legacy) continue;
-                keep.Add(all[i]);
-            }
-
-            // A firm with no rows in that generation keeps all of them, rather
-            // than presenting an empty dropdown.
-            return keep.Count > 0 ? keep : all;
-        }
-
         private void PopulateAccountTypes()
         {
             // Rebuilding the list fires SelectionChanged, and the type dropdown
@@ -3672,7 +3716,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 string firm = firmBox.SelectedItem as string;
                 if (string.IsNullOrEmpty(firm)) return;
 
-                List<FirmAccountSpec> list = FilterByGeneration(ruleBook.ForFirm(firm));
+                // Every type this firm has, unfiltered.
+                //
+                // This list used to be cut down by a global "which generation do
+                // you hold" setting, which meant a trader who had said "current"
+                // could not SEE the legacy 250K row they actually held. Hiding
+                // the right answer to shorten a dropdown is the worst trade this
+                // page could make, and the generation is stated in each label
+                // anyway - "Legacy evaluation - 250K" says which it is.
+                List<FirmAccountSpec> list = ruleBook.ForFirm(firm);
                 for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
                 if (accountTypeBox.Items.Count > 0) accountTypeBox.SelectedIndex = 0;
             }
@@ -3726,74 +3778,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             detectionNote.Foreground = ColMuted;
             SaveSettings();
-        }
-
-        /// <summary>
-        /// Match every monitored account to an account type of the selected firm by
-        /// its balance. Anything uncertain is reported rather than guessed — a
-        /// silently wrong drawdown is worse than none.
-        /// </summary>
-        private void AutoConfigure()
-        {
-            string firm = firmBox.SelectedItem as string;
-            if (string.IsNullOrEmpty(firm))
-            {
-                detectionNote.Text = "Pick a firm first.";
-                detectionNote.Foreground = ColAmber;
-                return;
-            }
-
-            // If an account type is selected, prefer that plan when matching.
-            FirmAccountSpec chosen = SelectedSpec();
-            string preferredPlan = chosen != null ? chosen.Plan : null;
-
-            List<string> configured = new List<string>();
-            List<string> skipped = new List<string>();
-
-            foreach (string name in new List<string>(monitor.MonitoredNames))
-            {
-                Account a = FindAccount(name);
-                BallastTracker t = monitor.Get(name);
-                if (a == null || t == null) { skipped.Add(name + " (not connected)"); continue; }
-
-                double balance = SafeGet(a, AccountItem.CashValue);
-
-                // Through AutoDetect so the stated generation and the
-                // evaluation/funded distinction apply here too - matching by
-                // balance alone is what put 4.0 figures on legacy accounts.
-                bool preferIntraday = t.Config.DrawdownType == DrawdownType.Intraday;
-                AccountGeneration g = t.Config.Generation != AccountGeneration.Auto
-                    ? t.Config.Generation : generation;
-                FirmAccountSpec s = ruleBook.AutoDetect(name, balance, preferIntraday, g);
-                if (s == null) s = ruleBook.MatchByBalance(firm, balance, preferredPlan);
-
-                if (s == null)
-                {
-                    skipped.Add(name + " (balance " + Money(balance) + " matches no " + firm + " size)");
-                    continue;
-                }
-
-                t.Config = RuleBook.ToConfig(s, t.Config);   // keeps personal guardrails
-                accountLabels[name] = s.Firm + " " + s.Label;
-                configured.Add(name + " = " + s.Label);
-            }
-
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            if (configured.Count > 0)
-                sb.Append("Matched " + configured.Count + ": " + string.Join(", ", configured.ToArray())
-                        + ". Verify against your firm before trusting the cushion. ");
-            if (skipped.Count > 0)
-                sb.Append("Not set: " + string.Join("; ", skipped.ToArray()) + ".");
-            if (sb.Length == 0)
-                sb.Append("Nothing to match - tick some accounts first.");
-
-            detectionNote.Text = sb.ToString();
-            detectionNote.Foreground = skipped.Count > 0 ? ColAmber : ColMuted;
-
-            RefreshEditTargets();
-            OnEditTargetChanged();
-            SaveSettings();
-            RefreshAccountList(true);
         }
 
         /// <summary>
@@ -5411,6 +5395,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbSessionPlan.Text = monitor.Journal.SessionPlan;
             SeedTodaysCounts(today);
             LoadStandingPlan();
+            LoadSetups();
             LoadEvents();
             RenderJournal();
         }
@@ -5534,6 +5519,86 @@ namespace NinjaTrader.NinjaScript.AddOns
                 t.SeedToday(t.TradingDay(now), tr, ls, haveLoss ? (DateTime?)ll : null,
                             wasLoss, dayPnl, dayWorst);
             }
+        }
+
+        private string SetupsPath()
+        {
+            try { return Path.Combine(Core.Globals.UserDataDir, "ballast-setups.txt"); }
+            catch { return "ballast-setups.txt"; }
+        }
+
+        /// <summary>
+        /// Take what is in the box and make it the book.
+        ///
+        /// The rules - trim, drop blanks, refuse duplicates, stop at six - all live
+        /// in <see cref="SetupBook"/> where they are unit tested, rather than being
+        /// written a second time here. It hands back how many lines it refused so
+        /// the note underneath can say so; a list that silently loses its last two
+        /// entries is how a trader ends up tagging trades with a setup that is not
+        /// there any more.
+        /// </summary>
+        private void SaveSetups()
+        {
+            try
+            {
+                setupsDropped = setupBook.SetFromText(tbSetups == null ? "" : tbSetups.Text);
+                BallastJournal.Setups = setupBook.Names;
+                setupBook.Save(SetupsPath());
+                RefreshSetupsNote();
+                RenderJournal();
+            }
+            catch { }
+        }
+
+        private void LoadSetups()
+        {
+            try
+            {
+                setupBook.Load(SetupsPath());
+                setupsDropped = 0;
+                BallastJournal.Setups = setupBook.Names;
+                if (tbSetups != null)
+                    tbSetups.Text = string.Join("\r\n", setupBook.Names.ToArray());
+                RefreshSetupsNote();
+            }
+            catch { }
+        }
+
+        /// <summary>What each setup has actually done. The reason for asking.</summary>
+        private void RefreshSetupsNote()
+        {
+            if (setupsNote == null) return;
+
+            try
+            {
+                string refused = "";
+                if (setupsDropped > 0)
+                    refused = setupsDropped == 1
+                        ? "One line was not kept - either a duplicate or past the limit of "
+                          + SetupBook.MaxSetups + ". "
+                        : setupsDropped + " lines were not kept - duplicates, or past the limit of "
+                          + SetupBook.MaxSetups + ". ";
+
+                List<JournalBucket> split = monitor.Journal.SetupSplit(monitor.Journal.All);
+                if (split.Count == 0)
+                {
+                    setupsNote.Text = refused + (BallastJournal.Setups.Count == 0
+                        ? "None set. Until there are, the journal will not ask which one you used."
+                        : "No trades tagged with a setup yet. The picker is on every journal row.");
+                    return;
+                }
+
+                StringBuilder sb = new StringBuilder(refused + "So far: ");
+                for (int i = 0; i < split.Count; i++)
+                {
+                    if (i > 0) sb.Append("   ");
+                    sb.Append(split[i].Label).Append(" ").Append(split[i].Count)
+                      .Append(split[i].Count == 1 ? " trade " : " trades ")
+                      .Append(BallastTrade.Money(split[i].Net));
+                }
+                setupsNote.Text = sb.ToString();
+            }
+            catch { setupsNote.Text = ""; }
         }
 
         private string StandingPlanPath()
@@ -5827,25 +5892,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 instrumentPanel.Children.Add(g);
             }
-        }
-
-        private void OnGenerationChanged()
-        {
-            if (generationBox == null) return;
-
-            int i = generationBox.SelectedIndex;
-            generation = i == 1 ? AccountGeneration.Legacy
-                       : i == 2 ? AccountGeneration.Current
-                       : AccountGeneration.Auto;
-
-            PopulateAccountTypes();
-            SaveSettings();
-
-            detectionNote.Text = generation == AccountGeneration.Auto
-                ? "Auto-matching will pick the tighter drawdown when a size exists in both generations."
-                : "Auto-matching will use " + (generation == AccountGeneration.Legacy ? "legacy" : "current")
-                  + " figures. Existing accounts keep their saved settings - use \"Match all by balance\" to redo them.";
-            detectionNote.Foreground = ColMuted;
         }
 
         private void SetTradeRange(bool todayOnly)
@@ -6312,6 +6358,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             detailRow.Orientation = Orientation.Horizontal;
             detailRow.Margin = new Thickness(0, 0, 0, 8);
 
+            // Which plan this trade was. Only offered once the trader has named
+            // some - an empty picker is a question with no answers.
+            if (BallastJournal.Setups.Count > 0)
+            {
+                ComboBox setupPick = new ComboBox();
+                setupPick.Width = 130;
+                setupPick.FontSize = 12;
+                setupPick.Margin = new Thickness(0, 0, 6, 0);
+                setupPick.Items.Add("Setup?");
+                for (int i = 0; i < BallastJournal.Setups.Count; i++)
+                    setupPick.Items.Add(BallastJournal.Setups[i]);
+
+                setupPick.SelectedIndex = 0;
+                for (int i = 0; i < BallastJournal.Setups.Count; i++)
+                    if (BallastJournal.Setups[i] == e.Setup) setupPick.SelectedIndex = i + 1;
+
+                setupPick.SelectionChanged += delegate
+                {
+                    e.Setup = setupPick.SelectedIndex > 0 ? (setupPick.SelectedItem as string) : "";
+                    journalDirty = true;
+                    RefreshSetupsNote();
+                };
+                detailRow.Children.Add(setupPick);
+            }
+
             ComboBox feel = new ComboBox();
             feel.Width = 150;
             feel.FontSize = 12;
@@ -6623,8 +6694,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 List<string> lines = new List<string>();
-                lines.Add("*UI*|" + zoomIndex.ToString(CultureInfo.InvariantCulture)
-                          + "|" + ((int)generation).ToString(CultureInfo.InvariantCulture));
+                lines.Add("*UI*|" + zoomIndex.ToString(CultureInfo.InvariantCulture));
                 lines.Add("*TILT*|" + (tiltEnabled ? "1" : "0") + "|" + (tiltOnGiveBack ? "1" : "0"));
                 lines.Add(SettingsCodec.Serialise("*DEFAULT*", monitor.DefaultConfig));
 
@@ -6690,10 +6760,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                         int z;
                         if (ui.Length > 1 && int.TryParse(ui[1], out z)
                             && z >= 0 && z < ZoomSteps.Length) zoomIndex = z;
-
-                        int gi;
-                        if (ui.Length > 2 && int.TryParse(ui[2], out gi) && gi >= 0 && gi <= 2)
-                            generation = (AccountGeneration)gi;
                         continue;
                     }
 
