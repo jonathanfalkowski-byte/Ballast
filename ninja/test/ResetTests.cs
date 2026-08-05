@@ -29,6 +29,7 @@ public static class ResetTests
         CommissionPostingIsNotAReset();
         NothingIsClearedUntilTheTraderSaysSo();
         StartingOverReAnchorsTheFloor();
+        AResizedAccountIsCaughtAfterARestart();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -69,7 +70,10 @@ public static class ResetTests
 
         // The reset: balance back to 100,000, platform P&L zeroed, no fill.
         t.OnEquity(100000, 0);
+        T.Ok(!t.ResetSuspected, "one reading is not enough - a fill's position update may "
+                              + "simply not have landed yet");
 
+        t.OnEquity(100000, 0);
         T.Ok(t.ResetSuspected, "the balance moved with no trade behind it");
         T.Near(t.PeakDailyPnl, 2726, 0.01, "but the peak is still there - nothing was cleared");
         T.Eq(t.TradesToday, 1, "and neither were the counts");
@@ -113,7 +117,8 @@ public static class ResetTests
 
         // Something adjusts the balance by a few dollars with no fill. Real, and
         // not a reset - the threshold is there so this cannot masquerade as one.
-        t.OnEquity(100460, 0);
+        t.OnEquity(100460, 460);
+        t.OnEquity(100460, 460);
         T.Ok(!t.ResetSuspected, "40 dollars is a fee, not a fresh account");
     }
 
@@ -125,6 +130,7 @@ public static class ResetTests
         Trade(t, T0, 0, -1500);
         T.Ok(t.DailyLossLimitHit, "the day is spent");
 
+        t.OnEquity(100000, 0);
         t.OnEquity(100000, 0);
         T.Ok(t.ResetSuspected, "a reset is suspected");
         T.Ok(t.DailyLossLimitHit, "and the limit is STILL latched while it is only suspected");
@@ -143,6 +149,50 @@ public static class ResetTests
         T.Eq(t.RestartedAt, T0.AddMinutes(31), "the restart is timestamped so a reload agrees");
     }
 
+    /// <summary>
+    /// His actual case, and the one the first version missed.
+    ///
+    /// He did not wipe the day's P&L - he changed what the simulation account
+    /// HOLDS, from 100,000 to 150,000, and he did it between 11:36 and 12:18
+    /// while Ballast was shut. So there was no jump for anything watching live to
+    /// see, and the stale "was up 2,726" survived into the afternoon.
+    ///
+    /// Cash minus realised is what catches it. Trading moves both together, so
+    /// that figure should not shift once all day - and unlike a jump, it can be
+    /// written into the session file and compared against on the way back up.
+    /// </summary>
+    static void AResizedAccountIsCaughtAfterARestart()
+    {
+        T.S("an account re-sized while Ballast was closed is caught on reopening");
+
+        BallastTracker before = Fresh();
+        Trade(before, T0, 0, 2726);
+        T.Near(before.DayOpenBalance, 100000, 0.01,
+               "the day opened on 100,000 and trading did not move that");
+
+        // Ballast closes. The account is re-sized to 150,000. Ballast reopens and
+        // reads the saved figure back out of the session file.
+        // The config is set to match the account's new size, as he did - so the
+        // 152,726 reading is believable and it is only the BASE that disagrees.
+        TrackerConfig bigger = new TrackerConfig();
+        bigger.StartingBalance = 150000;
+        bigger.TrailingDrawdown = 5000;
+        bigger.TrustAccountRealised = false;
+
+        BallastTracker after = new BallastTracker();
+        after.Config = bigger;
+        after.EnsureSession(T0.AddHours(1), 2726, 152726);
+        after.SeedDayOpen(100000);
+        after.SeedSession(T0.Date, 0, 152726, 2726, 0, false, 152726, 152726, 0, false);
+
+        after.OnEquity(152726, 2726, 152726);
+        after.OnEquity(152726, 2726, 152726);
+
+        T.Ok(after.ResetSuspected,
+             "cash minus realised is 150,000 where it was 100,000 - the account is not "
+           + "the one those figures were about");
+    }
+
     static void StartingOverReAnchorsTheFloor()
     {
         T.S("starting over moves the floor back with the balance");
@@ -154,6 +204,7 @@ public static class ResetTests
         DisciplineInput before = t.BuildInput(T0.AddMinutes(10));
         T.Near(before.FloorLevel, 99000, 0.01, "so the trailing floor sits at 99,000");
 
+        t.OnEquity(100000, 0);
         t.OnEquity(100000, 0);
         t.StartOver(T0.AddMinutes(11), 0, 100000);
 

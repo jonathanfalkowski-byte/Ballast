@@ -2410,6 +2410,24 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "a hard line, and typing past the wall does not clear that either. Quiet in here is "
               + "not the same as a clean chart."));
 
+            // The always-available version of the reset offer.
+            //
+            // Detection catches a reset it can see happen, and a re-sized account
+            // it can compare against a figure it wrote down. It cannot catch
+            // everything - the first reset of all, before there was anything to
+            // compare against, or one done in a way that leaves no trace. So the
+            // trader can always say so directly rather than being told that
+            // Ballast disagrees with his own account and there is nothing to be
+            // done about it.
+            acct.Children.Add(Note("Reset this account at your broker, or changed what it "
+                + "holds, and Ballast is still reporting the day it had before? Start it over. "
+                + "That clears this account's trades, losses, peak and any daily limit it has "
+                + "already hit, and re-anchors its floor to what the account holds now. No "
+                + "other account is touched."));
+
+            acct.Children.Add(QuietButton("Start this account's day over",
+                delegate { OnStartOverCurrent(); }));
+
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
             btns.Margin = new Thickness(0, 8, 0, 6);
@@ -4735,6 +4753,32 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// limit, and it exists because the account itself no longer holds the
         /// money those numbers were about.
         /// </summary>
+        /// <summary>Start over whichever account's rules are on screen.</summary>
+        private void OnStartOverCurrent()
+        {
+            string name = CurrentEditKey();
+            if (name.Length == 0)
+            {
+                if (applyNote != null)
+                {
+                    applyNote.Text = "Pick an account first - the defaults are not an account, "
+                                   + "so there is no day to start over.";
+                    applyNote.Foreground = ColAmber;
+                }
+                return;
+            }
+
+            OnStartAccountOver(name);
+
+            if (applyNote != null)
+            {
+                applyNote.Text = name + " has been started over. Its trades, losses, peak and "
+                               + "daily limit are cleared, and its floor is measured from what "
+                               + "the account holds now.";
+                applyNote.Foreground = ColMuted;
+            }
+        }
+
         private void OnStartAccountOver(string name)
         {
             try
@@ -4770,7 +4814,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 BallastTracker t = monitor.Get(name);
-                if (t != null) t.ResetSuspected = false;
+                if (t == null) return;
+
+                // Take the account as it stands, so the same question is not
+                // asked again on the next tick.
+                Account a = FindAccount(name);
+                if (a != null)
+                    t.AnchorDayOpen(SafeGet(a, AccountItem.RealizedProfitLoss),
+                                    SafeGet(a, AccountItem.CashValue));
+
+                t.ResetSuspected = false;
+                SaveSessionState();
                 OnTick(null, null);
             }
             catch { }
@@ -5383,7 +5437,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                         // erased day's trades straight back on the row.
                         t.RestartedAt == DateTime.MinValue
                             ? ""
-                            : t.RestartedAt.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)
+                            : t.RestartedAt.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture),
+                        // Cash minus realised. Written down so an account re-sized
+                        // while Ballast was closed is caught when it reopens.
+                        t.DayOpenBalance.ToString(CultureInfo.InvariantCulture)
                     }));
                 }
 
@@ -5450,6 +5507,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     else
                         t.SeedRiskState(savedDay, peakEq, eodHigh, lastBalance,
                                         authoritativeFloor, providerConfirmed);
+
+                    // The base the day was measured from, so an account re-sized
+                    // while Ballast was closed is caught the moment it reopens.
+                    if (current && f.Length > 13)
+                    {
+                        double dayOpen;
+                        if (double.TryParse(f[13], NumberStyles.Any, CultureInfo.InvariantCulture,
+                                            out dayOpen))
+                            t.SeedDayOpen(dayOpen);
+                    }
 
                     int hhmm;
                     if (current && f.Length > 7 && int.TryParse(f[7], NumberStyles.Integer,

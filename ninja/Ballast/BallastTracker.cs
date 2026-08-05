@@ -229,11 +229,32 @@ namespace Ballast
         public DateTime RestartedAt = DateTime.MinValue;
 
         /// <summary>
-        /// Whether a fill arrived since the last equity update. This is the whole
-        /// discriminator: trading cannot move the balance of a flat account, so
-        /// money that moves with no fill behind it did not come from the market.
+        /// What the account opened the day with: cash MINUS the day's realised
+        /// P&L. Trading moves both together, so this figure should not move at
+        /// all between the first tick of the session and the last.
+        ///
+        /// When it does move, the account's base has been changed underneath
+        /// Ballast - a simulation account re-sized, a firm re-issuing an
+        /// evaluation. Unlike a balance jump, this survives being written down,
+        /// so it catches a reset done while Ballast was CLOSED, which is when
+        /// most of them happen.
+        /// </summary>
+        public double DayOpenBalance;
+
+        /// <summary>
+        /// Whether a fill arrived since the last equity update. Trading cannot
+        /// move the balance of a flat account, so money that moves with no fill
+        /// behind it did not come from the market.
         /// </summary>
         private bool fillSinceEquity;
+
+        /// <summary>
+        /// A jump seen once and not yet believed. A fill's cash update and its
+        /// position update do not always arrive in that order, so a reading taken
+        /// between the two looks exactly like money appearing from nowhere.
+        /// Waiting one more reading lets the position update land.
+        /// </summary>
+        private bool resetPending;
 
         public bool ExecutionTelemetryHealthy = true;
         public string ExecutionTelemetryWarning = "";
@@ -850,6 +871,9 @@ namespace Ballast
                     EndOfDayHighWater = LastKnownBalance;
 
                 sessionDate = tradingDay;
+                DayOpenBalance = 0;          // relearned from the new day's first reading
+                resetPending = false;
+                ResetSuspected = false;
                 TradesToday = 0;
                 LossesToday = 0;
                 DailyPnl = 0;
@@ -937,7 +961,19 @@ namespace Ballast
                 return;
             }
 
-            if (!ResetSuspected && LooksReset(equityNow, realisedNow)) ResetSuspected = true;
+            if (!ResetSuspected)
+            {
+                if (resetPending)
+                {
+                    // A fill turned up in the meantime, so the market explains it.
+                    if (!fillSinceEquity && OpenContracts == 0) ResetSuspected = true;
+                    resetPending = false;
+                }
+                else if (LooksReset(equityNow, realisedNow, balanceNow))
+                {
+                    resetPending = true;
+                }
+            }
             fillSinceEquity = false;
 
             HasValidEquity = true;
@@ -955,6 +991,10 @@ namespace Ballast
                 if (DailyPnl > PeakDailyPnl) PeakDailyPnl = DailyPnl;
                 NoteTrough(DateTime.MinValue);
             }
+
+            // Learn the day's base from the first believable reading of it.
+            if (DayOpenBalance <= 0 && IsPlausibleEquity(balanceNow))
+                DayOpenBalance = balanceNow - realisedNow;
         }
 
         /// <summary>
@@ -978,17 +1018,54 @@ namespace Ballast
         /// And there has to be something to erase. An account that has done
         /// nothing today is not "reset", it is just quiet.
         /// </summary>
-        private bool LooksReset(double equityNow, double realisedNow)
+        private bool LooksReset(double equityNow, double realisedNow, double balanceNow)
         {
             if (!haveBaseline) return false;
-            if (realisedNow != 0) return false;
             if (OpenContracts != 0) return false;
             if (fillSinceEquity) return false;
-            if (!HasValidEquity || CurrentEquity <= 0) return false;
-            if (Math.Abs(equityNow - CurrentEquity) <= 50) return false;
 
-            return TradesToday > 0 || DailyLossLimitHit
-                || PeakDailyPnl != 0 || WorstDailyPnl != 0 || DailyPnl != 0;
+            // Commission does not always land in the same instant as the fill it
+            // belongs to, so a few dollars of drift between cash and realised is
+            // ordinary. A reset moves thousands.
+            double noise = Math.Max(500.0, CurrentCommission * 3.0);
+
+            // The base moved. This is the one that survives a restart: the figure
+            // is written into the session file, so an account re-sized while
+            // Ballast was closed is caught the moment it reopens.
+            if (DayOpenBalance > 0 && IsPlausibleEquity(balanceNow)
+                && Math.Abs((balanceNow - realisedNow) - DayOpenBalance) > noise)
+                return true;
+
+            // The balance moved and no fill did it. This is what catches a plain
+            // reset back to the same starting figure, where the base never
+            // changes and only the day's P&L is wiped.
+            //
+            // And there has to be something to erase: an account that has done
+            // nothing today is not "reset", it is just quiet.
+            if (HasValidEquity && CurrentEquity > 0
+                && Math.Abs(equityNow - CurrentEquity) > noise
+                && (TradesToday > 0 || DailyLossLimitHit
+                    || PeakDailyPnl != 0 || WorstDailyPnl != 0 || DailyPnl != 0))
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Take the account's current base as correct from here on. Used when the
+        /// trader says a suspected reset was nothing, so the same question is not
+        /// asked again every second.
+        /// </summary>
+        public void AnchorDayOpen(double realisedNow, double balanceNow)
+        {
+            if (IsPlausibleEquity(balanceNow)) DayOpenBalance = balanceNow - realisedNow;
+            resetPending = false;
+        }
+
+        /// <summary>Restore the day's opening base read back from the session file.</summary>
+        public void SeedDayOpen(double dayOpen)
+        {
+            if (dayOpen > 0) DayOpenBalance = dayOpen;
         }
 
         /// <summary>
@@ -1030,6 +1107,8 @@ namespace Ballast
                 LastKnownBalance = equityNow;
             }
 
+            if (IsPlausibleEquity(equityNow)) DayOpenBalance = equityNow - realisedNow;
+            resetPending = false;
             RestartedAt = now;
             ResetSuspected = false;
         }
