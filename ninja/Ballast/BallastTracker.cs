@@ -205,6 +205,36 @@ namespace Ballast
         /// False after the account's actual positions disagree with the execution
         /// ledger. Ballast then blocks advice instead of inventing a trade.
         /// </summary>
+        /// <summary>
+        /// True when this account looks like it was reset out from under Ballast.
+        ///
+        /// Resetting a simulation account - or a firm resetting a failed
+        /// evaluation - puts the balance back and zeroes the platform's own P&L,
+        /// but tells Ballast nothing. So the window carries on reporting a day
+        /// that no longer exists: "was up 2,726, handed back 2,726" against an
+        /// account whose own records show neither number.
+        ///
+        /// Nothing is cleared on the strength of this. It raises an offer on the
+        /// row and waits to be told, because the same accumulators hold the
+        /// latched daily loss limit on live accounts, and a bad feed reading must
+        /// never be able to un-spend a day.
+        /// </summary>
+        public bool ResetSuspected;
+
+        /// <summary>
+        /// When the trader last said "this account was reset, start it over".
+        /// Journal rows that closed before this belong to the erased day and are
+        /// not counted back in on restart.
+        /// </summary>
+        public DateTime RestartedAt = DateTime.MinValue;
+
+        /// <summary>
+        /// Whether a fill arrived since the last equity update. This is the whole
+        /// discriminator: trading cannot move the balance of a flat account, so
+        /// money that moves with no fill behind it did not come from the market.
+        /// </summary>
+        private bool fillSinceEquity;
+
         public bool ExecutionTelemetryHealthy = true;
         public string ExecutionTelemetryWarning = "";
 
@@ -903,8 +933,12 @@ namespace Ballast
             if (!IsPlausibleEquity(equityNow))
             {
                 HasValidEquity = false;
+                fillSinceEquity = false;
                 return;
             }
+
+            if (!ResetSuspected && LooksReset(equityNow, realisedNow)) ResetSuspected = true;
+            fillSinceEquity = false;
 
             HasValidEquity = true;
             CurrentEquity = equityNow;
@@ -921,6 +955,89 @@ namespace Ballast
                 if (DailyPnl > PeakDailyPnl) PeakDailyPnl = DailyPnl;
                 NoteTrough(DateTime.MinValue);
             }
+        }
+
+        /// <summary>
+        /// Did this account just get put back to the start?
+        ///
+        /// Four things have to be true together, and each one rules out a way of
+        /// being wrong:
+        ///
+        ///   - the platform's own realised figure is exactly zero. A reset zeroes
+        ///     it. Ordinary trading lands on exactly 0.00 only by coincidence.
+        ///   - the account is flat, so there is no open trade whose settlement
+        ///     could explain the move.
+        ///   - no fill has arrived since the last reading. This is the one that
+        ///     matters: a trader who was down 2,000 and won it back to exactly
+        ///     zero got there THROUGH a closing fill, and must not have his day
+        ///     un-spent by this. Money that moves with no fill behind it did not
+        ///     come from the market.
+        ///   - the balance actually jumped, by more than commission or a
+        ///     settlement adjustment could account for.
+        ///
+        /// And there has to be something to erase. An account that has done
+        /// nothing today is not "reset", it is just quiet.
+        /// </summary>
+        private bool LooksReset(double equityNow, double realisedNow)
+        {
+            if (!haveBaseline) return false;
+            if (realisedNow != 0) return false;
+            if (OpenContracts != 0) return false;
+            if (fillSinceEquity) return false;
+            if (!HasValidEquity || CurrentEquity <= 0) return false;
+            if (Math.Abs(equityNow - CurrentEquity) <= 50) return false;
+
+            return TradesToday > 0 || DailyLossLimitHit
+                || PeakDailyPnl != 0 || WorstDailyPnl != 0 || DailyPnl != 0;
+        }
+
+        /// <summary>
+        /// Start this account's day over, because the account itself was.
+        ///
+        /// Everything the day was measured from is gone: the peak equity that the
+        /// trailing floor hangs off, the trade and loss counts, the latched daily
+        /// limit. Leaving the peak behind would be the expensive one - the floor
+        /// would stay anchored to a balance the account no longer has and report a
+        /// cushion that does not exist.
+        ///
+        /// This is the one thing in Ballast that un-spends a day, which is why it
+        /// only ever happens when the trader says so.
+        /// </summary>
+        public void StartOver(DateTime now, double realisedNow, double equityNow)
+        {
+            TradesToday = 0;
+            LossesToday = 0;
+            DailyPnl = 0;
+            PeakDailyPnl = 0;
+            WorstDailyPnl = 0;
+            DailyLossLimitHit = false;
+            DailyLossLimitHitAt = null;
+            LastLossAt = null;
+            LastTradeWasLoss = false;
+            inPosition = false;
+
+            sessionStartRealised = Config != null && Config.TrustAccountRealised ? 0 : realisedNow;
+            haveBaseline = true;
+            sessionRestored = false;
+            seedBaselineApplied = true;      // the seed describes the erased day
+
+            if (IsPlausibleEquity(equityNow))
+            {
+                CurrentEquity = equityNow;
+                HasValidEquity = true;
+                PeakEquity = equityNow;
+                EndOfDayHighWater = Math.Max(Config != null ? Config.StartingBalance : 0, equityNow);
+                LastKnownBalance = equityNow;
+            }
+
+            RestartedAt = now;
+            ResetSuspected = false;
+        }
+
+        /// <summary>Restore a restart time read back from the session file.</summary>
+        public void SeedRestart(DateTime restartedAt)
+        {
+            RestartedAt = restartedAt;
         }
 
         /// <summary>
@@ -944,6 +1061,7 @@ namespace Ballast
                                        string instrument, string accountName)
         {
             OpenContracts = Math.Abs(signedQuantity);
+            fillSinceEquity = true;
 
             bool flat = signedQuantity == 0;
 

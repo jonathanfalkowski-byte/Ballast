@@ -41,6 +41,7 @@ public static class Program
         RuleUpdateTests.Run();
         ProviderFloorTests.Run();
         MismatchTests.Run();
+        ResetTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

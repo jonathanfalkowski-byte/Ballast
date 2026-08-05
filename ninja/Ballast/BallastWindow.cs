@@ -4453,6 +4453,36 @@ namespace NinjaTrader.NinjaScript.AddOns
                     rowStack.Children.Add(wt);
                 }
 
+                // The account looks like it was put back to the start. Offered,
+                // never done - see BallastTracker.ResetSuspected for why nothing
+                // clears itself.
+                try
+                {
+                    BallastTracker rst = monitor.Get(s.AccountName);
+                    if (rst != null && rst.ResetSuspected)
+                    {
+                        TextBlock rq = new TextBlock();
+                        rq.Text = "this account's balance moved with no trade behind it, and its "
+                                + "P&L is back to zero - was it reset? Nothing has been cleared.";
+                        rq.Foreground = ColAmber;
+                        rq.FontSize = 11;
+                        rq.TextWrapping = TextWrapping.Wrap;
+                        rq.Margin = new Thickness(0, 4, 0, 0);
+                        rowStack.Children.Add(rq);
+
+                        string who = s.AccountName;
+                        StackPanel rbtns = new StackPanel();
+                        rbtns.Orientation = Orientation.Horizontal;
+                        rbtns.Margin = new Thickness(0, 2, 0, 0);
+                        rbtns.Children.Add(QuietButton("Yes - start it fresh",
+                            delegate { OnStartAccountOver(who); }));
+                        rbtns.Children.Add(QuietButton("No - it wasn't",
+                            delegate { OnDismissReset(who); }));
+                        rowStack.Children.Add(rbtns);
+                    }
+                }
+                catch { }
+
                 // A configuration that gives the account more room than the firm
                 // does. Shown here as well as in Setup, because Setup is a page
                 // nobody opens twice and this is the number being trusted.
@@ -4697,6 +4727,53 @@ namespace NinjaTrader.NinjaScript.AddOns
                 BallastTracker t = monitor.Get(editTargetBox.SelectedItem as string);
                 if (t != null) ReadFieldsInto(t.Config);
             }
+        }
+
+        /// <summary>
+        /// The trader has confirmed the account was reset. This is the only path
+        /// in Ballast that clears a day's counts and un-latches a daily loss
+        /// limit, and it exists because the account itself no longer holds the
+        /// money those numbers were about.
+        /// </summary>
+        private void OnStartAccountOver(string name)
+        {
+            try
+            {
+                BallastTracker t = monitor.Get(name);
+                if (t == null) return;
+
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+                double realised = 0, cash = 0;
+                Account a = FindAccount(name);
+                if (a != null)
+                {
+                    realised = SafeGet(a, AccountItem.RealizedProfitLoss);
+                    cash = SafeGet(a, AccountItem.CashValue);
+                }
+
+                t.StartOver(now, realised, cash);
+                SaveSessionState();
+                RefreshAccountList(true);
+                OnTick(null, null);      // redraw now rather than on the next second
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// It was not a reset. Leave every figure exactly as it was - that is the
+        /// whole point of asking rather than assuming.
+        /// </summary>
+        private void OnDismissReset(string name)
+        {
+            try
+            {
+                BallastTracker t = monitor.Get(name);
+                if (t != null) t.ResetSuspected = false;
+                OnTick(null, null);
+            }
+            catch { }
         }
 
         private void OnApplyAndSave()
@@ -5281,7 +5358,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
 
                 List<string> lines = new List<string>();
-                lines.Add("*SESSION*|3");
+                lines.Add("*SESSION*|4");
 
                 foreach (string name in monitor.MonitoredNames)
                 {
@@ -5300,7 +5377,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                         t.EndOfDayHighWater.ToString(CultureInfo.InvariantCulture),
                         t.LastKnownBalance.ToString(CultureInfo.InvariantCulture),
                         t.AuthoritativeFirmFloor.ToString(CultureInfo.InvariantCulture),
-                        t.FirmFloorProviderConfirmed ? "1" : "0"
+                        t.FirmFloorProviderConfirmed ? "1" : "0",
+                        // When the trader last said this account had been reset.
+                        // Without it, closing and reopening Ballast puts the
+                        // erased day's trades straight back on the row.
+                        t.RestartedAt == DateTime.MinValue
+                            ? ""
+                            : t.RestartedAt.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)
                     }));
                 }
 
@@ -5350,6 +5433,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                         double.TryParse(f[10], NumberStyles.Any, CultureInfo.InvariantCulture,
                                         out authoritativeFloor);
                     if (f.Length > 11) providerConfirmed = f[11] == "1";
+
+                    if (f.Length > 12 && f[12].Length == 14)
+                    {
+                        DateTime restarted;
+                        if (DateTime.TryParseExact(f[12], "yyyyMMddHHmmss",
+                                CultureInfo.InvariantCulture, DateTimeStyles.None, out restarted))
+                            t.SeedRestart(restarted);
+                    }
 
                     DateTime currentTradingDay = t.TradingDay(now);
                     bool current = savedDay == currentTradingDay;
@@ -5477,6 +5568,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (e == null || string.IsNullOrEmpty(e.AccountName)) continue;
 
                 string a = e.AccountName;
+
+                // Trades that closed before this account was restarted belong to
+                // a day the platform itself has erased. Counting them back in is
+                // how "was up 2,726" survives a reset and a restart.
+                BallastTracker rt = monitor.Get(a);
+                if (rt != null && rt.RestartedAt != DateTime.MinValue
+                    && e.ExitTime <= rt.RestartedAt) continue;
 
                 double p;
                 double running = pnl.TryGetValue(a, out p) ? p + e.Pnl : e.Pnl;

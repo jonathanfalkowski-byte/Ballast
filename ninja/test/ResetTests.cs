@@ -1,0 +1,169 @@
+using System;
+using System.Collections.Generic;
+using Ballast;
+
+/// <summary>
+/// "ok i reset sim103 but it doesnt recogonize i reset it.... how do we make it
+/// recogonize that"
+///
+/// He reset the simulation account. NinjaTrader put the balance back and zeroed
+/// its own P&L; Ballast was told nothing, so the row carried on reporting "was
+/// up $2,726, handed back $2,726" about money the account no longer has any
+/// record of.
+///
+/// The detection is the easy half. The hard half is that the accumulators being
+/// cleared are the same ones holding the latched daily loss limit, and un-
+/// spending a day on a live account would undo the most important thing Ballast
+/// does. So nothing clears itself: a reset raises an offer and waits.
+///
+/// The discriminator is that trading cannot move the balance of a flat account.
+/// Money that moves with no fill behind it did not come from the market.
+/// </summary>
+public static class ResetTests
+{
+    public static void Run()
+    {
+        ARealResetIsSpotted();
+        WinningBackToExactlyZeroIsNotAReset();
+        AQuietAccountIsNotAReset();
+        CommissionPostingIsNotAReset();
+        NothingIsClearedUntilTheTraderSaysSo();
+        StartingOverReAnchorsTheFloor();
+    }
+
+    static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
+
+    static BallastTracker Fresh()
+    {
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 100000;
+        t.Config.TrailingDrawdown = 5000;
+        t.Config.DailyLossLimit = 1200;
+        t.Config.DailyTarget = 1500;
+        t.Config.MaxTrades = 12;
+        t.Config.MaxLossesBeforeStop = 6;
+        t.Config.CooldownMinutes = 0;
+        t.Config.TrustAccountRealised = false;
+        t.EnsureSession(T0, 0, 100000);
+        t.OnEquity(100000, 0);
+        return t;
+    }
+
+    /// <summary>One round-trip: open, close, and the equity tick that follows.</summary>
+    static void Trade(BallastTracker t, DateTime at, double realisedBefore, double pnl)
+    {
+        t.OnPosition(1, realisedBefore, at, "NQ SEP26", "Sim103");
+        t.OnPosition(0, realisedBefore + pnl, at.AddMinutes(2), "NQ SEP26", "Sim103");
+        t.OnEquity(100000 + realisedBefore + pnl, realisedBefore + pnl);
+    }
+
+    static void ARealResetIsSpotted()
+    {
+        T.S("an account put back to the start is noticed");
+
+        BallastTracker t = Fresh();
+        Trade(t, T0, 0, 2726);                       // his figure exactly
+        T.Near(t.PeakDailyPnl, 2726, 0.01, "the day peaked at 2,726");
+        T.Ok(!t.ResetSuspected, "and nothing looks wrong yet");
+
+        // The reset: balance back to 100,000, platform P&L zeroed, no fill.
+        t.OnEquity(100000, 0);
+
+        T.Ok(t.ResetSuspected, "the balance moved with no trade behind it");
+        T.Near(t.PeakDailyPnl, 2726, 0.01, "but the peak is still there - nothing was cleared");
+        T.Eq(t.TradesToday, 1, "and neither were the counts");
+    }
+
+    static void WinningBackToExactlyZeroIsNotAReset()
+    {
+        T.S("winning back to exactly zero is not a reset");
+
+        // The case this whole design exists to protect. Down 2,000 past a 1,200
+        // limit, then a winner that lands the day on exactly 0.00. Realised is
+        // zero and the account is flat - every condition but the one that
+        // matters, which is that a fill got it there.
+        BallastTracker t = Fresh();
+        Trade(t, T0, 0, -2000);
+        T.Ok(t.DailyLossLimitHit, "the limit was hit");
+
+        Trade(t, T0.AddMinutes(20), -2000, 2000);
+        T.Near(t.DailyPnl, 0, 0.01, "the day is back to exactly zero");
+        T.Ok(!t.ResetSuspected, "and that is emphatically not a reset");
+        T.Ok(t.DailyLossLimitHit, "so the day stays spent");
+        T.Eq(t.TradesToday, 2, "and both trades still count");
+    }
+
+    static void AQuietAccountIsNotAReset()
+    {
+        T.S("an account that has done nothing is not reset, it is quiet");
+
+        BallastTracker t = Fresh();
+        t.OnEquity(100000, 0);
+        t.OnEquity(100000, 0);
+        T.Ok(!t.ResetSuspected, "no trades, no peak, nothing to erase");
+    }
+
+    static void CommissionPostingIsNotAReset()
+    {
+        T.S("a small unexplained adjustment is not a reset");
+
+        BallastTracker t = Fresh();
+        Trade(t, T0, 0, 500);
+
+        // Something adjusts the balance by a few dollars with no fill. Real, and
+        // not a reset - the threshold is there so this cannot masquerade as one.
+        t.OnEquity(100460, 0);
+        T.Ok(!t.ResetSuspected, "40 dollars is a fee, not a fresh account");
+    }
+
+    static void NothingIsClearedUntilTheTraderSaysSo()
+    {
+        T.S("nothing is cleared until the trader says so");
+
+        BallastTracker t = Fresh();
+        Trade(t, T0, 0, -1500);
+        T.Ok(t.DailyLossLimitHit, "the day is spent");
+
+        t.OnEquity(100000, 0);
+        T.Ok(t.ResetSuspected, "a reset is suspected");
+        T.Ok(t.DailyLossLimitHit, "and the limit is STILL latched while it is only suspected");
+
+        DisciplineInput held = t.BuildInput(T0.AddMinutes(30));
+        T.Eq(DisciplineEngine.Evaluate(held).Action, DisciplineAction.Lockout,
+             "the account is still locked out on a merely suspected reset");
+
+        t.StartOver(T0.AddMinutes(31), 0, 100000);
+
+        T.Ok(!t.DailyLossLimitHit, "once confirmed, the day is genuinely fresh");
+        T.Eq(t.TradesToday, 0, "the counts are cleared");
+        T.Near(t.PeakDailyPnl, 0, 0.01, "and so is the peak");
+        T.Near(t.WorstDailyPnl, 0, 0.01, "and the trough");
+        T.Ok(!t.ResetSuspected, "and the offer is withdrawn");
+        T.Eq(t.RestartedAt, T0.AddMinutes(31), "the restart is timestamped so a reload agrees");
+    }
+
+    static void StartingOverReAnchorsTheFloor()
+    {
+        T.S("starting over moves the floor back with the balance");
+
+        BallastTracker t = Fresh();
+        Trade(t, T0, 0, 4000);                       // peak equity 104,000
+        T.Near(t.PeakEquity, 104000, 0.01, "the peak equity followed the profit up");
+
+        DisciplineInput before = t.BuildInput(T0.AddMinutes(10));
+        T.Near(before.FloorLevel, 99000, 0.01, "so the trailing floor sits at 99,000");
+
+        t.OnEquity(100000, 0);
+        t.StartOver(T0.AddMinutes(11), 0, 100000);
+
+        // The expensive one to get wrong. Leave the peak at 104,000 and the floor
+        // stays at 99,000 on an account that now holds 100,000 - a thousand of
+        // cushion where there should be five.
+        T.Near(t.PeakEquity, 100000, 0.01, "the peak comes back down with the account");
+
+        DisciplineInput after = t.BuildInput(T0.AddMinutes(12));
+        T.Near(after.FloorLevel, 95000, 0.01, "and the floor is a full drawdown below again");
+        T.Near(after.CushionToFloor, 5000, 0.01, "with the whole drawdown to lose");
+    }
+}
