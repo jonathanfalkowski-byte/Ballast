@@ -4124,6 +4124,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 ctx += "  -  no balance yet (account not connected?)";
             }
+            else if (worst.Input.ConfigMismatch)
+            {
+                ctx += "  -  set up as a " + Money(worst.Input.StartingBalance)
+                     + " account, but it holds " + Money(worst.Input.CurrentEquity)
+                     + "  -  no cushion can be worked out until that is fixed";
+            }
             else if (worst.Input.PastFloor)
             {
                 ctx += "  -  balance " + Money(worst.Input.CurrentEquity)
@@ -4385,6 +4391,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     cushionText = "no data";
                     cushionCol = ColMuted;
                 }
+                else if (s.Input.ConfigMismatch)
+                {
+                    // Not a number at all. A cushion here would be arithmetic on a
+                    // starting balance this account has never had.
+                    cushionText = "check rules";
+                    cushionCol = ColAmber;
+                }
                 else if (s.Input.PastFloor)
                 {
                     // You cannot lose a negative amount. Say what is actually true.
@@ -4415,7 +4428,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     s.Decision.Urgency == Urgency.Alert ? 2 : s.Decision.Urgency == Urgency.Caution ? 1 : 0,
                     s.Decision.Headline,
                     s.Input.HasValidEquity ? s.Input.CushionToFloor : 0,
-                    s.Input.HasValidEquity && !s.Input.PastFloor,
+                    s.Input.HasValidEquity && !s.Input.PastFloor && !s.Input.ConfigMismatch,
                     Core.Globals.Now);
 
                 // The same running count the row shows, so the chart can show it
@@ -4470,7 +4483,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // written into the daily target, where it did nothing but break
                 // the protect-your-green logic; here it is what a trader on an
                 // evaluation actually wants to know.
-                if (s.Input.ProfitTarget > 0 && s.Input.HasValidEquity && !s.Input.PastFloor)
+                if (s.Input.ProfitTarget > 0 && s.Input.HasValidEquity && !s.Input.PastFloor
+                    && !s.Input.ConfigMismatch)
                 {
                     double made = s.Input.CurrentEquity - s.Input.StartingBalance;
                     TextBlock pt = new TextBlock();
@@ -4531,6 +4545,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 case DisciplineAction.ProtectGreen: return "BANK IT";
                 case DisciplineAction.Cooldown:     return "WAIT";
                 case DisciplineAction.SizeDown:     return "SIZE DOWN";
+                case DisciplineAction.CheckSetup:   return "CHECK RULES";
                 case DisciplineAction.None:         return "HOLD OFF";
                 default:                            return "CLEAR";
             }
@@ -4545,6 +4560,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 case DisciplineAction.ProtectGreen: return "BANK";
                 case DisciplineAction.Cooldown:     return "WAIT";
                 case DisciplineAction.SizeDown:     return "SIZE";
+                case DisciplineAction.CheckSetup:   return "RULES";
                 case DisciplineAction.None:         return "HOLD";
                 default:                            return "OK";
             }

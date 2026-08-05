@@ -40,6 +40,7 @@ public static class Program
         PersistenceTests.Run();
         RuleUpdateTests.Run();
         ProviderFloorTests.Run();
+        MismatchTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

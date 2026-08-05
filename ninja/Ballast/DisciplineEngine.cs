@@ -28,7 +28,8 @@ namespace Ballast
         ProtectGreen,   // you're up — bank it or free-roll
         StopForDay,     // done
         Lockout,        // hit the daily loss limit
-        None            // nothing to act on
+        None,           // nothing to act on
+        CheckSetup      // the settings do not describe this account
     }
 
     public enum Urgency { Calm, Caution, Alert }
@@ -72,12 +73,59 @@ namespace Ballast
         public int BaseMaxContracts;     // size before the drawdown throttle
         public bool SizeThrottled;       // true when the throttle has cut the advised size
 
+        /// <summary>The drawdown this account was set up with, needed to tell a
+        /// blown account from a misconfigured one.</summary>
+        public double TrailingDrawdown;
+
+        /// <summary>
+        /// True when the balance and the configured size cannot both be
+        /// describing the same account.
+        ///
+        /// A funded account cannot be far below its floor. The firm closes it the
+        /// moment it touches, so the worst a real account can be is a little past
+        /// - a slipped stop, a gap through the level. An account sitting tens of
+        /// thousands below a floor it supposedly breached weeks ago is not a dead
+        /// account; it is a live one wearing somebody else's numbers, which is
+        /// what happens when a 100K sim gets set up as a 150K prop account.
+        ///
+        /// Two conditions, both required, because either alone is wrong. More
+        /// than TWICE the drawdown below the starting balance is arithmetically
+        /// impossible for an account the firm was policing. And more than a fifth
+        /// of the account size, so a genuine blow-through on a small drawdown -
+        /// a 50K with a 2,000 drawdown that gapped 5,000 through its floor - is
+        /// still reported as what it is, a dead account, rather than excused as a
+        /// typo.
+        ///
+        /// Being ABOVE the configured size is not a mismatch: that is just
+        /// profit, and if the size is wrong in that direction the floor comes out
+        /// tighter than reality, which reports less room than there is.
+        /// </summary>
+        public bool ConfigMismatch
+        {
+            get
+            {
+                if (!HasValidEquity) return false;
+                if (StartingBalance <= 0 || TrailingDrawdown <= 0) return false;
+
+                double shortfall = StartingBalance - CurrentEquity;
+                if (shortfall <= 0) return false;
+
+                return shortfall > TrailingDrawdown * 2.0
+                    && shortfall > StartingBalance * 0.20;
+            }
+        }
+
         /// <summary>
         /// True when the balance is already at or below the floor. Either the
         /// account is finished, or - far more likely on a sim or long-running
-        /// account - the configured account size does not match reality.
+        /// account - the configured account size does not match reality. The
+        /// second case is now caught by ConfigMismatch and excluded here, so this
+        /// means what it says.
         /// </summary>
-        public bool PastFloor { get { return HasValidEquity && CushionToFloor <= 0; } }
+        public bool PastFloor
+        {
+            get { return HasValidEquity && CushionToFloor <= 0 && !ConfigMismatch; }
+        }
         public bool HasValidEquity = true;
         public bool ExecutionTelemetryHealthy = true;
         public string ExecutionTelemetryWarning = "";
@@ -152,6 +200,9 @@ namespace Ballast
 
             if (!i.HasValidEquity) return "no balance yet";
             if (!i.ExecutionTelemetryHealthy) return "execution feed mismatch - verify in Accounts";
+            if (i.ConfigMismatch)
+                return "set up as a " + Money(i.StartingBalance) + " account but it holds "
+                     + Money(i.CurrentEquity) + " - check its rules";
             if (i.PastFloor) return "at or below its floor";
 
             if (Has(d.Signals, "daily_loss_limit"))
@@ -337,7 +388,21 @@ namespace Ballast
             // a negative "can lose" figure is meaningless - you cannot lose minus
             // twelve thousand dollars - and it hides the far likelier cause, which
             // is that the configured account size does not match this account.
-            if (i.HasValidEquity && i.CushionToFloor <= 0)
+            if (i.ConfigMismatch)
+            {
+                // Not a stop. Ballast does not know this account's real floor, and
+                // saying STOP on a number it cannot stand behind is how the next
+                // stop - a true one - gets waved away.
+                signals.Add(new RiskSignal("config_mismatch", Severity.High,
+                    "This account is set up as a " + Money(i.StartingBalance) + " account with a "
+                  + Money(i.TrailingDrawdown) + " drawdown, but it holds " + Money(i.CurrentEquity)
+                  + ". Those cannot both be true - a firm closes an account the moment it touches "
+                  + "its floor, so a live account is never this far below one. Until the size in "
+                  + "Setup matches the account, every figure worked out from it is wrong, and "
+                  + "Ballast is not going to guess at your cushion. Open its rules and set the "
+                  + "size it actually is."));
+            }
+            else if (i.HasValidEquity && i.CushionToFloor <= 0)
             {
                 signals.Add(new RiskSignal("past_floor", Severity.High,
                     "Balance " + Money(i.CurrentEquity) + " is at or below the floor of "
@@ -412,6 +477,7 @@ namespace Ballast
                 case DisciplineAction.SizeDown:    return "Size down";
                 case DisciplineAction.ProtectGreen:return "Protect it";
                 case DisciplineAction.Trade:       return "Clear to trade";
+                case DisciplineAction.CheckSetup:  return "Check its rules";
                 default:                           return "Hold";
             }
         }
@@ -436,6 +502,15 @@ namespace Ballast
             {
                 action = DisciplineAction.Lockout; urgency = Urgency.Alert;
                 reason = "execution telemetry is incomplete - verify the account before trading";
+            }
+            else if (Has(d.Signals, "config_mismatch"))
+            {
+                // Deliberately Caution, not Alert. Nothing here says the trader
+                // did anything wrong, and a red STOP that is plainly nonsense -
+                // thrown at an account that is up on the day - costs more than it
+                // saves, because it teaches the trader to read past red.
+                action = DisciplineAction.CheckSetup; urgency = Urgency.Caution;
+                reason = "this account's settings do not describe this account";
             }
             else if (Has(d.Signals, "past_floor"))
             {

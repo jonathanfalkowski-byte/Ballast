@@ -325,6 +325,7 @@ namespace Ballast
                 case DisciplineAction.ProtectGreen: action = 4; break;
                 case DisciplineAction.Cooldown:     action = 3; break;
                 case DisciplineAction.SizeDown:     action = 2; break;
+                case DisciplineAction.CheckSetup:   action = 1; break;
                 case DisciplineAction.None:         action = 1; break;
                 default:                            action = 0; break; // Trade
             }
@@ -372,6 +373,12 @@ namespace Ballast
             for (int i = 0; i < snapshots.Count; i++)
             {
                 if (!snapshots[i].Input.HasValidEquity) continue;
+
+                // An account whose settings do not describe it has no knowable
+                // cushion. Its figure is a huge negative that would take over the
+                // headline card and hide the account that really is closest.
+                if (snapshots[i].Input.ConfigMismatch) continue;
+
                 if (snapshots[i].Input.CushionToFloor < min) min = snapshots[i].Input.CushionToFloor;
             }
             return min;

@@ -1060,6 +1060,7 @@ namespace Ballast
             i.IsAutomated = Config.IsAutomated;
             i.ProfitTarget = Config.ProfitTarget;
             i.StartingBalance = Config.StartingBalance;
+            i.TrailingDrawdown = Config.TrailingDrawdown;
             i.DailyPnl = DailyPnl;
             i.PeakDailyPnl = PeakDailyPnl;
             i.WorstDailyPnl = WorstDailyPnl;
