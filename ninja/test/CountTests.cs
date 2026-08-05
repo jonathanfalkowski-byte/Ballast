@@ -397,14 +397,22 @@ public static class ApexFloorTests
                          || s.Plan.ToLowerInvariant().IndexOf("funded") >= 0;
             string platform = RuleBook.PlatformOfPlan(s.Plan);
 
-            // The platform split is documented for the INTRADAY threshold only.
-            // Apex's end-of-day drawdown is a separate mechanism and no platform
-            // difference has been verified for it, so those rows stay
-            // platform-neutral and keep trailing - the conservative reading.
+            // The platform split applies to end-of-day too. This test used to
+            // assert the opposite - that no EOD row could lock - which was the
+            // conservative reading taken before Apex's EOD article was checked.
+            // It says plainly that Rithmic and WealthCharts evaluations "stop
+            // trailing and become fixed when the threshold reaches an amount
+            // equal to the Target Profit balance", and only Tradovate trails
+            // forever. A test that pins a guess stops being a test the moment
+            // the guess is checked.
             if (isEval && s.DrawdownType == DrawdownType.EndOfDay)
             {
-                T.Near(s.LockFloorAt, 0, 0.001,
-                       s.Label + " keeps trailing - no platform rule verified for end-of-day");
+                if (platform == "TRADOVATE")
+                    T.Near(s.LockFloorAt, 0, 0.001,
+                           s.Label + " trails forever on Tradovate, end-of-day included");
+                else if (platform == "RITHMIC")
+                    T.Near(s.LockFloorAt, s.Size + s.ProfitTarget, 0.001,
+                           s.Label + " locks at the target profit balance on Rithmic");
             }
             else if (isEval)
             {

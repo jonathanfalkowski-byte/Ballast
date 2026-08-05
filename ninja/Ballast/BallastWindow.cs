@@ -235,6 +235,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock firmSummary;
         private Button firmToggle;
         private TextBlock editingScope, applyNote, realisedNote, coherenceNote;
+        private StackPanel setupListView, setupAccountView;
+        private TextBlock setupAccountTitle, setupAccountSub;
         private CheckBox trustRealisedBox;
         private StackPanel firmFields;
 
@@ -1335,7 +1337,17 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // The stop-cost hint reads the journal, so it is worked out when
             // Setup is opened rather than on every tick.
-            if (index == 2) { RefreshStopCostHint(); RefreshRealisedNote(); RefreshCoherence(); RefreshWindowClock(); }
+            if (index == 2)
+            {
+                RefreshStopCostHint(); RefreshRealisedNote(); RefreshCoherence(); RefreshWindowClock();
+
+                // Arriving at Setup means arriving at the list. Leaving it inside
+                // whichever account was open last is disorienting, and the way
+                // back is one click anyway.
+                if (setupAccountView != null && setupListView != null
+                    && setupAccountView.Visibility == Visibility.Visible)
+                    ShowAccountList();
+            }
         }
 
         private void StyleTab(Button b, bool on)
@@ -1670,13 +1682,157 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // ── SETUP ────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// A plain paragraph of explanation. Same shape as Label but wraps and
+        /// sits under a heading rather than over a field.
+        /// </summary>
+        private TextBlock Note(string text)
+        {
+            TextBlock t = new TextBlock();
+            t.Text = text;
+            t.Foreground = ColFaint;
+            t.FontSize = 11;
+            t.TextWrapping = TextWrapping.Wrap;
+            t.Margin = new Thickness(0, 0, 0, 10);
+            return t;
+        }
+
+        /// <summary>
+        /// The top of the account view: the way back, and whose rules these are.
+        ///
+        /// The name is stated large because every field below it belongs to that
+        /// account and nothing else does. The old page had one firm picker and
+        /// one set of fields serving whichever account a dropdown four screens up
+        /// happened to be pointing at, which is how a trader ends up editing the
+        /// wrong account without a single thing on screen looking wrong.
+        /// </summary>
+        private UIElement BuildAccountViewHeader()
+        {
+            StackPanel head = new StackPanel();
+            head.Margin = new Thickness(0, 0, 0, 14);
+
+            Button back = new Button();
+            back.Content = "\u2190  all accounts";
+            back.FontSize = 13;
+            back.Padding = new Thickness(0);
+            back.Background = ColTransparent;
+            back.BorderBrush = ColTransparent;
+            back.BorderThickness = new Thickness(0);
+            back.Foreground = ColAccent;
+            back.HorizontalAlignment = HorizontalAlignment.Left;
+            back.Margin = new Thickness(0, 0, 0, 10);
+            back.Click += delegate { ShowAccountList(); };
+            head.Children.Add(back);
+
+            setupAccountTitle = new TextBlock();
+            setupAccountTitle.Foreground = ColInk;
+            setupAccountTitle.FontSize = 20;
+            setupAccountTitle.FontWeight = FontWeights.Bold;
+            setupAccountTitle.TextWrapping = TextWrapping.Wrap;
+            head.Children.Add(setupAccountTitle);
+
+            setupAccountSub = new TextBlock();
+            setupAccountSub.Foreground = ColMuted;
+            setupAccountSub.FontSize = 12;
+            setupAccountSub.TextWrapping = TextWrapping.Wrap;
+            setupAccountSub.Margin = new Thickness(0, 2, 0, 0);
+            head.Children.Add(setupAccountSub);
+
+            return head;
+        }
+
+        /// <summary>Back to the list of accounts.</summary>
+        private void ShowAccountList()
+        {
+            // Anything typed and not applied belongs to the account just left.
+            try { CommitPendingEdits(); } catch { }
+
+            if (setupAccountView != null) setupAccountView.Visibility = Visibility.Collapsed;
+            if (setupListView != null) setupListView.Visibility = Visibility.Visible;
+            RefreshAccountList(true);
+            ScrollSetupToTop();
+        }
+
+        /// <summary>
+        /// Open one account's rules, filling the header with who it is. Called
+        /// with "" for the defaults that new accounts inherit.
+        /// </summary>
+        private void ShowAccountEditor(string name)
+        {
+            if (setupAccountTitle != null)
+                setupAccountTitle.Text = name.Length > 0 ? name : "Defaults for new accounts";
+
+            if (setupAccountSub != null)
+            {
+                if (name.Length == 0)
+                {
+                    setupAccountSub.Text = "Not an account. This is the starting point handed to the "
+                                         + "next account you tick, and changing it does nothing to "
+                                         + "accounts you are already watching.";
+                    setupAccountSub.Foreground = ColAmber;
+                }
+                else
+                {
+                    string label;
+                    setupAccountSub.Text = accountLabels.TryGetValue(name, out label)
+                                        && !string.IsNullOrEmpty(label)
+                        ? label + " - every field below belongs to this account alone"
+                        : "Every field below belongs to this account alone";
+                    setupAccountSub.Foreground = ColMuted;
+                }
+            }
+
+            if (setupListView != null) setupListView.Visibility = Visibility.Collapsed;
+            if (setupAccountView != null) setupAccountView.Visibility = Visibility.Visible;
+            ScrollSetupToTop();
+        }
+
+        /// <summary>
+        /// Put the page back at the top. Switching view without this leaves the
+        /// scroll position from the previous one, so the new view opens halfway
+        /// down itself - which is the complaint that started this rework.
+        /// </summary>
+        private void ScrollSetupToTop()
+        {
+            try
+            {
+                DependencyObject d = pageSetup;
+                while (d != null && !(d is ScrollViewer))
+                    d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+
+                ScrollViewer sv = d as ScrollViewer;
+                if (sv != null) sv.ScrollToVerticalOffset(0);
+            }
+            catch { }
+        }
+
         private StackPanel BuildSetupPage()
         {
             StackPanel p = new StackPanel();
             p.Visibility = Visibility.Collapsed;
 
+            // ── Two views, never both ────────────────────────────────────────
+            //
+            // Setup used to be one long scroll organised by KIND OF SETTING:
+            // every account's list, then one firm picker, then one account-type
+            // picker, then one set of rule fields. Two things fell out of that.
+            // A trader with accounts at different firms had a single global firm
+            // box that could only be right for some of them. And "set its rules"
+            // could do no better than scroll a form into view at the BOTTOM of the
+            // window, below a list you then had to scroll back through.
+            //
+            // It is organised by ACCOUNT now. The list is one view; one account's
+            // rules are the other; you are never looking at both. Everything in
+            // the account view belongs to that account, firm and type included,
+            // so accounts from different firms stop being a special case.
+            StackPanel list = new StackPanel();
+            StackPanel acct = new StackPanel();
+            setupListView = list;
+            setupAccountView = acct;
+            acct.Visibility = Visibility.Collapsed;
+
             // 1. Accounts
-            p.Children.Add(SectionHeader("ACCOUNTS TO WATCH"));
+            list.Children.Add(SectionHeader("ACCOUNTS TO WATCH"));
 
             monitorAllBox = new CheckBox();
             monitorAllBox.Content = "Watch all accounts";
@@ -1685,7 +1841,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             monitorAllBox.Margin = new Thickness(0, 0, 0, 8);
             monitorAllBox.Checked += delegate { SetAllAccounts(true); };
             monitorAllBox.Unchecked += delegate { SetAllAccounts(false); };
-            p.Children.Add(monitorAllBox);
+            list.Children.Add(monitorAllBox);
 
             Border accBorder = new Border();
             accBorder.CornerRadius = new CornerRadius(8);
@@ -1693,25 +1849,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             accBorder.Padding = new Thickness(12, 8, 12, 8);
             accBorder.Margin = new Thickness(0, 0, 0, 20);
 
-            ScrollViewer accScroll = new ScrollViewer();
-            accScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            accScroll.MaxHeight = 260;
-
+            // No inner scroller any more. A 260px scrolling box inside a
+            // scrolling page is how you end up scrolling the wrong thing - and
+            // the list is now a view of its own with the whole window to use.
             accountListPanel = new StackPanel();
-            accScroll.Content = accountListPanel;
-            accBorder.Child = accScroll;
-            p.Children.Add(accBorder);
+            accBorder.Child = accountListPanel;
+            list.Children.Add(accBorder);
 
             // 2. What kind of account
-            p.Children.Add(SectionHeader("WHAT KIND OF ACCOUNT"));
+            acct.Children.Add(SectionHeader("WHAT KIND OF ACCOUNT"));
 
-            p.Children.Add(Label("Firm"));
+            acct.Children.Add(Label("Firm"));
             firmBox = new ComboBox();
             firmBox.Margin = new Thickness(0, 0, 0, 10);
             firmBox.SelectionChanged += delegate { PopulateAccountTypes(); };
-            p.Children.Add(firmBox);
+            acct.Children.Add(firmBox);
 
-            p.Children.Add(Label("Which generation of accounts do you hold?"));
+            list.Children.Add(Spacer(22));
+            list.Children.Add(SectionHeader("EVERYTHING ELSE"));
+            list.Children.Add(Note("These apply to every account, not to one. The per-account rules live behind \"set its rules\" above."));
+            list.Children.Add(Label("Which generation of accounts do you hold?"));
             generationBox = new ComboBox();
             generationBox.Margin = new Thickness(0, 0, 0, 10);
             generationBox.Items.Add("Work it out from the balance (cautious)");
@@ -1719,9 +1876,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             generationBox.Items.Add("Current accounts (Apex 4.0)");
             generationBox.SelectedIndex = 0;
             generationBox.SelectionChanged += delegate { OnGenerationChanged(); };
-            p.Children.Add(generationBox);
+            list.Children.Add(generationBox);
 
-            p.Children.Add(Why("Why does this matter?",
+            list.Children.Add(Why("Why does this matter?",
                 "The same account size can carry different drawdowns depending on when you bought "
               + "it. A legacy Apex 50K trails $2,500; a 4.0 50K trails $2,000. A 150K is $5,000 "
               + "legacy against $4,000 on 4.0. Your balance is identical either way, so nothing in "
@@ -1737,7 +1894,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // "Apply to selected" - one of four buttons on the page with a
             // similar name - was ceremony rather than safety. It applies on
             // selection, and the sentence lower down confirms what it did.
-            p.Children.Add(Label("Account type"));
+            acct.Children.Add(Label("Account type"));
             accountTypeBox = new ComboBox();
             accountTypeBox.Margin = new Thickness(0, 0, 0, 6);
             accountTypeBox.SelectionChanged += delegate
@@ -1745,7 +1902,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (suppressTypeApply) return;
                 ApplyChosenType(false);
             };
-            p.Children.Add(accountTypeBox);
+            acct.Children.Add(accountTypeBox);
 
             TextBlock typeNote = new TextBlock();
             typeNote.Text = "Choosing one fills in that account's size, drawdown and floor straight away.";
@@ -1753,14 +1910,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             typeNote.FontSize = 11;
             typeNote.TextWrapping = TextWrapping.Wrap;
             typeNote.Margin = new Thickness(0, 0, 0, 8);
-            p.Children.Add(typeNote);
+            acct.Children.Add(typeNote);
 
             StackPanel firmBtns = new StackPanel();
             firmBtns.Orientation = Orientation.Horizontal;
             firmBtns.Margin = new Thickness(0, 0, 0, 8);
             firmBtns.Children.Add(QuietButton("Match all my accounts by balance", delegate { AutoConfigure(); }));
             firmBtns.Children.Add(QuietButton("Check for updates", delegate { CheckForRuleUpdates(true); }));
-            p.Children.Add(firmBtns);
+            list.Children.Add(firmBtns);
 
             detectionNote = new TextBlock();
             detectionNote.Text = "Trading your own money? Pick \"My own account\" - the floor stops trailing "
@@ -1769,10 +1926,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             detectionNote.FontSize = 12;
             detectionNote.TextWrapping = TextWrapping.Wrap;
             detectionNote.Margin = new Thickness(0, 0, 0, 20);
-            p.Children.Add(detectionNote);
+            list.Children.Add(detectionNote);
 
             // 3. Recommended settings
-            p.Children.Add(SectionHeader("RECOMMENDED SETTINGS"));
+            acct.Children.Add(SectionHeader("RECOMMENDED SETTINGS"));
 
             profileBox = new ComboBox();
             profileBox.Margin = new Thickness(0, 0, 0, 8);
@@ -1781,7 +1938,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             for (int i = 0; i < profs.Count; i++) profileBox.Items.Add(profs[i].Name);
             profileBox.SelectedIndex = 0;
             profileBox.SelectionChanged += delegate { ShowProfileDetail(); };
-            p.Children.Add(profileBox);
+            acct.Children.Add(profileBox);
 
             Border profCard = new Border();
             profCard.CornerRadius = new CornerRadius(8);
@@ -1794,11 +1951,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             profileDetail.FontSize = 12;
             profileDetail.TextWrapping = TextWrapping.Wrap;
             profCard.Child = profileDetail;
-            p.Children.Add(profCard);
+            acct.Children.Add(profCard);
 
-            p.Children.Add(Label("What your usual stop costs on ONE contract ($) - optional"));
+            acct.Children.Add(Label("What your usual stop costs on ONE contract ($) - optional"));
             tbRiskPerTrade = Field("0");
-            p.Children.Add(tbRiskPerTrade);
+            acct.Children.Add(tbRiskPerTrade);
 
             // Their own number, from their own trades. "What does your stop
             // cost?" is a fair question with an unfair answer when the stop moves
@@ -1809,9 +1966,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             stopCostHint.FontSize = 11;
             stopCostHint.TextWrapping = TextWrapping.Wrap;
             stopCostHint.Margin = new Thickness(0, -6, 0, 10);
-            p.Children.Add(stopCostHint);
+            acct.Children.Add(stopCostHint);
 
-            p.Children.Add(Why("My stop is different on every trade - what do I put?",
+            acct.Children.Add(Why("My stop is different on every trade - what do I put?",
                 "Your usual one, and if they vary, the biggest one you take regularly. This number "
               + "is doing exactly one job: turning a per-trade risk allowance in dollars into a "
               + "number of contracts. Allowance $450, one contract's stop costs $150, so three "
@@ -1833,9 +1990,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             profBtns.Margin = new Thickness(0, 4, 0, 8);
             profBtns.Children.Add(PrimaryButton("Use this starting point", delegate { ApplyProfile(false); }));
             profBtns.Children.Add(QuietButton("Use it on every account", delegate { ApplyProfile(true); }));
-            p.Children.Add(profBtns);
+            acct.Children.Add(profBtns);
 
-            p.Children.Add(Why("Why percentages of the drawdown, not the account?",
+            acct.Children.Add(Why("Why percentages of the drawdown, not the account?",
                 "On a funded account your real capital is the drawdown, not the balance. Risking "
               + "\"1% of a 50K account\" is $500 - a quarter of an Apex 50K's entire $2,000 life. Four "
               + "of those in a row and the account is gone, having lost 4% of its stated size. So every "
@@ -1844,16 +2001,16 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "traders cited endorsed them for your account - the principle is borrowed and stated, "
               + "the numbers are worked out from your figures."));
 
-            p.Children.Add(Spacer(20));
+            acct.Children.Add(Spacer(20));
 
             // 4. Rules
-            p.Children.Add(SectionHeader("RULES"));
+            acct.Children.Add(SectionHeader("RULES"));
 
-            p.Children.Add(Label("Whose rules am I editing?"));
+            acct.Children.Add(Label("Whose rules am I editing?"));
             editTargetBox = new ComboBox();
             editTargetBox.Margin = new Thickness(0, 0, 0, 6);
             editTargetBox.SelectionChanged += delegate { OnEditTargetChanged(); };
-            p.Children.Add(editTargetBox);
+            acct.Children.Add(editTargetBox);
 
             // Which account these fields belong to, spelled out where the fields
             // are rather than only in a dropdown above them.
@@ -1861,9 +2018,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             editingScope.FontSize = 11;
             editingScope.TextWrapping = TextWrapping.Wrap;
             editingScope.Margin = new Thickness(0, 0, 0, 10);
-            p.Children.Add(editingScope);
+            acct.Children.Add(editingScope);
 
-            p.Children.Add(Why("Can each account have different numbers?",
+            acct.Children.Add(Why("Can each account have different numbers?",
                 "Yes - and they are meant to. Pick an account here and everything below it belongs to "
               + "that account alone: how much you are willing to lose today, how many trades, how many "
               + "losses in a row, your target and your size. A 50K evaluation and a funded 150K have no "
@@ -1927,9 +2084,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             dInner.Children.Add(coherenceNote);
 
             decisions.Child = dInner;
-            p.Children.Add(decisions);
+            acct.Children.Add(decisions);
 
-            p.Children.Add(Why("How much should I be willing to lose in a day?",
+            acct.Children.Add(Why("How much should I be willing to lose in a day?",
                 "It is not really chosen, it is derived - and the arithmetic starts somewhere most "
               + "advice gets wrong.\n\n"
               + "On a prop account your capital is the DRAWDOWN, not the balance. A 250K evaluation "
@@ -1950,16 +2107,16 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "losses, not one you inherit."));
 
             // ── The rest of the trader's own limits ──────────────────────────
-            p.Children.Add(Label("Your other limits"));
+            acct.Children.Add(Label("Your other limits"));
 
             Grid g2 = TwoCol();
             tbMaxLosses = FieldIn(g2, 0, 0, "Stop after N losses", "2");
             tbTarget = FieldIn(g2, 0, 1, "Daily target ($) - one good day", "500");
-            p.Children.Add(g2);
+            acct.Children.Add(g2);
 
             Grid g4 = TwoCol();
             tbMaxContracts = FieldIn(g4, 0, 0, "Max contracts", "1");
-            p.Children.Add(g4);
+            acct.Children.Add(g4);
 
             // ── The trading window ───────────────────────────────────────────
             //
@@ -1969,18 +2126,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             // they had never set and could not find. A warning nobody can turn
             // off is a warning everybody learns to ignore, and the ones next to
             // it get ignored with it.
-            p.Children.Add(Label("When do you trade? (this account)"));
+            acct.Children.Add(Label("When do you trade? (this account)"));
 
             Grid gW = TwoCol();
             tbWindowStart = FieldIn(gW, 0, 0, "From", "09:30");
             tbWindowEnd = FieldIn(gW, 0, 1, "To", "11:30");
-            p.Children.Add(gW);
+            acct.Children.Add(gW);
 
             Grid gReset = TwoCol();
             tbTradingDayReset = FieldIn(gReset, 0, 0,
                 "Firm trading day resets", "00:00");
-            p.Children.Add(gReset);
-            p.Children.Add(Why("Why is the firm's reset time separate?",
+            acct.Children.Add(gReset);
+            acct.Children.Add(Why("Why is the firm's reset time separate?",
                 "The trading window is your plan. This time is the firm's accounting boundary: "
               + "daily counters and an end-of-day trailing threshold roll only here. Times use "
               + "NinjaTrader's configured clock. Enter 18:00 when the firm's new session begins "
@@ -1995,16 +2152,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             windowClock.FontSize = 11;
             windowClock.TextWrapping = TextWrapping.Wrap;
             windowClock.Margin = new Thickness(0, -6, 0, 8);
-            p.Children.Add(windowClock);
+            acct.Children.Add(windowClock);
 
             windowAnyTimeBox = new CheckBox();
             windowAnyTimeBox.Content = "I trade whenever I like - never mention the clock";
             windowAnyTimeBox.Foreground = ColInk;
             windowAnyTimeBox.FontSize = 13;
             windowAnyTimeBox.Margin = new Thickness(0, 0, 0, 8);
-            p.Children.Add(windowAnyTimeBox);
+            acct.Children.Add(windowAnyTimeBox);
 
-            p.Children.Add(Why("What does the trading window do?",
+            acct.Children.Add(Why("What does the trading window do?",
                 "Nothing on its own. It never blocks anything and it is not one of the hard lines "
               + "that puts a wall on your screen. All it does is say \"outside your trading window\" "
               + "on the chart and in the account's line, because for most traders the damage is done "
@@ -2018,7 +2175,7 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "this account. It is per account, like everything else here, so an account you only "
               + "trade at the open and an account you run overnight can each have their own."));
 
-            p.Children.Add(Why("Is the daily target my evaluation target?",
+            acct.Children.Add(Why("Is the daily target my evaluation target?",
                 "No - and if it currently reads $15,000 or similar, that was Ballast's fault. Until "
               + "this build the rule book wrote your firm's PASS target into this box, which broke "
               + "two things quietly: an account could never be told to bank a good day, and the "
@@ -2027,7 +2184,7 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "This is one good day. The number that would make you happy to stop. Your firm's "
               + "pass target is tracked separately and shown on the Now tab as progress."));
 
-            p.Children.Add(Spacer(14));
+            acct.Children.Add(Spacer(14));
 
             // ── What the firm decided ────────────────────────────────────────
             //
@@ -2040,11 +2197,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             firmSummary.FontSize = 12;
             firmSummary.TextWrapping = TextWrapping.Wrap;
             firmSummary.Margin = new Thickness(0, 0, 0, 6);
-            p.Children.Add(firmSummary);
+            acct.Children.Add(firmSummary);
 
             firmToggle = QuietButton("Show the firm's figures", delegate { ToggleFirmFields(); });
             firmToggle.Margin = new Thickness(0, 0, 0, 10);
-            p.Children.Add(firmToggle);
+            acct.Children.Add(firmToggle);
 
             firmFields = new StackPanel();
             firmFields.Visibility = Visibility.Collapsed;
@@ -2091,7 +2248,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             acctGenBox.SelectedIndex = 0;
             firmFields.Children.Add(acctGenBox);
 
-            p.Children.Add(firmFields);
+            acct.Children.Add(firmFields);
 
             // ── Where the day's P&L comes from ───────────────────────────────
             trustRealisedBox = new CheckBox();
@@ -2100,16 +2257,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             trustRealisedBox.FontSize = 13;
             trustRealisedBox.IsChecked = true;
             trustRealisedBox.Margin = new Thickness(0, 8, 0, 4);
-            p.Children.Add(trustRealisedBox);
+            acct.Children.Add(trustRealisedBox);
 
             realisedNote = new TextBlock();
             realisedNote.Foreground = ColMuted;
             realisedNote.FontSize = 11;
             realisedNote.TextWrapping = TextWrapping.Wrap;
             realisedNote.Margin = new Thickness(20, 0, 0, 6);
-            p.Children.Add(realisedNote);
+            acct.Children.Add(realisedNote);
 
-            p.Children.Add(Why("Why would Ballast disagree with my platform?",
+            acct.Children.Add(Why("Why would Ballast disagree with my platform?",
                 "Because it used to measure the day itself, and it can only measure what it is "
               + "there for.\n\n"
               + "The day's P&L was \"the account's realised P&L now, less what it was when Ballast "
@@ -2129,16 +2286,16 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "day. With it unticked, Ballast goes back to measuring from its own baseline, which "
               + "it now saves so that closing the window no longer loses anything either."));
 
-            p.Children.Add(Spacer(6));
+            acct.Children.Add(Spacer(6));
 
             automatedBox = new CheckBox();
             automatedBox.Content = "This account is traded by a strategy, not by hand";
             automatedBox.Foreground = ColInk;
             automatedBox.FontSize = 13;
             automatedBox.Margin = new Thickness(0, 4, 0, 4);
-            p.Children.Add(automatedBox);
+            acct.Children.Add(automatedBox);
 
-            p.Children.Add(Why("What changes if I tick that?",
+            acct.Children.Add(Why("What changes if I tick that?",
                 "Risk monitoring is unchanged - if anything it matters more, because nobody is "
               + "watching. The cushion, the floor and the daily loss limit all still apply, and a bot "
               + "grinding an account toward its floor will still take over the headline.\n\n"
@@ -2148,8 +2305,8 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "strategy took four hundred trades while you took three, letting them into the "
               + "planned-versus-unplanned split would bury the only three that measure you."));
 
-            p.Children.Add(Spacer(18));
-            p.Children.Add(SectionHeader("WHEN YOU ARE TILTING"));
+            acct.Children.Add(Spacer(18));
+            list.Children.Add(SectionHeader("WHEN YOU ARE TILTING"));
 
             // Everything above this point on the page is per-account. This is
             // not, and a trader who assumed it was would think they had switched
@@ -2160,7 +2317,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltScope.FontSize = 11;
             tiltScope.TextWrapping = TextWrapping.Wrap;
             tiltScope.Margin = new Thickness(0, 0, 0, 6);
-            p.Children.Add(tiltScope);
+            list.Children.Add(tiltScope);
 
             tiltOnBox = new CheckBox();
             tiltOnBox.Content = "Put a wall on the screen when I blow through a hard line";
@@ -2170,7 +2327,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltOnBox.Margin = new Thickness(0, 4, 0, 4);
             tiltOnBox.Checked += delegate { tiltEnabled = true; SaveSettings(); };
             tiltOnBox.Unchecked += delegate { tiltEnabled = false; SaveSettings(); };
-            p.Children.Add(tiltOnBox);
+            list.Children.Add(tiltOnBox);
 
             tiltGiveBackBox = new CheckBox();
             tiltGiveBackBox.Content = "Also when I am handing back a green day";
@@ -2179,9 +2336,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             tiltGiveBackBox.Margin = new Thickness(16, 0, 0, 4);
             tiltGiveBackBox.Checked += delegate { tiltOnGiveBack = true; SaveSettings(); };
             tiltGiveBackBox.Unchecked += delegate { tiltOnGiveBack = false; SaveSettings(); };
-            p.Children.Add(tiltGiveBackBox);
+            list.Children.Add(tiltGiveBackBox);
 
-            p.Children.Add(Why("What does the wall actually do?",
+            list.Children.Add(Why("What does the wall actually do?",
                 "It covers Ballast - the whole window, every tab - when an account goes past its "
               + "floor, past its daily loss limit, or past the number of losses you said was your "
               + "line. Not when you are merely over your trade count or outside your window: a wall "
@@ -2210,7 +2367,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             btns.Children.Add(PrimaryButton("Apply and save", delegate { OnApplyAndSave(); }));
             btns.Children.Add(QuietButton("Give every account these same rules",
                 delegate { OnCopyToAll(); }));
-            p.Children.Add(btns);
+            acct.Children.Add(btns);
 
             // What was just saved, and to whom. A settings page that changes
             // nothing visible when you press its main button is indistinguishable
@@ -2220,7 +2377,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             applyNote.TextWrapping = TextWrapping.Wrap;
             applyNote.Foreground = ColMuted;
             applyNote.Margin = new Thickness(0, 0, 0, 14);
-            p.Children.Add(applyNote);
+            acct.Children.Add(applyNote);
 
             TextBlock foot = new TextBlock();
             foot.Text = "Advisory only. Ballast never places, modifies or cancels an order, and never "
@@ -2228,8 +2385,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             foot.Foreground = ColFaint;
             foot.FontSize = 10;
             foot.TextWrapping = TextWrapping.Wrap;
-            p.Children.Add(foot);
+            acct.Children.Add(foot);
 
+
+            // The header goes in FIRST, whatever order the sections were built in.
+            acct.Children.Insert(0, BuildAccountViewHeader());
+
+            p.Children.Add(list);
+            p.Children.Add(acct);
             return p;
         }
 
@@ -2533,6 +2696,34 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
+            // The defaults are editable through the same door as an account, so
+            // there is one way to reach a set of rules rather than two.
+            StackPanel defRow = new StackPanel();
+            defRow.Orientation = Orientation.Horizontal;
+            defRow.Margin = new Thickness(0, 2, 0, 10);
+
+            TextBlock defName = new TextBlock();
+            defName.Text = "Defaults for new accounts";
+            defName.Foreground = ColMuted;
+            defName.FontSize = 13;
+            defName.VerticalAlignment = VerticalAlignment.Center;
+            defRow.Children.Add(defName);
+
+            Button defEdit = new Button();
+            defEdit.Content = "set them";
+            defEdit.FontSize = 11;
+            defEdit.Margin = new Thickness(10, 0, 0, 0);
+            defEdit.Padding = new Thickness(0);
+            defEdit.Background = ColTransparent;
+            defEdit.BorderBrush = ColTransparent;
+            defEdit.BorderThickness = new Thickness(0);
+            defEdit.Foreground = ColAccent;
+            defEdit.VerticalAlignment = VerticalAlignment.Center;
+            defEdit.Click += delegate { EditDefaults(); };
+            defRow.Children.Add(defEdit);
+
+            accountListPanel.Children.Add(defRow);
+
             for (int i = 0; i < names.Count; i++)
             {
                 string name = names[i];
@@ -2713,11 +2904,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (!Equals(editTargetBox.SelectedItem, name)) editTargetBox.SelectedItem = name;
                     else OnEditTargetChanged();   // already selected - still take them to it
-                    editTargetBox.BringIntoView();
-                    editTargetBox.Focus();
                 }
             }
             catch { }
+
+            // Swap the whole view rather than scrolling a form into sight. The
+            // old behaviour landed the editor at the BOTTOM of the window, under
+            // the account list, so getting to it meant scrolling back through the
+            // accounts you had just left.
+            ShowAccountEditor(name);
 
             if (applyNote != null)
             {
@@ -2725,6 +2920,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                                + "\"Apply and save\" - they apply to this account and no other.";
                 applyNote.Foreground = ColAccent;
             }
+        }
+
+        /// <summary>Open the rules that new accounts inherit.</summary>
+        private void EditDefaults()
+        {
+            try
+            {
+                if (editTargetBox != null && editTargetBox.Items.Count > 0)
+                {
+                    if (editTargetBox.SelectedIndex != 0) editTargetBox.SelectedIndex = 0;
+                    else OnEditTargetChanged();
+                }
+            }
+            catch { }
+
+            ShowAccountEditor("");
         }
 
         private void OnAccountToggled(string name, bool on)

@@ -85,8 +85,14 @@ public static class RuleUpdateTests
         T.S("a rule book cannot claim a future verification date");
         WithTestVerifier(delegate
         {
-            string text = Encoding.UTF8.GetString(ShippedRules())
-                .Replace("VERIFIED|2026-08-01", "VERIFIED|2099-01-01");
+            // Rewrite whatever date the shipped book carries, rather than one
+            // typed in here. Hardcoding "2026-08-01" meant this test silently
+            // stopped patching anything the day the rule book was re-verified,
+            // and then failed because the book's real date was newer than the
+            // 3 August the check below pretends it is.
+            string text = System.Text.RegularExpressions.Regex.Replace(
+                Encoding.UTF8.GetString(ShippedRules()),
+                @"VERIFIED\|\d{4}-\d{2}-\d{2}", "VERIFIED|2099-01-01");
             RuleBook book;
             string error;
             T.Ok(!RuleBookUpdater.ValidateDownloadedPayload(

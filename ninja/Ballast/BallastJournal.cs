@@ -96,6 +96,19 @@ namespace Ballast
         public string Note = "";
 
         /// <summary>
+        /// Which of the trader's own setups this trade was — "" or one of the
+        /// setups in their SetupBook (ballast-setups.txt).
+        ///
+        /// This is the field the edge experiment turns on. Everything else the
+        /// journal captures answers "how did you behave"; this one answers "and
+        /// which strategy was it", which is the only way A's expectancy can be
+        /// told from B's. Left blank rather than guessed, exactly like Feeling: a
+        /// setup label invented after the fact would manufacture the very evidence
+        /// the trader is trying to earn.
+        /// </summary>
+        public string Setup = "";
+
+        /// <summary>
         /// Whether the stop or the target was moved once the trade was on, and
         /// which. "" means not answered.
         ///
@@ -221,6 +234,30 @@ namespace Ballast
         }
     }
 
+    /// <summary>
+    /// How confident Ballast is that a setup's positive result is a real edge
+    /// rather than a lucky run. Ordered worst-to-best so callers can compare.
+    /// </summary>
+    public enum EdgeConfidence { TooFew, NoEdge, InTheNoise, ProbablyReal, LikelyReal }
+
+    /// <summary>
+    /// A setup's expectancy read: the numbers, and whether the result can be told
+    /// apart from luck. This one object is the entire point of the experiment -
+    /// the honest answer to "does this setup actually make money, or have I just
+    /// not lost with it yet?"
+    /// </summary>
+    public class EdgeReadResult
+    {
+        public int Count;
+        public int Wins;
+        public double WinRate;
+        public double Expectancy;   // net $ per trade, after commission
+        public double Total;        // net $ across the whole sample
+        public double TStat;        // one-sample t of net-per-trade against zero
+        public EdgeConfidence Confidence = EdgeConfidence.TooFew;
+        public string Verdict = "";
+    }
+
     public class BallastJournal
     {
         /// <summary>
@@ -269,6 +306,19 @@ namespace Ballast
             "Wanted it back",
             "Numb"
         };
+
+        /// <summary>
+        /// The seed a brand-new setup book starts from. Empty on purpose: Ballast
+        /// never invents setups for a trader — every trader trades differently, so
+        /// each defines their own, stored per-trader in ballast-setups.txt and
+        /// managed by <see cref="SetupBook"/>. Kept as a named constant so a
+        /// specific deployment has one obvious place to add starter examples if it
+        /// ever wants them.
+        ///
+        /// Setup labels are stored as text on each row, so editing a trader's book
+        /// never rewrites history — a retired setup's old trades keep their label.
+        /// </summary>
+        public static readonly string[] Setups = new string[] { };
 
         /// <summary>
         /// Four verdicts, not two.
@@ -621,6 +671,147 @@ namespace Ballast
         }
 
         /// <summary>
+        /// Money and win rate per setup, worst net first.
+        ///
+        /// This is the split the edge experiment lives on. It is the only one that
+        /// answers "which of the setups I actually trade is carrying me, and which
+        /// is a leak wearing a strategy's clothes" - the question ten years of
+        /// blended P&L never had to answer.
+        ///
+        /// Manual trades only, and an untagged trade is left out rather than
+        /// pooled: a strategy has no setup to report, and guessing which setup a
+        /// blank row was would manufacture the very number the trader is trying to
+        /// earn. Worst first, like the instrument split, so the setup costing
+        /// money is the first thing seen rather than the last.
+        /// </summary>
+        public List<JournalBucket> SetupSplit(List<BallastTrade> source)
+        {
+            source = ManualOnly(source);
+            Dictionary<string, JournalBucket> map = new Dictionary<string, JournalBucket>();
+            List<JournalBucket> list = new List<JournalBucket>();
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                string key = source[i].Setup;
+                if (key == null || key.Length == 0) continue;   // untagged: never guessed
+
+                JournalBucket b;
+                if (!map.TryGetValue(key, out b))
+                {
+                    b = new JournalBucket();
+                    b.Label = key;
+                    map[key] = b;
+                    list.Add(b);
+                }
+                b.Add(source[i]);
+            }
+
+            list.Sort(delegate(JournalBucket a, JournalBucket c) { return a.Net.CompareTo(c.Net); });
+            return list;
+        }
+
+        /// <summary>
+        /// The honest read on a set of trades: expectancy after commission, and a
+        /// one-sample t-test of the per-trade result against zero, turned into a
+        /// plain-English verdict.
+        ///
+        /// Measured NET of the round-trip commission each trade recorded, because a
+        /// green gross number that goes red after costs is the single most common
+        /// way a trader talks themselves into an edge they do not have. Rows that
+        /// never learned their commission - an older journal, a feed that did not
+        /// report it - count it as zero rather than inventing a figure.
+        ///
+        /// A t-stat, not a bare average, because the average alone cannot tell a
+        /// real edge from a lucky streak: the same +$40 a trade means one thing
+        /// over 12 wild trades and another over 60 steady ones. Below the minimum
+        /// sample it refuses to answer at all - a verdict drawn from six trades is
+        /// worse than none, because the trader will believe it and act on it.
+        ///
+        /// Pure arithmetic, no NinjaTrader types, so every branch here is unit
+        /// tested against known inputs.
+        /// </summary>
+        public static EdgeReadResult EdgeRead(List<BallastTrade> trades, int minSample)
+        {
+            EdgeReadResult r = new EdgeReadResult();
+            if (trades == null) trades = new List<BallastTrade>();
+
+            int n = trades.Count;
+            r.Count = n;
+
+            double sum = 0, sumSq = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double net = trades[i].Pnl - (trades[i].Commission > 0 ? trades[i].Commission : 0);
+                sum += net;
+                sumSq += net * net;
+                if (net > 0) r.Wins++;
+            }
+
+            r.Total = sum;
+            r.WinRate = n > 0 ? (double)r.Wins / n : 0;
+            r.Expectancy = n > 0 ? sum / n : 0;
+
+            if (n > 1)
+            {
+                double variance = (sumSq - n * r.Expectancy * r.Expectancy) / (n - 1);
+                if (variance < 0) variance = 0;              // floating-point guard
+                double sd = Math.Sqrt(variance);
+                r.TStat = sd > 0 ? r.Expectancy / (sd / Math.Sqrt(n)) : 0;
+            }
+
+            if (minSample < 2) minSample = 2;
+
+            string exp = BallastTrade.Money(r.Expectancy) + " a trade";
+            string t = "t=" + r.TStat.ToString("0.0", CultureInfo.InvariantCulture);
+
+            if (n < minSample)
+            {
+                r.Confidence = EdgeConfidence.TooFew;
+                r.Verdict = "Not enough trades yet (" + n + " of " + minSample
+                          + "). No verdict until the sample is there — keep going.";
+            }
+            else if (r.Expectancy <= 0)
+            {
+                r.Confidence = EdgeConfidence.NoEdge;
+                r.Verdict = "Expectancy is " + exp + " after costs. This setup is losing money, not making it.";
+            }
+            else if (r.TStat < 1.7)
+            {
+                r.Confidence = EdgeConfidence.InTheNoise;
+                r.Verdict = "Positive (" + exp + ") but inside the noise (" + t
+                          + "). This could easily be luck — more trades, or it is not real.";
+            }
+            else if (r.TStat < 2.5)
+            {
+                r.Confidence = EdgeConfidence.ProbablyReal;
+                r.Verdict = exp + ", and probably real (" + t
+                          + "). Promising — do not touch it, finish the sample.";
+            }
+            else
+            {
+                r.Confidence = EdgeConfidence.LikelyReal;
+                r.Verdict = exp + ", and unlikely to be luck (" + t
+                          + "). This looks like a genuine edge — prove it out, then size up slowly.";
+            }
+
+            return r;
+        }
+
+        /// <summary>
+        /// EdgeRead for one setup key over manual trades only. The convenience the
+        /// window actually calls, one per setup on the Journal tab.
+        /// </summary>
+        public EdgeReadResult EdgeForSetup(List<BallastTrade> source, string setupKey, int minSample)
+        {
+            List<BallastTrade> manual = ManualOnly(source);
+            List<BallastTrade> forSetup = new List<BallastTrade>();
+            for (int i = 0; i < manual.Count; i++)
+                if (string.Equals(manual[i].Setup, setupKey, StringComparison.Ordinal))
+                    forSetup.Add(manual[i]);
+            return EdgeRead(forSetup, minSample);
+        }
+
+        /// <summary>
         /// Trades opened while Ballast was advising against it, versus the rest.
         /// Needs no tagging at all — it is entirely machine-observed, so it is
         /// the one insight that survives a trader who never touches a tag button.
@@ -885,7 +1076,7 @@ namespace Ballast
             "Account,Instrument,Direction,Contracts,EntryTime,ExitTime,DurationMin,PnL," +
             "TradeNoToday,DailyPnLBefore,CushionAtEntry,FloorAtEntry,MinSincePrevLoss," +
             "PrevWasLoss,InWindow,AdviceAtEntry,Planned,Feeling,SessionPlan,Note," +
-            "EntryImage,ExitImage,Done,Automated,Moved,Commission";
+            "EntryImage,ExitImage,Done,Automated,Moved,Commission,Setup";
 
         private static string Esc(string s)
         {
@@ -934,7 +1125,8 @@ namespace Ballast
             sb.Append(e.Dismissed ? "1" : "0").Append(',');
             sb.Append(e.Automated ? "1" : "0").Append(',');
             sb.Append(Esc(e.Moved)).Append(',');
-            sb.Append(N(e.Commission));
+            sb.Append(N(e.Commission)).Append(',');
+            sb.Append(Esc(e.Setup));
             return sb.ToString();
         }
 
@@ -1020,6 +1212,12 @@ namespace Ballast
             if (f.Count > 25 && double.TryParse(f[25], NumberStyles.Any,
                                                 CultureInfo.InvariantCulture, out dv))
                 e.Commission = dv;
+
+            // Setup arrived last of all. A row written before the field existed
+            // simply has no setup label, which reads as "" - not tagged - rather
+            // than as a wrong one, so it is left out of the per-setup split
+            // instead of being pooled into the wrong strategy.
+            if (f.Count > 26) e.Setup = f[26];
 
             return e;
         }

@@ -216,11 +216,15 @@ public static class GapTests
         T.Near(back.Pnl, -500, 0.01, "and its P&L");
 
         // A journal row written before commission existed reports 0 rather than
-        // failing to load.
-        int cut = line.LastIndexOf(',');
+        // failing to load. Commission is now the second-to-last column - the Setup
+        // label was appended after it - so a row that predates commission is
+        // simulated by dropping the last TWO fields, not one.
+        int lastComma = line.LastIndexOf(',');
+        int cut = line.LastIndexOf(',', lastComma - 1);
         BallastTrade old = BallastJournal.FromCsvLine(line.Substring(0, cut));
         T.Ok(old != null, "an older row still loads");
         T.Near(old.Commission, 0, 0.01, "and simply does not know what it cost");
+        T.Eq(old.Setup, "", "and equally does not know which setup it was");
 
         // ── The bound the reconciliation actually uses ───────────────────────
         //
