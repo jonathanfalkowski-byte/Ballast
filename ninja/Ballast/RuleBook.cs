@@ -310,6 +310,36 @@ namespace Ballast
         /// names the rule book uses. Returns "" when it is not one we know, which
         /// means "do not use platform to decide anything".
         /// </summary>
+        /// <summary>
+        /// The names NinjaTrader gives its own built-in simulated accounts:
+        /// Sim101, Playback101, Backtest.
+        ///
+        /// Used as the last resort when an account's provider cannot be read, to
+        /// decide whether it may be offered a one-click "start its day over" on
+        /// the Now page. That button un-spends a day, so the test has to be exact:
+        /// the stem must BE one of these words, with only a short run of digits
+        /// after it. A substring match would hand the button to "SimplyFunded" or
+        /// an account somebody named "Sim - live money", and next to a funded
+        /// account one wrong click costs a real day.
+        /// </summary>
+        public static bool IsBuiltInSimName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+
+            string stem = name.Trim();
+            int digits = 0;
+            while (stem.Length > 0 && stem[stem.Length - 1] >= '0' && stem[stem.Length - 1] <= '9')
+            {
+                stem = stem.Substring(0, stem.Length - 1);
+                digits++;
+            }
+            if (digits > 4) return false;
+
+            return string.Equals(stem, "Sim", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(stem, "Playback", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(stem, "Backtest", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static string PlatformFromConnection(string connectionName)
         {
             if (string.IsNullOrEmpty(connectionName)) return "";

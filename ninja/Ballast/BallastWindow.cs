@@ -3107,6 +3107,71 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// taking a hard reference on for one string, and a failure here should
         /// only ever mean "unknown platform" rather than a broken add-on.
         /// </summary>
+        /// <summary>
+        /// Is this a simulation account?
+        ///
+        /// It decides who gets a one-click "start it over" on the Now page. On a
+        /// simulated account that button is a convenience - resetting one is
+        /// routine and the money is not real. Next to a funded account it is a
+        /// single misplaced click away from un-spending a day the trader actually
+        /// lived through, which is the one thing this product exists to prevent.
+        /// So live accounts keep the longer road through Setup.
+        ///
+        /// Positive evidence is required. The provider is asked first, by
+        /// reflection so this still compiles against the test harness. Only when
+        /// the provider cannot be determined at all does the name get a say, and
+        /// then only for the names NinjaTrader gives its own built-in accounts -
+        /// never a substring match, because "Sim" appears in plenty of things
+        /// that are not simulations.
+        /// </summary>
+        private bool IsSimAccount(Account a, string name)
+        {
+            try
+            {
+                string provider = "";
+
+                if (a != null)
+                {
+                    System.Reflection.PropertyInfo pp = a.GetType().GetProperty("Provider");
+                    if (pp != null)
+                    {
+                        object prov = pp.GetValue(a, null);
+                        if (prov != null) provider = prov.ToString();
+                    }
+
+                    if (provider.Length == 0)
+                    {
+                        System.Reflection.PropertyInfo cp = a.GetType().GetProperty("Connection");
+                        object conn = cp == null ? null : cp.GetValue(a, null);
+                        if (conn != null)
+                        {
+                            System.Reflection.PropertyInfo op = conn.GetType().GetProperty("Options");
+                            object opts = op == null ? null : op.GetValue(conn, null);
+                            if (opts != null)
+                            {
+                                System.Reflection.PropertyInfo op2 = opts.GetType().GetProperty("Provider");
+                                if (op2 != null)
+                                {
+                                    object prov = op2.GetValue(opts, null);
+                                    if (prov != null) provider = prov.ToString();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (provider.Length > 0)
+                {
+                    string p = provider.ToLowerInvariant();
+                    return p.IndexOf("simulat") >= 0 || p.IndexOf("playback") >= 0;
+                }
+
+                // No provider to ask. Fall back to NinjaTrader's own names only.
+                return RuleBook.IsBuiltInSimName(name);
+            }
+            catch { return false; }
+        }
+
         private string PlatformOf(Account a)
         {
             try
@@ -4497,6 +4562,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                         rbtns.Children.Add(QuietButton("No - it wasn't",
                             delegate { OnDismissReset(who); }));
                         rowStack.Children.Add(rbtns);
+                    }
+                    else if (rst != null && IsSimAccount(FindAccount(s.AccountName), s.AccountName)
+                             && (s.Input.TradesToday > 0 || s.Input.DailyLossLimitHit
+                                 || s.Input.PeakDailyPnl != 0 || s.Input.WorstDailyPnl != 0))
+                    {
+                        // Simulated accounts get reset constantly, and having to
+                        // walk into Setup to say so every time is friction on the
+                        // one action that makes the row true again. Live accounts
+                        // do not get this - see IsSimAccount.
+                        string simWho = s.AccountName;
+                        StackPanel sb = new StackPanel();
+                        sb.Orientation = Orientation.Horizontal;
+                        sb.Margin = new Thickness(0, 2, 0, 0);
+                        sb.Children.Add(QuietButton("reset? start it over",
+                            delegate { OnStartAccountOver(simWho); }));
+                        rowStack.Children.Add(sb);
                     }
                 }
                 catch { }

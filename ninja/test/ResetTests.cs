@@ -30,6 +30,7 @@ public static class ResetTests
         NothingIsClearedUntilTheTraderSaysSo();
         StartingOverReAnchorsTheFloor();
         AResizedAccountIsCaughtAfterARestart();
+        OnlySimAccountsGetTheOneClickVersion();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -191,6 +192,40 @@ public static class ResetTests
         T.Ok(after.ResetSuspected,
              "cash minus realised is 150,000 where it was 100,000 - the account is not "
            + "the one those figures were about");
+    }
+
+    /// <summary>
+    /// "yea apply it to the now page so i dont have so many clicks but just on
+    /// sim accounts...dont do it to non sim accounts"
+    ///
+    /// The one-click version on the Now page un-spends a day. On a simulation
+    /// account that is a convenience; beside a funded account it is one misplaced
+    /// click away from erasing a day the trader actually lived through. So when
+    /// the provider cannot be read and the name is all there is to go on, the
+    /// test has to be exact - the stem must BE one of NinjaTrader's own account
+    /// names, not merely contain it.
+    /// </summary>
+    static void OnlySimAccountsGetTheOneClickVersion()
+    {
+        T.S("only NinjaTrader's own sim accounts are recognised by name");
+
+        T.Ok(RuleBook.IsBuiltInSimName("Sim101"), "Sim101 is one");
+        T.Ok(RuleBook.IsBuiltInSimName("Sim103"), "and so is Sim103");
+        T.Ok(RuleBook.IsBuiltInSimName("Sim"), "so is the bare name");
+        T.Ok(RuleBook.IsBuiltInSimName("Playback101"), "and Playback101");
+        T.Ok(RuleBook.IsBuiltInSimName("Backtest"), "and Backtest");
+        T.Ok(RuleBook.IsBuiltInSimName(" sim104 "), "case and spacing do not matter");
+
+        // His own funded accounts, and the near misses that a substring match
+        // would have handed a day-erasing button to.
+        T.Ok(!RuleBook.IsBuiltInSimName("APEX-11325-106"), "a funded account is not");
+        T.Ok(!RuleBook.IsBuiltInSimName("PA-APEX-11325-04"), "nor a performance account");
+        T.Ok(!RuleBook.IsBuiltInSimName("SimplyFunded"), "nor a firm whose name starts the same");
+        T.Ok(!RuleBook.IsBuiltInSimName("Sim - live money"), "nor one a trader named badly");
+        T.Ok(!RuleBook.IsBuiltInSimName("MySim101"), "nor one that merely ends that way");
+        T.Ok(!RuleBook.IsBuiltInSimName("Sim1132511"), "nor a long account number after it");
+        T.Ok(!RuleBook.IsBuiltInSimName(""), "and an empty name is nothing at all");
+        T.Ok(!RuleBook.IsBuiltInSimName(null), "neither is no name");
     }
 
     static void StartingOverReAnchorsTheFloor()
