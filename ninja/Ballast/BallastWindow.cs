@@ -1721,18 +1721,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             StackPanel head = new StackPanel();
             head.Margin = new Thickness(0, 0, 0, 14);
 
-            Button back = new Button();
-            back.Content = "\u2190  all accounts";
-            back.FontSize = 13;
-            back.Padding = new Thickness(0);
-            back.Background = ColTransparent;
-            back.BorderBrush = ColTransparent;
-            back.BorderThickness = new Thickness(0);
-            back.Foreground = ColAccent;
-            back.HorizontalAlignment = HorizontalAlignment.Left;
-            back.Margin = new Thickness(0, 0, 0, 10);
-            back.Click += delegate { ShowAccountList(); };
-            head.Children.Add(back);
+            head.Children.Add(BackToAccounts(new Thickness(0, 0, 0, 10)));
 
             setupAccountTitle = new TextBlock();
             setupAccountTitle.Foreground = ColInk;
@@ -1749,6 +1738,27 @@ namespace NinjaTrader.NinjaScript.AddOns
             head.Children.Add(setupAccountSub);
 
             return head;
+        }
+
+        /// <summary>
+        /// The way out of an account, built once and placed twice - at the top of
+        /// the page and again at the bottom. One definition, so the two can never
+        /// drift into looking like different things that do different jobs.
+        /// </summary>
+        private Button BackToAccounts(Thickness margin)
+        {
+            Button back = new Button();
+            back.Content = "\u2190  all accounts";
+            back.FontSize = 13;
+            back.Padding = new Thickness(0);
+            back.Background = ColTransparent;
+            back.BorderBrush = ColTransparent;
+            back.BorderThickness = new Thickness(0);
+            back.Foreground = ColAccent;
+            back.HorizontalAlignment = HorizontalAlignment.Left;
+            back.Margin = margin;
+            back.Click += delegate { ShowAccountList(); };
+            return back;
         }
 
         /// <summary>Back to the list of accounts.</summary>
@@ -2417,6 +2427,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             applyNote.Foreground = ColMuted;
             applyNote.Margin = new Thickness(0, 0, 0, 14);
             acct.Children.Add(applyNote);
+
+            // The same way out, at the end of the page.
+            //
+            // The way back was only at the top, so finishing an account meant
+            // scrolling the whole page back up to leave it - past every field
+            // just set, which is both a nuisance and an invitation to change
+            // something on the way past. The exit belongs where the work ends.
+            acct.Children.Add(BackToAccounts(new Thickness(0, 4, 0, 18)));
 
             TextBlock foot = new TextBlock();
             foot.Text = "Advisory only. Ballast never places, modifies or cancels an order, and never "
