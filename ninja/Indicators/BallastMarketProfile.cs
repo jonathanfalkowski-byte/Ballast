@@ -120,7 +120,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 			else if (State == State.DataLoaded)
 			{
 				rowSize = TicksPerRow * TickSize;
-				if (rowSize <= 0) rowSize = TickSize;
+
+				// TickSize can still be zero here if the instrument has not
+				// resolved. Falling back to it left rowSize at zero, and a row
+				// size of zero divides every price by nothing - which is not a
+				// crash, it is an int cast of infinity and a loop that never ends.
+				if (rowSize <= 0) rowSize = TickSize > 0 ? TickSize : 0.25;
 			}
 		}
 
@@ -209,9 +214,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 			devSessionStarted = true;
 		}
 
+		/// <summary>
+		/// The most price rows one bar may credit.
+		///
+		/// A bar spans a handful of rows - fifteen on a 60-range NQ chart at four
+		/// ticks a row. This bound exists for the case where it does not: a zero
+		/// or absurd price reaching here would ask for a loop of tens of
+		/// thousands per bar, on every bar, and that is not a wrong number on a
+		/// chart, it is a platform that stops responding. Bounded and ignored
+		/// rather than bounded and truncated, because a bar that wide is bad data
+		/// and counting part of it would put a false POC on the screen.
+		/// </summary>
+		private const int MaxRowsPerBar = 2000;
+
 		private void AddRange(double lo, double hi, long bracket)
 		{
+			if (lo <= 0 || hi <= 0 || hi < lo) return;
+
 			int rLo = RowOf(lo), rHi = RowOf(hi);
+			if (rHi - rLo > MaxRowsPerBar) return;
+
 			for (int r = rLo; r <= rHi; r++)
 			{
 				// Once per bracket per row. Without this a range chart would count
