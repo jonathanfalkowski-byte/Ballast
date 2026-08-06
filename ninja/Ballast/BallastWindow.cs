@@ -4104,6 +4104,32 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     lastSessionSave = now;
                     SaveSessionState();
+
+                    // Recount today from the journal, because the journal is the
+                    // record and the counters are only a cache of it.
+                    //
+                    // They are kept live as trades close, which is right - a rule
+                    // has to bite the moment the trade does, not thirty seconds
+                    // later. But a live counter can only ever go up, so anything
+                    // that increments it wrongly is permanent for the session.
+                    // That is how a wall appeared saying "APEX-11325-105 has
+                    // taken 3 losses" over a journal holding two: a phantom round
+                    // trip had been counted before the build that rejects them,
+                    // the journal was cleaned on the next load, and the counter
+                    // was not.
+                    //
+                    // A hard stop standing on a number nothing on screen supports
+                    // is the most expensive kind of wrong this product can be. It
+                    // does not just cost the trader the afternoon; it teaches him
+                    // that the wall is negotiable, and the next one will be the
+                    // real one.
+                    //
+                    // So the record wins, once every half minute. Nothing is lost
+                    // by it: a closed trade is written to the journal in the same
+                    // breath as it is counted, so the two can only disagree when
+                    // the counter is wrong.
+                    try { SeedTodaysCounts(CurrentTradingDayTrades(now)); }
+                    catch { }
                 }
 
                 List<AccountSnapshot> snaps = monitor.EvaluateAll(now);
