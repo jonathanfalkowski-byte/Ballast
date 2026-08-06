@@ -486,6 +486,30 @@ namespace Ballast
             until[Key(account, AllKinds)] = now.Date.AddDays(1);
         }
 
+        /// <summary>
+        /// Undo a stand-down on one account.
+        ///
+        /// "I'm done for the day" is a decision, and a decision made by accident
+        /// has to be reversible or the button becomes something a trader is
+        /// afraid to press. Reversing it is deliberately not free: it clears
+        /// every hold on the account, so the next line the account crosses raises
+        /// its wall again from scratch. Nothing is forgotten, only un-silenced.
+        /// </summary>
+        public void ClearAccount(string account)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+
+            List<string> gone = new List<string>();
+            foreach (KeyValuePair<string, DateTime> kv in until)
+            {
+                int bar = kv.Key.IndexOf('|');
+                string who = bar < 0 ? kv.Key : kv.Key.Substring(0, bar);
+                if (string.Equals(who, account, StringComparison.OrdinalIgnoreCase))
+                    gone.Add(kv.Key);
+            }
+            for (int i = 0; i < gone.Count; i++) until.Remove(gone[i]);
+        }
+
         public bool IsReleased(string account, string kind, DateTime now)
         {
             DateTime any;

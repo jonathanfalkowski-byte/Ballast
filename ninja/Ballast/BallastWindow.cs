@@ -232,6 +232,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         // The end-of-day and start-of-day review card. See BuildReviewCard.
         private Border reviewBorder;
         private TextBlock reviewHead, reviewBody;
+        private StackPanel doneRow;
+        private TextBlock doneNote;
         private string reviewShownMorning = "", reviewShownClosing = "";
         private string reviewLast = "";
         private int activeTab;
@@ -1493,6 +1495,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             emptyNote.TextWrapping = TextWrapping.Wrap;
             emptyNote.Margin = new Thickness(0, 4, 0, 0);
             p.Children.Add(emptyNote);
+
+            // Under the account list, deliberately. It ends the session on every
+            // account at once, so it must never sit where a hand travelling to
+            // something else can catch it.
+            p.Children.Add(BuildDoneButton());
 
             return p;
         }
@@ -4140,6 +4147,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     catch { }
 
                     RefreshReviewCard();
+                    RefreshDoneButton();
                 }
 
                 List<AccountSnapshot> snaps = monitor.EvaluateAll(now);
@@ -6099,6 +6107,112 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// A card, not a wall. The wall belongs to the daily loss limit, and
         /// spending its look on a review prompt would cost the wall its meaning.
         /// </summary>
+        /// <summary>
+        /// Calling the day yourself.
+        ///
+        /// The closing card waits for the clock, and the clock is often wrong
+        /// about a person: a trader who is finished at eleven should not have to
+        /// sit in front of a window that thinks he is still working. Pressing
+        /// this ends the session on every watched account at once and brings the
+        /// day's finding up immediately.
+        ///
+        /// It is reversible. A decision made by accident has to be, or it becomes
+        /// a button nobody dares press - and this one is quietly styled and sits
+        /// under the account list precisely so it is never hit on the way to
+        /// something else.
+        /// </summary>
+        private UIElement BuildDoneButton()
+        {
+            doneRow = new StackPanel();
+            doneRow.Orientation = Orientation.Horizontal;
+            doneRow.Margin = new Thickness(0, 14, 0, 4);
+
+            doneRow.Children.Add(QuietButton("I'm done for the day",
+                delegate { OnDoneForTheDay(); }));
+
+            doneNote = new TextBlock();
+            doneNote.Foreground = ColFaint;
+            doneNote.FontSize = 11;
+            doneNote.TextWrapping = TextWrapping.Wrap;
+            doneNote.Margin = new Thickness(0, 4, 0, 18);
+
+            StackPanel wrap = new StackPanel();
+            wrap.Children.Add(doneRow);
+            wrap.Children.Add(doneNote);
+            return wrap;
+        }
+
+        private void OnDoneForTheDay()
+        {
+            try
+            {
+                DateTime now = Core.Globals.Now;
+                foreach (string name in new List<string>(monitor.MonitoredNames))
+                    tiltGate.ReleaseAccountForDay(name, now);
+
+                SaveTiltGate();
+                RefreshDoneButton();
+                RefreshReviewCard();
+            }
+            catch { }
+        }
+
+        private void OnStillTrading()
+        {
+            try
+            {
+                foreach (string name in new List<string>(monitor.MonitoredNames))
+                    tiltGate.ClearAccount(name);
+
+                SaveTiltGate();
+                RefreshDoneButton();
+                RefreshReviewCard();
+            }
+            catch { }
+        }
+
+        /// <summary>True when every watched account has been stood down for today.</summary>
+        private bool EverythingStoodDown(DateTime now)
+        {
+            bool any = false;
+            foreach (string name in monitor.MonitoredNames)
+            {
+                any = true;
+                if (!tiltGate.IsReleased(name, TiltKind.PastFloor, now)) return false;
+            }
+            return any;
+        }
+
+        private void RefreshDoneButton()
+        {
+            if (doneRow == null || doneNote == null) return;
+
+            try
+            {
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+                if (EverythingStoodDown(now))
+                {
+                    doneRow.Children.Clear();
+                    doneRow.Children.Add(QuietButton("Actually, I'm still trading",
+                        delegate { OnStillTrading(); }));
+                    doneNote.Text = "You have called it for today. Ballast keeps watching and "
+                                  + "keeps counting; it has just stopped arguing with you.";
+                }
+                else
+                {
+                    doneRow.Children.Clear();
+                    doneRow.Children.Add(QuietButton("I'm done for the day",
+                        delegate { OnDoneForTheDay(); }));
+                    doneNote.Text = "Ends the session on every account you are watching and shows "
+                                  + "you the day. Use it when you are finished before your window "
+                                  + "is.";
+                }
+            }
+            catch { }
+        }
+
         private UIElement BuildReviewCard()
         {
             reviewBorder = new Border();
@@ -6229,7 +6343,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 // the closing card
-                if (handTradesToday > 0 && reviewShownClosing != today && TradingIsOverFor(now))
+                if (handTradesToday > 0 && reviewShownClosing != today
+                    && TradingIsOverFor(now, todays))
                 {
                     string where;
                     string lesson = LessonFor(todays, sims, out where);
@@ -6326,38 +6441,62 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// Is the trading over? Every watched account stood down, or past the end
-        /// of its own session window.
+        /// Is the trading over?
+        ///
+        /// Only the accounts he ACTUALLY TRADED today can hold the day open, and
+        /// each is judged against its own window. That is the point he made and
+        /// the first version got wrong: end of day is per account, so a trader
+        /// who finished two Apex accounts at 12:30 should get his day back at
+        /// 12:30 - not sit waiting on a Sim110 he never touched whose window
+        /// happens to run to four.
+        ///
+        /// Stood down counts as finished, whether that was one account at a wall
+        /// or all of them at once from the button.
+        ///
+        /// An account with no window set gets the New York close, because a
+        /// trader without a window still has an end to his day.
         /// </summary>
-        private bool TradingIsOverFor(DateTime now)
+        private bool TradingIsOverFor(DateTime now, List<BallastTrade> todays)
         {
             int nowMin = now.Hour * 60 + now.Minute;
-            bool anyWindow = false, allDone = true, any = false;
 
-            foreach (string name in monitor.MonitoredNames)
+            List<string> traded = new List<string>();
+            for (int i = 0; i < todays.Count; i++)
             {
-                any = true;
+                BallastTrade e = todays[i];
+                if (e == null || e.Automated || e.IsReconstructed) continue;
+                if (string.IsNullOrEmpty(e.AccountName)) continue;
+
+                bool have = false;
+                for (int a = 0; a < traded.Count; a++)
+                    if (string.Equals(traded[a], e.AccountName, StringComparison.OrdinalIgnoreCase))
+                    { have = true; break; }
+                if (!have) traded.Add(e.AccountName);
+            }
+
+            if (traded.Count == 0) return false;
+
+            for (int i = 0; i < traded.Count; i++)
+            {
+                string name = traded[i];
+
+                if (tiltGate != null && tiltGate.IsReleased(name, TiltKind.PastFloor, now)) continue;
+
                 BallastTracker t = monitor.Get(name);
                 if (t == null) continue;
 
-                // Already said he is done with this one - it is not holding the
-                // day open. IsReleased with the catch-all kind is exactly what
-                // "I'm done for the day" sets.
-                if (tiltGate != null && tiltGate.IsReleased(name, TiltKind.PastFloor, now)) continue;
-
+                int start = t.Config.SessionStartMinute;
                 int end = t.Config.SessionEndMinute;
-                if (t.Config.SessionStartMinute == end) { allDone = false; continue; }
 
-                anyWindow = true;
-                if (nowMin < end) allDone = false;
+                if (start == end) { if (nowMin < 16 * 60) return false; continue; }
+
+                // A window that crosses midnight is over only in the gap between
+                // its end and its next start.
+                if (end < start) { if (!(nowMin >= end && nowMin < start)) return false; }
+                else if (nowMin < end) return false;
             }
 
-            if (!any) return false;
-            if (allDone && anyWindow) return true;
-
-            // Nobody set a window. A trader without one still has an end to his
-            // day, and the New York close is the honest stand-in.
-            return nowMin >= 16 * 60;
+            return true;
         }
 
         /// <summary>

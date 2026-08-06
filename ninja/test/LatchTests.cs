@@ -27,6 +27,46 @@ public static class LatchTests
         ClosingTheWindowDoesNotUnspendTheDay();
         TheWallDoesNotFollowYouAroundAllDay();
         StandingDownIsRememberedAndCountedOnce();
+        StandingDownCanBeTakenBack();
+    }
+
+    /// <summary>
+    /// "we should probably have a Done for the Day button on ballast"
+    ///
+    /// One button that ends the session on every watched account at once. A
+    /// decision made by accident has to be reversible, or it becomes a button
+    /// nobody dares press - and a stand-down button nobody presses is worse than
+    /// no button, because the alternative is trading on.
+    ///
+    /// Taking it back is deliberately not free: it clears every hold on the
+    /// account, so the next line crossed raises its wall again from nothing.
+    /// Un-silenced, not forgotten.
+    /// </summary>
+    static void StandingDownCanBeTakenBack()
+    {
+        T.S("standing down can be taken back");
+
+        DateTime t0 = new DateTime(2026, 8, 6, 11, 0, 0);
+        TiltGate gate = new TiltGate();
+
+        gate.ReleaseAccountForDay("APEX-11325-105", t0);
+        gate.ReleaseAccountForDay("APEX-11325-106", t0);
+
+        T.Ok(gate.IsReleased("APEX-11325-105", TiltKind.LossStreak, t0.AddHours(1)),
+             "both accounts are quiet for the rest of the day");
+        T.Ok(gate.IsReleased("APEX-11325-106", TiltKind.LossStreak, t0.AddHours(1)),
+             "including the one that was not at a line");
+
+        gate.ClearAccount("APEX-11325-105");
+
+        T.Ok(!gate.IsReleased("APEX-11325-105", TiltKind.LossStreak, t0.AddHours(1)),
+             "the one taken back can raise a wall again");
+        T.Ok(gate.IsReleased("APEX-11325-106", TiltKind.LossStreak, t0.AddHours(1)),
+             "and the other is untouched - it is per account, not a global undo");
+
+        // Tomorrow is clean regardless, which was already true and must stay so.
+        T.Ok(!gate.IsReleased("APEX-11325-106", TiltKind.LossStreak, t0.AddDays(1)),
+             "and the release still expires overnight");
     }
 
     static BallastTracker Fresh(DateTime t0, double limit)
