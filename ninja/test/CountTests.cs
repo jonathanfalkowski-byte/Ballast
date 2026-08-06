@@ -46,7 +46,26 @@ public static class CountTests
         // the trades ratio earlier in the same line.
         T.Ok(line.IndexOf("$0 OF $750 TARGET") >= 0, "and today's target, which is the other end of the same decision");
         T.Ok(line.IndexOf("/$750") < 0, "with only one ratio on the line, and it belongs to the counts");
-        T.Ok(line.IndexOf("$6,500 TO THE FLOOR") >= 0, "and the room to the floor, named as the window names it");
+        T.Ok(line.IndexOf("$6,500 TO FLOOR") >= 0, "and the room to the floor");
+
+        // A chart panel is one line wide and does not ellipsis - it wraps, and
+        // a wrapped status strip clips its own left edge. The account name is
+        // what gets given up, because the Chart Trader names it an inch away.
+        T.Ok(line.Length <= 92, "and the whole line fits one chart row: " + line.Length + " chars");
+
+        // With every field populated and a real prop account number in front of
+        // it, the line still has to fit - that is the case that wrapped on his
+        // screen and came back as "PEX-11325-106 ... TO THE / LOOR".
+        AccountState full = new AccountState();
+        full.TradesToday = 3; full.MaxTrades = 5;
+        full.LossesToday = 1; full.MaxLosses = 2;
+        full.RoomToday = 2000; full.DailyLossLimit = 2000;
+        full.DailyPnl = 876; full.DailyTarget = 1400;
+        full.CanLose = 5178; full.HasCushion = true;
+        string wide = BallastState.ChartCount(full, "APEX-11325-106");
+        T.Ok(wide.Length <= 92, "a full line with a prop account number fits: " + wide.Length);
+        T.Ok(wide.IndexOf("LEFT TO LOSE") >= 0, "and keeps the words that carry the meaning");
+        T.Ok(wide.IndexOf("APEX") < 0, "giving up the account name, which the Chart Trader shows anyway");
 
         // The actual complaint: changing an account's rules produced no visible
         // change on the chart, because the chart only ever said "BALLAST OK".

@@ -138,12 +138,25 @@ namespace Ballast
         /// a glance, and it changes when the account's rules change - which is
         /// what makes the indicator visibly alive.
         /// </summary>
+        /// <summary>
+        /// The widest the count line may be before the account name is dropped.
+        ///
+        /// Not a pixel measurement - the indicator does not know its own width
+        /// when this is built - but a character budget that fits a normal chart
+        /// at the default text size. Erring small costs the account name;
+        /// erring large costs a wrapped, clipped, unreadable strip.
+        /// </summary>
+        private const int MaxChartLine = 92;
+
+        /// <summary>Between fields. Two spaces, not three - the line is tight.</summary>
+        private const string Gap = "  ";
+
         public static string ChartCount(AccountState s, string account)
         {
             if (s == null) return "";
 
             StringBuilder sb = new StringBuilder();
-            if (!string.IsNullOrEmpty(account)) sb.Append(account.ToUpperInvariant()).Append("   ");
+            if (!string.IsNullOrEmpty(account)) sb.Append(account.ToUpperInvariant()).Append(Gap);
 
             // A bare count agrees with itself - "1 TRADE". A ratio does not:
             // "1/5 TRADE" is wrong, because the noun belongs to the limit, not to
@@ -153,7 +166,7 @@ namespace Ballast
             if (s.MaxTrades > 0) sb.Append('/').Append(s.MaxTrades);
             sb.Append(s.MaxTrades <= 0 && s.TradesToday == 1 ? " TRADE" : " TRADES");
 
-            sb.Append("   ").Append(s.LossesToday);
+            sb.Append(Gap).Append(s.LossesToday);
             if (s.MaxLosses > 0) sb.Append('/').Append(s.MaxLosses);
             sb.Append(s.MaxLosses <= 0 && s.LossesToday == 1 ? " LOSS" : " LOSSES");
 
@@ -176,23 +189,42 @@ namespace Ballast
             // and a line read sideways in a second while a position is on cannot
             // afford to make the reader work it out from context.
             if (s.HasDailyLimit)
-                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT TO LOSE");
+                sb.Append(Gap).Append(Money(s.RoomToday)).Append(" LEFT TO LOSE");
 
             // "OF" rather than a slash, so the target cannot be mistaken for
             // another count like the 5/12 trades earlier in the same line. One
             // ratio per line, and it belongs to the counts.
             if (s.DailyTarget > 0)
             {
-                if (s.DailyPnl >= s.DailyTarget) sb.Append("   TARGET HIT");
-                else sb.Append("   ").Append(Money(s.DailyPnl > 0 ? s.DailyPnl : 0))
+                if (s.DailyPnl >= s.DailyTarget) sb.Append(Gap).Append("TARGET HIT");
+                else sb.Append(Gap).Append(Money(s.DailyPnl > 0 ? s.DailyPnl : 0))
                        .Append(" OF ").Append(Money(s.DailyTarget)).Append(" TARGET");
             }
 
-            // The account-ending number, named the same way the window names it.
+            // The account-ending number. "TO FLOOR" rather than the window's
+            // "TO THE FLOOR" purely for width - see the wrapping note below.
             if (s.HasCushion)
-                sb.Append("   ").Append(Money(s.CanLose)).Append(" TO THE FLOOR");
+                sb.Append(Gap).Append(Money(s.CanLose)).Append(" TO FLOOR");
 
-            return sb.ToString();
+            // Drop the account name rather than let the line wrap.
+            //
+            // A chart panel is one line wide. Overflow does not scroll or
+            // ellipsis - it wraps, and the wrap took the last word onto a second
+            // row with the first characters of the account name clipped off the
+            // left, so the line read "PEX-11325-106 ... TO THE / LOOR". A status
+            // strip that mangles itself is worse than one that says less.
+            //
+            // The account name is the thing to give up. Every number on this line
+            // is unavailable anywhere else on the chart; the account is named in
+            // the Chart Trader panel an inch away, and this indicator reads its
+            // account FROM there, so the two cannot disagree.
+            string line = sb.ToString();
+            if (line.Length > MaxChartLine && !string.IsNullOrEmpty(account))
+            {
+                int cut = account.Length + Gap.Length;
+                if (cut < line.Length) line = line.Substring(cut);
+            }
+            return line;
         }
 
         /// <summary>

@@ -427,9 +427,26 @@ namespace Ballast
         public int Count { get { return entries.Count; } }
         public List<BallastTrade> All { get { return new List<BallastTrade>(entries); } }
 
+        /// <summary>
+        /// A round trip that ended before it began. Not a trade - see LoadCsv and
+        /// BallastTracker.OnPosition for where these come from.
+        ///
+        /// Checked in three places rather than one on purpose: at creation, on
+        /// load, and here at the door of the list. A single one of these reaching
+        /// the entries costs more than a bad row - it is counted as a trade, it
+        /// queues itself for tagging, and it throws the day's watched total out
+        /// far enough that the gap reconciler invents a second phantom to balance
+        /// it. Cheap to check, expensive to miss.
+        /// </summary>
+        public static bool IsImpossible(BallastTrade e)
+        {
+            return e != null && e.ExitTime < e.EntryTime;
+        }
+
         public void Add(BallastTrade e)
         {
             if (e == null) return;
+            if (IsImpossible(e)) return;
             if (e.SessionPlan.Length == 0) e.SessionPlan = SessionPlan;
             entries.Add(e);
         }
@@ -515,6 +532,7 @@ namespace Ballast
                 // Nothing to ask a strategy. Queueing bot trades would bury the
                 // two or three discretionary ones that actually need an answer.
                 if (entries[i].Automated) continue;
+                if (IsImpossible(entries[i])) continue;
                 if (!entries[i].Dismissed) list.Add(entries[i]);
             }
             return list;
@@ -1287,7 +1305,7 @@ namespace Ballast
                     // everywhere they are read, and the file is written back
                     // without them, so the journal heals itself the first time it
                     // is opened by a build that knows better.
-                    if (e.ExitTime < e.EntryTime) continue;
+                    if (IsImpossible(e)) continue;
 
                     entries.Add(e);
                 }

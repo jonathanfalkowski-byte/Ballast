@@ -577,7 +577,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // "TO THE FLOOR" on the count line and in the window - which invited
             // exactly the mix-up the count line has just been fixed for.
             if (st.HasCushion && !st.Locked)
-                text += "        " + Money(st.CanLose) + " TO THE FLOOR";
+                text += "      " + Money(st.CanLose) + " TO FLOOR";
 
             // An alarm fills Ballast's own strip: solid background, no
             // transparency, centred. There is nothing underneath it to blend
