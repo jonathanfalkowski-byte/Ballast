@@ -6404,9 +6404,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             g.ColumnDefinitions.Add(new ColumnDefinition());
             g.ColumnDefinitions.Add(new ColumnDefinition());
 
-            g.Children.Add(Cell(e.EntryTime.ToString("HH:mm", CultureInfo.InvariantCulture)
-                              + "-" + e.ExitTime.ToString("HH:mm", CultureInfo.InvariantCulture),
-                              ColMuted, 0, FontWeights.Normal));
+            g.Children.Add(Cell(e.When, ColMuted, 0, FontWeights.Normal));
 
             string size = e.SizeLabel;
             string what = (size.Length > 0 ? size + "  " : "")

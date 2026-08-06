@@ -1190,6 +1190,30 @@ namespace Ballast
             {
                 // Round-trip complete.
                 inPosition = false;
+
+                // Unless it ended before it began, which no trade does.
+                //
+                // NinjaTrader replays a position's executions when Ballast
+                // subscribes to an account, and they do not always arrive in the
+                // order they happened. The closing SELL of a long, arriving
+                // first, looks exactly like the opening of a short - so the trade
+                // got written down a second time, mirrored: same money, same
+                // size, direction inverted, entry and exit swapped.
+                //
+                // It cost more than a duplicate row. It was counted as a second
+                // trade, it queued itself for tagging so he was asked to tag a
+                // trade he had already tagged - and worse, the day's watched
+                // total was then $880 too high, so the gap reconciler booked an
+                // $884 "trade while Ballast was closed" to make the arithmetic
+                // balance. One real winning trade became three trades and a loss,
+                // against rules that stop him at three.
+                if (now < openedAt)
+                {
+                    openInstrument = "";
+                    openImage = "";
+                    return null;
+                }
+
                 double tradePnl = realisedNow - realisedAtTradeOpen;
 
                 TradesToday++;

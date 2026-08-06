@@ -31,6 +31,7 @@ public static class ResetTests
         StartingOverReAnchorsTheFloor();
         AResizedAccountIsCaughtAfterARestart();
         OnlySimAccountsGetTheOneClickVersion();
+        AMirroredReplayIsNotASecondTrade();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -226,6 +227,58 @@ public static class ResetTests
         T.Ok(!RuleBook.IsBuiltInSimName("Sim1132511"), "nor a long account number after it");
         T.Ok(!RuleBook.IsBuiltInSimName(""), "and an empty name is nothing at all");
         T.Ok(!RuleBook.IsBuiltInSimName(null), "neither is no name");
+    }
+
+    /// <summary>
+    /// "plus it is asking me again i believe about the same trade that i already
+    /// entered on the second one but im not sure if that is the same trade or one
+    /// from a while ago."
+    ///
+    /// It was the same trade. One winning long on APEX-11325-106 was written into
+    /// the journal twice: once correctly as Long 09:36:01-09:37:50 +$880, and
+    /// once mirrored as Short 09:37:50-09:36:01 +$880 - same money, same size,
+    /// direction inverted, entry and exit swapped.
+    ///
+    /// NinjaTrader replays a position's executions when Ballast subscribes to an
+    /// account, and not always in the order they happened. The closing SELL of a
+    /// long, arriving first, is indistinguishable from the opening of a short.
+    ///
+    /// The duplicate row was the least of it. The day's watched total was then
+    /// $880 too high, so the gap reconciler booked an $884 "trade while Ballast
+    /// was closed" to make the arithmetic balance. One real winning trade became
+    /// three trades and a loss, on an account whose rule stops him at three.
+    /// </summary>
+    static void AMirroredReplayIsNotASecondTrade()
+    {
+        T.S("a round trip cannot end before it began");
+
+        BallastTracker t = Fresh();
+
+        // The real trade: long at 09:36:01, out at 09:37:50, up 880.
+        DateTime entry = new DateTime(2026, 8, 6, 9, 36, 1);
+        DateTime exit = new DateTime(2026, 8, 6, 9, 37, 50);
+        t.OnPosition(1, 0, entry, "NQ SEP26", "APEX-11325-106");
+        BallastTrade real = t.OnPosition(0, 880, exit, "NQ SEP26", "APEX-11325-106");
+
+        T.Ok(real != null, "the trade is recorded");
+        T.Eq(t.TradesToday, 1, "and counted once");
+
+        // The replay: the closing sell arrives looking like a new short at the
+        // EXIT time, then the earlier buy closes it at the ENTRY time.
+        t.OnPosition(-1, 880, exit, "NQ SEP26", "APEX-11325-106");
+        BallastTrade ghost = t.OnPosition(0, 1760, entry, "NQ SEP26", "APEX-11325-106");
+
+        T.Ok(ghost == null, "the mirror image is not a trade and never reaches the journal");
+        T.Eq(t.TradesToday, 1, "the day still holds one trade, not two");
+        T.Eq(t.LossesToday, 0, "and no loss is invented");
+
+        // And the next real trade still works - the tracker is not left half open.
+        DateTime later = new DateTime(2026, 8, 6, 10, 15, 0);
+        t.OnPosition(1, 880, later, "NQ SEP26", "APEX-11325-106");
+        BallastTrade next = t.OnPosition(0, 680, later.AddMinutes(3), "NQ SEP26", "APEX-11325-106");
+        T.Ok(next != null, "the account is not left stuck in a position that never was");
+        T.Eq(t.TradesToday, 2, "and the day counts on normally");
+        T.Eq(t.LossesToday, 1, "including the loss that really happened");
     }
 
     static void StartingOverReAnchorsTheFloor()

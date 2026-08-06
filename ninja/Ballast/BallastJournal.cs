@@ -199,9 +199,29 @@ namespace Ballast
                 string ins = Instrument.Length > 0 ? Instrument : "position";
                 string size = SizeLabel;
                 return (size.Length > 0 ? size + " " : "") + ins
-                     + "  " + EntryTime.ToString("HH:mm", CultureInfo.InvariantCulture)
-                     + "-" + ExitTime.ToString("HH:mm", CultureInfo.InvariantCulture)
+                     + "  " + When
                      + "  " + Money(Pnl);
+            }
+        }
+
+        /// <summary>
+        /// The date and the clock, in that order.
+        ///
+        /// The date used to be missing everywhere a trade was listed, which is
+        /// fine right up until the list holds more than one day - and then a row
+        /// reading "09:36-09:37" makes a trader stop and think "wait, I didn't do
+        /// this trade". A journal you have to second-guess is not a record.
+        ///
+        /// Day and month only. The year is noise on a list nobody keeps for
+        /// twelve months, and the space belongs to the numbers.
+        /// </summary>
+        public string When
+        {
+            get
+            {
+                return EntryTime.ToString("d MMM", CultureInfo.InvariantCulture)
+                     + "  " + EntryTime.ToString("HH:mm", CultureInfo.InvariantCulture)
+                     + "-" + ExitTime.ToString("HH:mm", CultureInfo.InvariantCulture);
             }
         }
 
