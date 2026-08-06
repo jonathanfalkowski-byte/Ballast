@@ -1,0 +1,169 @@
+using System;
+using System.Collections.Generic;
+using Ballast;
+
+/// <summary>
+/// "i noticed i havent really looked at the journal at the end of the day or
+/// barely during the day....otherwise it fails to do what it is supposed to do"
+///
+/// He had been answering every question on every trade for a week and had not
+/// once opened the page where the answers add up. That makes the journal
+/// tagging overhead - a cost he pays daily for a benefit he never collects.
+///
+/// So the finding goes to him. These tests are about what it is allowed to SAY,
+/// which matters more than that it says anything: a sentence that overclaims on
+/// a three-trade sample is how a journal starts lying to a trader who has
+/// finally begun reading it.
+/// </summary>
+public static class LessonTests
+{
+    public static void Run()
+    {
+        ExecutionComesFirstBecauseItCanBeActedOn();
+        ItWillNotCompareAgainstNothing();
+        TheSetupSplitIsTheSecondChoice();
+        AFeelingThatOnlyEverLostIsWorthSaying();
+        AQuietDayJustReportsItself();
+        StrategyTradesAndGapsAreNotEvidence();
+        NoTradesMeansNothingToSay();
+    }
+
+    static readonly DateTime D = new DateTime(2026, 8, 6, 10, 0, 0);
+
+    static BallastTrade Tr(double pnl, string planned, string setup, string feeling)
+    {
+        BallastTrade e = new BallastTrade();
+        e.AccountName = "APEX-11325-106";
+        e.Instrument = "NQ SEP26";
+        e.EntryTime = D;
+        e.ExitTime = D.AddMinutes(2);
+        e.MaxContracts = 1;          // a real, watched trade - see IsReconstructed
+        e.Pnl = pnl;
+        e.Planned = planned;
+        e.Setup = setup;
+        e.Feeling = feeling;
+        return e;
+    }
+
+    static void ExecutionComesFirstBecauseItCanBeActedOn()
+    {
+        T.S("the day's lesson leads with what can be changed tomorrow");
+
+        // A day with a clear execution story AND a clear setup story. Execution
+        // wins, because "stop chasing" is an instruction and "setup B is weaker"
+        // is a research note.
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(300, BallastJournal.Verdict_ByTheBook, "A", ""));
+        day.Add(Tr(200, BallastJournal.Verdict_ByTheBook, "A", ""));
+        day.Add(Tr(-400, BallastJournal.Verdict_Chased, "B", ""));
+        day.Add(Tr(-250, BallastJournal.Verdict_Chased, "B", ""));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("off your plan") >= 0, "it names the execution, not the setup: " + s);
+        T.Ok(s.IndexOf("$650") >= 0, "and what it cost");
+        T.Ok(s.IndexOf("$500") >= 0, "against what keeping to it made");
+    }
+
+    static void ItWillNotCompareAgainstNothing()
+    {
+        T.S("a day with only planned trades is not evidence about chasing");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(-300, BallastJournal.Verdict_ByTheBook, "", ""));
+        day.Add(Tr(-200, BallastJournal.Verdict_ByTheBook, "", ""));
+        day.Add(Tr(-100, BallastJournal.Verdict_ByTheBook, "", ""));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("off your plan") < 0,
+             "nothing was taken off plan, so nothing is claimed about it: " + s);
+        T.Ok(s.IndexOf("3 trades") >= 0, "it falls back to reporting the day: " + s);
+
+        // One chased trade is an anecdote, not a comparison.
+        List<BallastTrade> thin = new List<BallastTrade>();
+        thin.Add(Tr(200, BallastJournal.Verdict_ByTheBook, "", ""));
+        thin.Add(Tr(200, BallastJournal.Verdict_ByTheBook, "", ""));
+        thin.Add(Tr(-900, BallastJournal.Verdict_Chased, "", ""));
+        T.Ok(BallastJournal.DayLesson(thin).IndexOf("off your plan") < 0,
+             "one chased trade, however expensive, is not a pattern");
+    }
+
+    static void TheSetupSplitIsTheSecondChoice()
+    {
+        T.S("with no execution story, the setups get to speak");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(400, BallastJournal.Verdict_ByTheBook, "A - EMA cross", ""));
+        day.Add(Tr(150, BallastJournal.Verdict_ByTheBook, "A - EMA cross", ""));
+        day.Add(Tr(-300, BallastJournal.Verdict_ByTheBook, "B - pivot", ""));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("A - EMA cross") >= 0 && s.IndexOf("B - pivot") >= 0,
+             "both setups are named: " + s);
+        T.Ok(s.IndexOf("$550") >= 0, "with what the good one made");
+        T.Ok(s.IndexOf("$300") >= 0, "and what the bad one cost");
+    }
+
+    static void AFeelingThatOnlyEverLostIsWorthSaying()
+    {
+        T.S("a feeling that only ever lost is worth naming");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(-200, BallastJournal.Verdict_ByTheBook, "", "Wanted it back"));
+        day.Add(Tr(-150, BallastJournal.Verdict_ByTheBook, "", "Wanted it back"));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("Wanted it back") >= 0, "the feeling is quoted back: " + s);
+        T.Ok(s.IndexOf("$350") >= 0, "with what it cost");
+        T.Ok(s.IndexOf("size up") >= 0, "and what to do about it");
+    }
+
+    static void AQuietDayJustReportsItself()
+    {
+        T.S("a day with nothing to compare reports itself and no more");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(120, "", "", ""));
+        day.Add(Tr(-40, "", "", ""));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("2 trades") >= 0, "the count: " + s);
+        T.Ok(s.IndexOf("1 green") >= 0, "how many worked");
+        T.Ok(s.IndexOf("$80") >= 0, "and the net");
+        T.Ok(s.IndexOf("cost") < 0, "with no claim about why");
+    }
+
+    static void StrategyTradesAndGapsAreNotEvidence()
+    {
+        T.S("bot trades and reconstructed gaps are left out");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+
+        BallastTrade bot = Tr(-5000, BallastJournal.Verdict_Chased, "", "");
+        bot.Automated = true;
+        day.Add(bot);
+
+        BallastTrade gap = Tr(-900, "", "", "");
+        gap.Instrument = "(Ballast was closed)";
+        gap.MaxContracts = 0;        // no size is what makes a row reconstructed
+        day.Add(gap);
+
+        day.Add(Tr(120, "", "", ""));
+        day.Add(Tr(-40, "", "", ""));
+
+        string s = BallastJournal.DayLesson(day);
+        T.Ok(s.IndexOf("2 trades") >= 0,
+             "only the two he actually took by hand are counted: " + s);
+        T.Ok(s.IndexOf("$80") >= 0,
+             "and the bot's loss is not laid at his door - a strategy has no "
+           + "discipline to report on, and a gap has no detail to report");
+    }
+
+    static void NoTradesMeansNothingToSay()
+    {
+        T.S("a day with no trades says nothing at all");
+
+        T.Eq(BallastJournal.DayLesson(new List<BallastTrade>()), "",
+             "silence, rather than a cheerful nothing");
+        T.Eq(BallastJournal.DayLesson(null), "", "and the same for no list at all");
+    }
+}

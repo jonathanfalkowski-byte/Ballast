@@ -228,6 +228,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private Button tabNow, tabJournal, tabSetup;
         private StackPanel pageNow, pageJournal, pageSetup;
+
+        // The end-of-day and start-of-day review card. See BuildReviewCard.
+        private Border reviewBorder;
+        private TextBlock reviewHead, reviewBody;
+        private string reviewShownMorning = "", reviewShownClosing = "";
+        private string reviewLast = "";
         private int activeTab;
         private TextBlock planReminder, emptyNote;
 
@@ -1457,6 +1463,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             journalStrip = new StackPanel();
             journalStripBorder.Child = journalStrip;
             p.Children.Add(journalStripBorder);
+
+            p.Children.Add(BuildReviewCard());
 
             p.Children.Add(SectionHeader("ACCOUNTS"));
 
@@ -4130,6 +4138,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // the counter is wrong.
                     try { SeedTodaysCounts(CurrentTradingDayTrades(now)); }
                     catch { }
+
+                    RefreshReviewCard();
                 }
 
                 List<AccountSnapshot> snaps = monitor.EvaluateAll(now);
@@ -5695,6 +5705,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             SeedTodaysCounts(today);
             LoadStandingPlan();
             LoadSetups();
+            LoadReview();
             LoadEvents();
             RenderJournal();
         }
@@ -6063,6 +6074,242 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (today[i].SessionPlan.Length == 0) today[i].SessionPlan = plan;
 
             journalDirty = true;
+        }
+
+        /// <summary>
+        /// The card that makes the journal worth keeping.
+        ///
+        /// "i noticed i havent really looked at the journal at the end of the day
+        /// or barely during the day....otherwise it fails to do what it is
+        /// supposed to do." He had been answering every question on every trade
+        /// for a week and had never opened the page where the answers add up,
+        /// which makes the tagging a cost he pays daily for a benefit he never
+        /// collects.
+        ///
+        /// So it does not ask. "Would you like to review your journal?" is a
+        /// question with an easy no, and at the end of a losing day the answer is
+        /// always no. It states the strongest thing the day showed and puts the
+        /// journal one click behind it.
+        ///
+        /// Twice, because these are two different jobs. At the end of the session
+        /// the trades are still in his head, which is when his own tags mean the
+        /// most to him. At the start of the next one he has not traded yet, which
+        /// is the only moment a finding can still change a decision.
+        ///
+        /// A card, not a wall. The wall belongs to the daily loss limit, and
+        /// spending its look on a review prompt would cost the wall its meaning.
+        /// </summary>
+        private UIElement BuildReviewCard()
+        {
+            reviewBorder = new Border();
+            reviewBorder.CornerRadius = new CornerRadius(8);
+            reviewBorder.Background = ColPanel;
+            reviewBorder.BorderBrush = ColAccent;
+            reviewBorder.BorderThickness = new Thickness(1);
+            reviewBorder.Padding = new Thickness(14, 12, 14, 12);
+            reviewBorder.Margin = new Thickness(0, 0, 0, 18);
+            reviewBorder.Visibility = Visibility.Collapsed;
+
+            StackPanel s = new StackPanel();
+
+            reviewHead = new TextBlock();
+            reviewHead.Foreground = ColAccent;
+            reviewHead.FontWeight = FontWeights.Bold;
+            reviewHead.FontSize = 11;
+            reviewHead.Margin = new Thickness(0, 0, 0, 6);
+            s.Children.Add(reviewHead);
+
+            reviewBody = new TextBlock();
+            reviewBody.Foreground = ColInk;
+            reviewBody.FontSize = 14;
+            reviewBody.TextWrapping = TextWrapping.Wrap;
+            reviewBody.Margin = new Thickness(0, 0, 0, 10);
+            s.Children.Add(reviewBody);
+
+            StackPanel btns = new StackPanel();
+            btns.Orientation = Orientation.Horizontal;
+            btns.Children.Add(PrimaryButton("See the day", delegate { OnOpenReview(); }));
+            btns.Children.Add(QuietButton("Not now", delegate { OnDismissReview(); }));
+            s.Children.Add(btns);
+
+            reviewBorder.Child = s;
+            return reviewBorder;
+        }
+
+        private void OnOpenReview()
+        {
+            MarkReviewSeen();
+            ShowTab(1);                     // the journal
+        }
+
+        private void OnDismissReview()
+        {
+            MarkReviewSeen();
+            if (reviewBorder != null) reviewBorder.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Once a day per card. Dismissing it must survive a restart, or the
+        /// thing becomes wallpaper by the third time it comes back.
+        /// </summary>
+        private void MarkReviewSeen()
+        {
+            try
+            {
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+                string today = now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+
+                if (reviewLast == "morning") reviewShownMorning = today;
+                else reviewShownClosing = today;
+
+                AtomicFile.WriteAllText(ReviewPath(), reviewShownMorning + "|" + reviewShownClosing);
+            }
+            catch { }
+        }
+
+        private string ReviewPath()
+        {
+            try { return Path.Combine(Core.Globals.UserDataDir, "ballast-review.txt"); }
+            catch { return "ballast-review.txt"; }
+        }
+
+        private void LoadReview()
+        {
+            try
+            {
+                if (!File.Exists(ReviewPath())) return;
+                string[] f = File.ReadAllText(ReviewPath()).Trim().Split('|');
+                if (f.Length > 0) reviewShownMorning = f[0];
+                if (f.Length > 1) reviewShownClosing = f[1];
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Decide which card, if either, belongs on screen.
+        ///
+        /// The morning card wants the moment before the first trade of a new day.
+        /// The closing card wants the moment the trading is over - every account
+        /// either stood down or past the end of its own window. Where no account
+        /// has a window set, the New York close stands in, because a trader with
+        /// no window still has an end to his day.
+        /// </summary>
+        private void RefreshReviewCard()
+        {
+            if (reviewBorder == null || monitor == null) return;
+
+            try
+            {
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+                string today = now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+
+                List<BallastTrade> todays = CurrentTradingDayTrades(now);
+                int handTradesToday = 0;
+                for (int i = 0; i < todays.Count; i++)
+                    if (todays[i] != null && !todays[i].Automated && !todays[i].IsReconstructed)
+                        handTradesToday++;
+
+                // the morning card
+                if (handTradesToday == 0 && reviewShownMorning != today)
+                {
+                    string lesson = BallastJournal.DayLesson(PreviousSessionTrades(now));
+                    if (lesson.Length > 0)
+                    {
+                        reviewLast = "morning";
+                        reviewHead.Text = "BEFORE YOU START";
+                        reviewBody.Text = "Last session: " + lesson;
+                        reviewBorder.Visibility = Visibility.Visible;
+                        return;
+                    }
+                }
+
+                // the closing card
+                if (handTradesToday > 0 && reviewShownClosing != today && TradingIsOverFor(now))
+                {
+                    string lesson = BallastJournal.DayLesson(todays);
+                    if (lesson.Length > 0)
+                    {
+                        reviewLast = "closing";
+                        reviewHead.Text = "THAT IS THE DAY";
+                        reviewBody.Text = lesson;
+                        reviewBorder.Visibility = Visibility.Visible;
+                        return;
+                    }
+                }
+
+                reviewBorder.Visibility = Visibility.Collapsed;
+            }
+            catch { }
+        }
+
+        /// <summary>The most recent day before today that has any hand trades in it.</summary>
+        private List<BallastTrade> PreviousSessionTrades(DateTime now)
+        {
+            List<BallastTrade> all = monitor.Journal.All;
+            DateTime today = TradingDayOf(now);
+
+            DateTime best = DateTime.MinValue;
+            for (int i = 0; i < all.Count; i++)
+            {
+                BallastTrade e = all[i];
+                if (e == null || e.Automated || e.IsReconstructed) continue;
+                DateTime d = TradingDayOf(e.ExitTime);
+                if (d >= today) continue;
+                if (d > best) best = d;
+            }
+
+            List<BallastTrade> list = new List<BallastTrade>();
+            if (best == DateTime.MinValue) return list;
+            for (int i = 0; i < all.Count; i++)
+                if (all[i] != null && TradingDayOf(all[i].ExitTime) == best) list.Add(all[i]);
+            return list;
+        }
+
+        private DateTime TradingDayOf(DateTime t)
+        {
+            foreach (string name in monitor.MonitoredNames)
+            {
+                BallastTracker tr = monitor.Get(name);
+                if (tr != null) return tr.TradingDay(t);
+            }
+            return t.Date;
+        }
+
+        /// <summary>
+        /// Is the trading over? Every watched account stood down, or past the end
+        /// of its own session window.
+        /// </summary>
+        private bool TradingIsOverFor(DateTime now)
+        {
+            int nowMin = now.Hour * 60 + now.Minute;
+            bool anyWindow = false, allDone = true, any = false;
+
+            foreach (string name in monitor.MonitoredNames)
+            {
+                any = true;
+                BallastTracker t = monitor.Get(name);
+                if (t == null) continue;
+
+                // Already said he is done with this one - it is not holding the
+                // day open. IsReleased with the catch-all kind is exactly what
+                // "I'm done for the day" sets.
+                if (tiltGate != null && tiltGate.IsReleased(name, TiltKind.PastFloor, now)) continue;
+
+                int end = t.Config.SessionEndMinute;
+                if (t.Config.SessionStartMinute == end) { allDone = false; continue; }
+
+                anyWindow = true;
+                if (nowMin < end) allDone = false;
+            }
+
+            if (!any) return false;
+            if (allDone && anyWindow) return true;
+
+            // Nobody set a window. A trader without one still has an end to his
+            // day, and the New York close is the honest stand-in.
+            return nowMin >= 16 * 60;
         }
 
         /// <summary>

@@ -615,6 +615,131 @@ namespace Ballast
         /// the trader is behaving - and mixed in, a busy bot would swamp the
         /// signal entirely.
         /// </summary>
+        /// <summary>
+        /// The one thing a day's trades actually showed, in a sentence.
+        ///
+        /// This exists because a journal nobody reads is not a journal, it is
+        /// tagging overhead - and the tagging is the part the trader pays for.
+        /// He had been answering every question for a week and had not once
+        /// opened the page where the answers add up.
+        ///
+        /// So the finding comes to him instead. Not "would you like to review
+        /// your journal", which is a question with an easy no at the end of a
+        /// losing day, but the strongest thing the day says, with the journal one
+        /// click behind it.
+        ///
+        /// The comparisons are ordered by how ACTIONABLE they are, not by how big
+        /// the number is. "Your chased trades cost you money" names a behaviour
+        /// he can stop tomorrow morning. "NQ was your worst instrument" names
+        /// something he cannot do much with. So execution comes before setup, and
+        /// setup before feeling, and a flat statement of the day comes last.
+        ///
+        /// Everything is net of commission and manual trades only. A strategy has
+        /// no discipline to report on and its volume would drown his own.
+        ///
+        /// Returns "" when the day cannot honestly support a finding. A day of
+        /// two trades proves nothing, and a sentence that overclaims on a
+        /// three-trade sample is how a journal starts lying to a trader who has
+        /// finally begun reading it.
+        /// </summary>
+        public static string DayLesson(List<BallastTrade> source)
+        {
+            List<BallastTrade> day = new List<BallastTrade>();
+            List<BallastTrade> manual = ManualOnly(source);
+            for (int i = 0; i < manual.Count; i++)
+                if (!manual[i].IsReconstructed) day.Add(manual[i]);
+
+            if (day.Count == 0) return "";
+
+            // -- 1. Execution. The one a trader can act on tomorrow. ----------
+            //
+            // Trades taken to the plan against trades chased or taken off it.
+            // Both sides need to exist before a comparison means anything: a day
+            // of nothing but planned trades is not evidence that chasing costs
+            // money, it is evidence that he did not chase.
+            double keptNet = 0, brokeNet = 0;
+            int kept = 0, broke = 0;
+            for (int i = 0; i < day.Count; i++)
+            {
+                string v = day[i].Planned;
+                if (v == Verdict_ByTheBook) { kept++; keptNet += day[i].Pnl; }
+                else if (v == Verdict_Chased || v == Verdict_OffPlan || v == Verdict_Sloppy)
+                { broke++; brokeNet += day[i].Pnl; }
+            }
+
+            if (kept >= 2 && broke >= 2 && brokeNet < 0 && keptNet > brokeNet)
+            {
+                return "The " + broke + " you took off your plan cost "
+                     + BallastTrade.Money(-brokeNet) + ". The " + kept
+                     + " you took by the book made " + BallastTrade.Money(keptNet)
+                     + ". That is the whole day.";
+            }
+
+            // -- 2. Setup. Which plan is carrying the other. -------------------
+            string bestName = "", worstName = "";
+            double bestNet = 0, worstNet = 0;
+            int bestCount = 0, worstCount = 0;
+            Dictionary<string, double> byNet = new Dictionary<string, double>();
+            Dictionary<string, int> byCount = new Dictionary<string, int>();
+            for (int i = 0; i < day.Count; i++)
+            {
+                string k = day[i].Setup;
+                if (string.IsNullOrEmpty(k)) continue;
+                double n; byNet.TryGetValue(k, out n); byNet[k] = n + day[i].Pnl;
+                int c; byCount.TryGetValue(k, out c); byCount[k] = c + 1;
+            }
+            foreach (KeyValuePair<string, double> kv in byNet)
+            {
+                if (bestName.Length == 0 || kv.Value > bestNet)
+                { bestName = kv.Key; bestNet = kv.Value; bestCount = byCount[kv.Key]; }
+                if (worstName.Length == 0 || kv.Value < worstNet)
+                { worstName = kv.Key; worstNet = kv.Value; worstCount = byCount[kv.Key]; }
+            }
+
+            if (byNet.Count >= 2 && worstNet < 0 && bestNet > 0)
+            {
+                return bestName + " made " + BallastTrade.Money(bestNet) + " over "
+                     + Plural(bestCount) + ". " + worstName + " lost "
+                     + BallastTrade.Money(-worstNet) + " over " + Plural(worstCount) + ".";
+            }
+
+            // -- 3. Feeling. Slower to act on, but it names the state. ---------
+            string feelName = "";
+            double feelNet = 0;
+            int feelCount = 0;
+            Dictionary<string, double> byFeel = new Dictionary<string, double>();
+            Dictionary<string, int> feelN = new Dictionary<string, int>();
+            for (int i = 0; i < day.Count; i++)
+            {
+                string k = day[i].Feeling;
+                if (string.IsNullOrEmpty(k)) continue;
+                double n; byFeel.TryGetValue(k, out n); byFeel[k] = n + day[i].Pnl;
+                int c; feelN.TryGetValue(k, out c); feelN[k] = c + 1;
+            }
+            foreach (KeyValuePair<string, double> kv in byFeel)
+                if (feelName.Length == 0 || kv.Value < feelNet)
+                { feelName = kv.Key; feelNet = kv.Value; feelCount = feelN[kv.Key]; }
+
+            if (feelCount >= 2 && feelNet < 0)
+            {
+                return "Every trade you marked \"" + feelName + "\" lost money today - "
+                     + Plural(feelCount) + ", " + BallastTrade.Money(-feelNet)
+                     + ". That feeling is a signal to stop, not to size up.";
+            }
+
+            // -- 4. Nothing to compare. Say what happened, and no more. --------
+            double net = 0; int wins = 0;
+            for (int i = 0; i < day.Count; i++) { net += day[i].Pnl; if (day[i].Pnl > 0) wins++; }
+
+            return Plural(day.Count) + ", " + wins + " green, "
+                 + BallastTrade.Money(net) + " net of commission.";
+        }
+
+        private static string Plural(int n)
+        {
+            return n + (n == 1 ? " trade" : " trades");
+        }
+
         public static List<BallastTrade> ManualOnly(List<BallastTrade> source)
         {
             List<BallastTrade> list = new List<BallastTrade>();
