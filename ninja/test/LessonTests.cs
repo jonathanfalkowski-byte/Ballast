@@ -26,6 +26,7 @@ public static class LessonTests
         AQuietDayJustReportsItself();
         StrategyTradesAndGapsAreNotEvidence();
         NoTradesMeansNothingToSay();
+        SimulatedMoneyIsNeverAddedToRealMoney();
     }
 
     static readonly DateTime D = new DateTime(2026, 8, 6, 10, 0, 0);
@@ -156,6 +157,71 @@ public static class LessonTests
         T.Ok(s.IndexOf("$80") >= 0,
              "and the bot's loss is not laid at his door - a strategy has no "
            + "discipline to report on, and a gap has no detail to report");
+    }
+
+    /// <summary>
+    /// "did you account for multiple accounts or did you put them all in
+    /// ...(you took all the trades from all the accounts and put them in one
+    /// report or.....)"
+    ///
+    /// He caught it. The first version pooled every watched account into one
+    /// sentence, which on his own screen would have added nine sim trades to two
+    /// funded ones and reported the sum in dollars. Play money and real money in
+    /// the same figure, with the sim - where the volume always is - deciding what
+    /// the day "showed" while the accounts that can actually be lost went
+    /// unmentioned.
+    ///
+    /// Behaviour still pools across REAL accounts, because chasing is the
+    /// trader's habit rather than the account's, and a dollar is a dollar across
+    /// two funded accounts. It does not pool across the sim line.
+    /// </summary>
+    static void SimulatedMoneyIsNeverAddedToRealMoney()
+    {
+        T.S("simulated money is never added to real money");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+
+        // Two funded accounts, one habit: pooling THESE is right.
+        BallastTrade a = Tr(-400, BallastJournal.Verdict_Chased, "", "");
+        a.AccountName = "APEX-11325-105";
+        BallastTrade b = Tr(-250, BallastJournal.Verdict_Chased, "", "");
+        b.AccountName = "APEX-11325-106";
+        BallastTrade c = Tr(300, BallastJournal.Verdict_ByTheBook, "", "");
+        c.AccountName = "APEX-11325-105";
+        BallastTrade d = Tr(200, BallastJournal.Verdict_ByTheBook, "", "");
+        d.AccountName = "APEX-11325-106";
+        day.Add(a); day.Add(b); day.Add(c); day.Add(d);
+
+        // And a busy sim day that would otherwise drown them.
+        for (int i = 0; i < 9; i++)
+        {
+            BallastTrade s = Tr(-1000, BallastJournal.Verdict_ByTheBook, "", "");
+            s.AccountName = "Sim103";
+            day.Add(s);
+        }
+
+        List<string> sims = new List<string>();
+        sims.Add("Sim103");
+
+        string real = BallastJournal.DayLesson(
+            BallastJournal.FromAccounts(day, sims, false));
+
+        T.Ok(real.IndexOf("$650") >= 0,
+             "the funded accounts are pooled with each other: " + real);
+        T.Ok(real.IndexOf("$500") >= 0, "on both sides of the comparison");
+        T.Ok(real.IndexOf("9,000") < 0 && real.IndexOf("8,500") < 0,
+             "and the sim's nine thousand is nowhere in it");
+
+        string sim = BallastJournal.DayLesson(
+            BallastJournal.FromAccounts(day, sims, true));
+        T.Ok(sim.IndexOf("9 trades") >= 0, "the sim gets its own reckoning: " + sim);
+        T.Ok(sim.IndexOf("APEX") < 0, "with none of the real money in it");
+
+        // And the split itself, both ways round.
+        T.Eq(BallastJournal.FromAccounts(day, sims, true).Count, 9, "nine sim trades");
+        T.Eq(BallastJournal.FromAccounts(day, sims, false).Count, 4, "four real ones");
+        T.Eq(BallastJournal.FromAccounts(day, null, false).Count, 13,
+             "no named accounts means nothing is excluded");
     }
 
     static void NoTradesMeansNothingToSay()

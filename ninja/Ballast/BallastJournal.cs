@@ -740,6 +740,42 @@ namespace Ballast
             return n + (n == 1 ? " trade" : " trades");
         }
 
+        /// <summary>
+        /// Trades from these accounts, or trades from anything but.
+        ///
+        /// The reason this exists is that a day's finding must not add simulated
+        /// money to real money. Pooling every watched account into one sentence
+        /// made the dollar figure meaningless the moment a sim was in the list -
+        /// and a sim is usually where the volume is, so the sim would decide what
+        /// the day "showed" while the funded accounts, the ones that can actually
+        /// be lost, went unmentioned.
+        ///
+        /// Behaviour pools honestly across real accounts, because chasing is the
+        /// trader's habit and not the account's, and a dollar is a dollar across
+        /// two funded accounts. It does not pool across the sim line.
+        /// </summary>
+        public static List<BallastTrade> FromAccounts(List<BallastTrade> source,
+                                                      List<string> accounts, bool include)
+        {
+            List<BallastTrade> list = new List<BallastTrade>();
+            if (source == null) return list;
+            if (accounts == null) accounts = new List<string>();
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                if (source[i] == null) continue;
+
+                bool named = false;
+                for (int a = 0; a < accounts.Count; a++)
+                    if (string.Equals(source[i].AccountName, accounts[a],
+                                      StringComparison.OrdinalIgnoreCase))
+                    { named = true; break; }
+
+                if (named == include) list.Add(source[i]);
+            }
+            return list;
+        }
+
         public static List<BallastTrade> ManualOnly(List<BallastTrade> source)
         {
             List<BallastTrade> list = new List<BallastTrade>();

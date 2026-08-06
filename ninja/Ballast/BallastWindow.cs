@@ -6211,15 +6211,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (todays[i] != null && !todays[i].Automated && !todays[i].IsReconstructed)
                         handTradesToday++;
 
+                List<string> sims = SimAccountNames();
+
                 // the morning card
                 if (handTradesToday == 0 && reviewShownMorning != today)
                 {
-                    string lesson = BallastJournal.DayLesson(PreviousSessionTrades(now));
+                    string where;
+                    string lesson = LessonFor(PreviousSessionTrades(now), sims, out where);
                     if (lesson.Length > 0)
                     {
                         reviewLast = "morning";
                         reviewHead.Text = "BEFORE YOU START";
-                        reviewBody.Text = "Last session: " + lesson;
+                        reviewBody.Text = "Last session" + where + ": " + lesson;
                         reviewBorder.Visibility = Visibility.Visible;
                         return;
                     }
@@ -6228,12 +6231,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // the closing card
                 if (handTradesToday > 0 && reviewShownClosing != today && TradingIsOverFor(now))
                 {
-                    string lesson = BallastJournal.DayLesson(todays);
+                    string where;
+                    string lesson = LessonFor(todays, sims, out where);
                     if (lesson.Length > 0)
                     {
                         reviewLast = "closing";
                         reviewHead.Text = "THAT IS THE DAY";
-                        reviewBody.Text = lesson;
+                        reviewBody.Text = where.Length > 0
+                            ? "On your sim accounts: " + lesson
+                            : lesson;
                         reviewBorder.Visibility = Visibility.Visible;
                         return;
                     }
@@ -6242,6 +6248,48 @@ namespace NinjaTrader.NinjaScript.AddOns
                 reviewBorder.Visibility = Visibility.Collapsed;
             }
             catch { }
+        }
+
+        /// <summary>
+        /// The day's finding, from the money that counts.
+        ///
+        /// Real accounts first and on their own. A funded account is the only
+        /// thing here that can actually be lost, and adding a simulator's dollars
+        /// to its dollars produces a figure that describes neither. It is not a
+        /// rounding issue either: the sim is usually where the volume is, so
+        /// pooling would let a practice account decide what the day "showed".
+        ///
+        /// If nothing real was traded, the sims get to speak - a practice day is
+        /// still a day, and the behaviour it shows is the trader's own. But it is
+        /// labelled, so a number that cannot be lost is never read as one that
+        /// can.
+        /// </summary>
+        private string LessonFor(List<BallastTrade> day, List<string> sims, out string where)
+        {
+            where = "";
+
+            string real = BallastJournal.DayLesson(
+                BallastJournal.FromAccounts(day, sims, false));
+            if (real.Length > 0) return real;
+
+            string sim = BallastJournal.DayLesson(
+                BallastJournal.FromAccounts(day, sims, true));
+            if (sim.Length > 0) { where = " on your sim accounts"; return sim; }
+
+            return "";
+        }
+
+        /// <summary>Which of the watched accounts are simulated. See IsSimAccount.</summary>
+        private List<string> SimAccountNames()
+        {
+            List<string> list = new List<string>();
+            try
+            {
+                foreach (string name in monitor.MonitoredNames)
+                    if (IsSimAccount(FindAccount(name), name)) list.Add(name);
+            }
+            catch { }
+            return list;
         }
 
         /// <summary>The most recent day before today that has any hand trades in it.</summary>
