@@ -328,6 +328,29 @@ namespace Ballast
     /// </summary>
     public enum JournalPeriod { Today, Week, Month, Year, Everything }
 
+    /// <summary>
+    /// A change to a setting the trader already has, with the evidence for it.
+    ///
+    /// This is what Ballast does instead of giving advice. It is not qualified
+    /// to tell anyone about their mind, and the moment it tries, every
+    /// measurement next to it gets less believable. But it can read a trader's
+    /// own record back to him and point at a number in his own settings that
+    /// would have changed the outcome.
+    ///
+    /// Advice that changes the TOOL rather than the person. Derived entirely
+    /// from what he did, and checkable afterwards - he can watch whether the
+    /// figure moves.
+    /// </summary>
+    public class SettingSuggestion
+    {
+        /// <summary>"maxtrades" or "cooldown". What the window knows how to apply.</summary>
+        public string Kind = "";
+        public string Headline = "";
+        public string Evidence = "";
+        public int Proposed;
+        public int Current;
+    }
+
     public class EdgeReadResult
     {
         public int Count;
@@ -1308,6 +1331,199 @@ namespace Ballast
             // and it is the one he will scroll past if it is at the bottom.
             outp.Sort(delegate(EdgeReadResult a, EdgeReadResult b) { return a.Total.CompareTo(b.Total); });
             return outp;
+        }
+
+        /// <summary>
+        /// Where in the day the money stops.
+        ///
+        /// Running total by trade number: the first trade of a day, the second,
+        /// and so on. Almost every discretionary trader has a point past which
+        /// the day is being given back, and almost none of them know where it is,
+        /// because nobody remembers a day by trade number.
+        ///
+        /// Suggests a max-trades figure only when the evidence is strong: enough
+        /// days to mean something, a real peak with real money after it, and a
+        /// figure below what he currently allows himself. Suggesting a cap he
+        /// already keeps to would be noise.
+        /// </summary>
+        public static SettingSuggestion TradeCountSuggestion(List<BallastTrade> source,
+                                                             int currentMax, int minDays)
+        {
+            List<BallastTrade> day = Countable(source);
+            if (day.Count == 0) return null;
+
+            List<string> days = new List<string>();
+            Dictionary<int, double> byNumber = new Dictionary<int, double>();
+            int highest = 0;
+
+            for (int i = 0; i < day.Count; i++)
+            {
+                BallastTrade e = day[i];
+                int n = e.TradeNumberToday;
+                if (n <= 0) continue;
+
+                double v; byNumber.TryGetValue(n, out v);
+                byNumber[n] = v + e.Pnl;
+                if (n > highest) highest = n;
+
+                string d = e.ExitTime.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+                if (!days.Contains(d)) days.Add(d);
+            }
+
+            if (days.Count < minDays || highest < 3) return null;
+
+            // The running total, and where it topped out.
+            double running = 0, best = 0;
+            int bestAt = 0;
+            for (int n = 1; n <= highest; n++)
+            {
+                double v; byNumber.TryGetValue(n, out v);
+                running += v;
+                if (n == 1 || running > best) { best = running; bestAt = n; }
+            }
+
+            double after = running - best;
+
+            // Nothing to say unless the tail actually costs money, the peak is
+            // not simply the last trade, and the suggestion would bite.
+            if (bestAt >= highest) return null;
+            if (after >= 0) return null;
+            if (currentMax > 0 && bestAt >= currentMax) return null;
+
+            SettingSuggestion s = new SettingSuggestion();
+            s.Kind = "maxtrades";
+            s.Current = currentMax;
+            s.Proposed = bestAt;
+            s.Headline = "Stop at " + bestAt + (bestAt == 1 ? " trade" : " trades") + " a day";
+            s.Evidence = "Across " + days.Count + " days your first " + bestAt
+                       + (bestAt == 1 ? " trade" : " trades") + " made "
+                       + BallastTrade.Money(best) + ". Everything after that gave back "
+                       + BallastTrade.Money(-after) + "."
+                       + (currentMax > 0 ? " Your limit is " + currentMax + "." : "");
+            return s;
+        }
+
+        /// <summary>
+        /// How long the damage lasts after a loss.
+        ///
+        /// Trades entered inside a window after a losing one, against everything
+        /// else. The revenge window is the best documented pattern in
+        /// discretionary trading and the easiest to fix, because it is a number
+        /// in a settings box rather than a personality trait.
+        ///
+        /// Tries several windows and reports the widest one that is still clearly
+        /// costing money, because the useful answer is how long to wait, not
+        /// whether waiting helps.
+        /// </summary>
+        public static SettingSuggestion CooldownSuggestion(List<BallastTrade> source,
+                                                           int currentCooldown, int minSample)
+        {
+            List<BallastTrade> day = Countable(source);
+            if (day.Count == 0) return null;
+
+            int[] windows = new int[] { 5, 10, 15, 20, 30, 45, 60 };
+            int bestWindow = 0;
+            double bestInside = 0;
+            int bestCount = 0;
+
+            for (int w = 0; w < windows.Length; w++)
+            {
+                int win = windows[w];
+                double inside = 0, outside = 0;
+                int nIn = 0, nOut = 0;
+
+                for (int i = 0; i < day.Count; i++)
+                {
+                    BallastTrade e = day[i];
+                    bool after = e.PreviousTradeWasLoss
+                              && e.MinutesSincePreviousLoss >= 0
+                              && e.MinutesSincePreviousLoss < win;
+                    if (after) { inside += e.Pnl; nIn++; }
+                    else { outside += e.Pnl; nOut++; }
+                }
+
+                if (nIn < minSample || nOut < minSample) continue;
+                if (inside >= 0) continue;
+
+                // Only if the trades inside the window are genuinely worse per
+                // trade than the ones outside it. A day that lost money
+                // everywhere is not evidence about timing.
+                if (inside / nIn >= outside / nOut) continue;
+
+                bestWindow = win; bestInside = inside; bestCount = nIn;
+            }
+
+            if (bestWindow == 0) return null;
+            if (currentCooldown >= bestWindow) return null;
+
+            SettingSuggestion s = new SettingSuggestion();
+            s.Kind = "cooldown";
+            s.Current = currentCooldown;
+            s.Proposed = bestWindow;
+            s.Headline = "Wait " + bestWindow + " minutes after a loss";
+            s.Evidence = "The " + bestCount + " trades you took within " + bestWindow
+                       + " minutes of a loss cost " + BallastTrade.Money(-bestInside)
+                       + ". Your cooldown is " + currentCooldown + " minutes.";
+            return s;
+        }
+
+        /// <summary>Manual, watched, tagged-or-not trades. The ones he actually took.</summary>
+        private static List<BallastTrade> Countable(List<BallastTrade> source)
+        {
+            List<BallastTrade> outp = new List<BallastTrade>();
+            List<BallastTrade> manual = ManualOnly(source);
+            for (int i = 0; i < manual.Count; i++)
+                if (manual[i] != null && !manual[i].IsReconstructed) outp.Add(manual[i]);
+            return outp;
+        }
+
+        /// <summary>
+        /// The shape that is no longer about trading.
+        ///
+        /// Ballast is better placed to see this than anyone, because it holds the
+        /// record. It is not qualified to say what it means and does not try. It
+        /// reports what it can count: size going UP after losses rather than
+        /// down, repeatedly, across many days.
+        ///
+        /// That single pattern is chosen deliberately over anything softer. It is
+        /// mechanical, it is unambiguous in the data, and it is the one shape
+        /// that separates a bad week from something a person cannot stop. A
+        /// trader sizing up to recover a loss is not making a trading error; the
+        /// trade is a means to an end that is not trading.
+        ///
+        /// Returns true only on a lot of evidence. The cost of saying this to
+        /// someone who is fine is that he never trusts the software again, so the
+        /// bar is deliberately far above "having a rough patch".
+        /// </summary>
+        public static bool EscalationAfterLosses(List<BallastTrade> source, int minSample)
+        {
+            List<BallastTrade> day = Countable(source);
+
+            double afterLoss = 0, afterOther = 0;
+            int nLoss = 0, nOther = 0;
+            List<string> days = new List<string>();
+
+            for (int i = 0; i < day.Count; i++)
+            {
+                BallastTrade e = day[i];
+                if (e.MaxContracts <= 0) continue;
+
+                if (e.PreviousTradeWasLoss) { afterLoss += e.MaxContracts; nLoss++; }
+                else { afterOther += e.MaxContracts; nOther++; }
+
+                string d = e.ExitTime.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+                if (!days.Contains(d)) days.Add(d);
+            }
+
+            if (nLoss < minSample || nOther < minSample) return false;
+            if (days.Count < 10) return false;
+
+            double a = afterLoss / nLoss;
+            double b = afterOther / nOther;
+            if (b <= 0) return false;
+
+            // Half as big again, sustained over ten trading days or more.
+            return a / b >= 1.5;
         }
 
         public EdgeReadResult EdgeForSetup(List<BallastTrade> source, string setupKey, int minSample)

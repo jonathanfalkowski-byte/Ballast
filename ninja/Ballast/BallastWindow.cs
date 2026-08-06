@@ -109,8 +109,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private CheckBox windowAnyTimeBox;
         private CheckBox automatedBox, planStandingBox;
         private ComboBox acctGenBox, purposeBox;
-        private StackPanel pressurePanel, entriesPanel, periodRow;
-        private TextBlock periodNote;
+        private StackPanel pressurePanel, entriesPanel, periodRow, changePanel;
+        private TextBlock periodNote, carePanel;
         private JournalPeriod journalPeriod = JournalPeriod.Month;
         private TextBlock detectionNote;
         private readonly Dictionary<string, string> accountLabels = new Dictionary<string, string>();
@@ -1594,6 +1594,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             entriesPanel.Margin = new Thickness(0, 0, 0, 18);
             p.Children.Add(entriesPanel);
 
+            p.Children.Add(SectionHeader("WHAT TO CHANGE"));
+
+            p.Children.Add(Note("Ballast does not give advice about your head - it is not qualified "
+                + "to, and the moment it tried, every measurement next to it would be worth less. "
+                + "What it can do is read your own record back to you and point at a number in "
+                + "your own settings that would have changed the outcome. Nothing here happens "
+                + "unless you press it."));
+
+            changePanel = new StackPanel();
+            changePanel.Margin = new Thickness(0, 0, 0, 18);
+            p.Children.Add(changePanel);
+
             p.Children.Add(SectionHeader("UNDER PRESSURE"));
 
             p.Children.Add(Note("The only experiment you ever run on yourself: same person, same "
@@ -1606,6 +1618,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             pressurePanel = new StackPanel();
             pressurePanel.Margin = new Thickness(0, 0, 0, 18);
             p.Children.Add(pressurePanel);
+
+            carePanel = new TextBlock();
+            carePanel.Foreground = ColAmber;
+            carePanel.FontSize = 12;
+            carePanel.TextWrapping = TextWrapping.Wrap;
+            carePanel.Margin = new Thickness(0, 0, 0, 18);
+            carePanel.Visibility = Visibility.Collapsed;
+            p.Children.Add(carePanel);
 
             p.Children.Add(SectionHeader("WHAT YOUR TRADES SHOW"));
 
@@ -6620,7 +6640,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             journalPeriod = which;
             BuildPeriodRow();
             RenderEntries();
+            RenderChanges();
             RenderPressure();
+            RenderCare();
         }
 
         /// <summary>Trades inside the page's chosen period.</summary>
@@ -6690,6 +6712,130 @@ namespace NinjaTrader.NinjaScript.AddOns
                         entriesPanel.Children.Add(v);
                     }
                 }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Suggested changes to settings the trader already has, with the
+        /// evidence under each and a button that applies it to the account he is
+        /// looking at. Nothing is ever changed for him.
+        /// </summary>
+        private void RenderChanges()
+        {
+            if (changePanel == null) return;
+
+            try
+            {
+                changePanel.Children.Clear();
+
+                List<BallastTrade> book = PeriodTrades();
+                TrackerConfig c = monitor.DefaultConfig;
+
+                string who = CurrentEditKey();
+                BallastTracker t = who.Length > 0 ? monitor.Get(who) : null;
+                if (t != null) c = t.Config;
+
+                List<SettingSuggestion> found = new List<SettingSuggestion>();
+
+                SettingSuggestion a = BallastJournal.TradeCountSuggestion(book, c.MaxTrades, 5);
+                if (a != null) found.Add(a);
+
+                SettingSuggestion b = BallastJournal.CooldownSuggestion(book, c.CooldownMinutes, 5);
+                if (b != null) found.Add(b);
+
+                if (found.Count == 0)
+                {
+                    changePanel.Children.Add(Note("Nothing to suggest from "
+                        + BallastJournal.PeriodName(journalPeriod)
+                        + ". Either the settings you have are already holding, or there is not "
+                        + "enough here yet to say otherwise - and a suggestion built on a handful "
+                        + "of trades is worse than none."));
+                    return;
+                }
+
+                for (int i = 0; i < found.Count; i++)
+                {
+                    SettingSuggestion s = found[i];
+
+                    TextBlock h = new TextBlock();
+                    h.Text = s.Headline;
+                    h.Foreground = ColInk;
+                    h.FontSize = 14;
+                    h.FontWeight = FontWeights.Bold;
+                    h.TextWrapping = TextWrapping.Wrap;
+                    h.Margin = new Thickness(0, 10, 0, 2);
+                    changePanel.Children.Add(h);
+
+                    TextBlock e = new TextBlock();
+                    e.Text = s.Evidence;
+                    e.Foreground = ColMuted;
+                    e.FontSize = 12;
+                    e.TextWrapping = TextWrapping.Wrap;
+                    e.Margin = new Thickness(0, 0, 0, 6);
+                    changePanel.Children.Add(e);
+
+                    SettingSuggestion applied = s;
+                    changePanel.Children.Add(QuietButton(
+                        "Apply this to " + (who.Length > 0 ? who : "the defaults"),
+                        delegate { ApplySuggestion(applied); }));
+                }
+            }
+            catch { }
+        }
+
+        private void ApplySuggestion(SettingSuggestion s)
+        {
+            if (s == null) return;
+
+            try
+            {
+                string who = CurrentEditKey();
+                TrackerConfig c = monitor.DefaultConfig;
+                BallastTracker t = who.Length > 0 ? monitor.Get(who) : null;
+                if (t != null) c = t.Config;
+
+                if (s.Kind == "maxtrades") c.MaxTrades = s.Proposed;
+                else if (s.Kind == "cooldown") c.CooldownMinutes = s.Proposed;
+
+                SaveSettings();
+                LoadConfigIntoFields(c);
+                RenderChanges();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// The one thing here that is not about trading.
+        ///
+        /// Shown only on a great deal of evidence - see
+        /// BallastJournal.EscalationAfterLosses - and never as a wall. It names
+        /// what was counted and nothing else. It does not diagnose, because
+        /// software cannot, and it does not lecture, because a person in this
+        /// position has heard enough of that.
+        ///
+        /// No phone number is hard-coded. Helplines are regional and a wrong
+        /// number here would be worse than none at all.
+        /// </summary>
+        private void RenderCare()
+        {
+            if (carePanel == null) return;
+
+            try
+            {
+                bool show = BallastJournal.EscalationAfterLosses(monitor.Journal.All, 20);
+                carePanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+
+                if (!show) return;
+
+                carePanel.Text = "One thing worth saying plainly. Over the last stretch, your "
+                    + "position size goes UP after a losing trade rather than down, and it has "
+                    + "done consistently. Ballast counts that; it is not qualified to tell you "
+                    + "what it means. But sizing up to recover a loss is the shape people "
+                    + "describe when trading has stopped being trading, it is very common, and "
+                    + "there is real help for it - a problem gambling helpline in your country "
+                    + "will talk to anyone, free, without judgement, and without you having to "
+                    + "call yourself anything.";
             }
             catch { }
         }
@@ -6827,7 +6973,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             BuildPeriodRow();
             RenderEntries();
+            RenderChanges();
             RenderPressure();
+            RenderCare();
             RenderTiltRecord();
 
             List<BallastTrade> pending = monitor.Journal.Pending();
