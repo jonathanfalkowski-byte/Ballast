@@ -287,6 +287,67 @@ namespace Ballast
         }
     }
 
+    /// <summary>
+    /// Where to point someone whose record has stopped being about trading.
+    ///
+    /// Every number here was read off the operator's own site on 6 August 2026
+    /// and is dated below. None of it came from memory, and the reason is the
+    /// first line in the table: the United States national number CHANGED. From
+    /// memory this would have shipped as 1-800-522-4700, which is now the legacy
+    /// line. A wrong number in this particular message is worse than no message,
+    /// because it is read by someone who has finally decided to ask.
+    ///
+    /// These belong on the same verification cycle as the rule book - dated,
+    /// sourced, and re-checked rather than assumed.
+    /// </summary>
+    public static class CareHelp
+    {
+        /// <summary>When every entry below was last read off its operator's own site.</summary>
+        public const string Verified = "6 August 2026";
+
+        /// <summary>
+        /// The help line for a region, or the global service when there is no
+        /// national one. Region is an ISO two-letter country code - what Windows
+        /// already knows about the machine.
+        /// </summary>
+        public static string For(string region)
+        {
+            string r = (region ?? "").ToUpperInvariant();
+
+            // United States. National Council on Problem Gambling: call, text or
+            // chat, 24/7. 1-800-MY-RESET replaced 1-800-522-4700, which still
+            // works for text. Source: ncpgambling.org, page dated 2 March 2026.
+            if (r == "US")
+                return "1-800-MY-RESET (1-800-697-3738) - call, text or chat, any hour, free.";
+
+            // Great Britain. National Gambling Helpline, run by GamCare, 24/7.
+            // Source: gamcare.org.uk.
+            if (r == "GB" || r == "UK")
+                return "The National Gambling Helpline, 0808 8020 133 - free, any hour.";
+
+            // Canada has no national line; it is province by province. Four
+            // numbers cover most of the population and the directory covers the
+            // rest. Source: responsiblegambling.org.
+            if (r == "CA")
+                return "In Canada this is provincial. Ontario 1-866-531-2600, Alberta "
+                     + "1-866-461-1259, British Columbia 1-888-795-6111, Quebec "
+                     + "1-800-461-0140. Every province is listed at responsiblegambling.org.";
+
+            // Everywhere else, including most of Europe, where there is no single
+            // number. Gambling Therapy is free, global and runs in 34 languages.
+            // Source: gamblingtherapy.org, operated by Gordon Moody.
+            return "gamblingtherapy.org - free, worldwide, in 34 languages, and you do not "
+                 + "have to give a name.";
+        }
+
+        /// <summary>The machine's country, or "" when it cannot be read.</summary>
+        public static string Region()
+        {
+            try { return System.Globalization.RegionInfo.CurrentRegion.TwoLetterISORegionName; }
+            catch { return ""; }
+        }
+    }
+
     /// <summary>A group of trades reduced to the numbers worth looking at.</summary>
     public class JournalBucket
     {

@@ -6828,14 +6828,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (!show) return;
 
-                carePanel.Text = "One thing worth saying plainly. Over the last stretch, your "
+                carePanel.Text = "One thing worth saying plainly. Over the last stretch your "
                     + "position size goes UP after a losing trade rather than down, and it has "
-                    + "done consistently. Ballast counts that; it is not qualified to tell you "
-                    + "what it means. But sizing up to recover a loss is the shape people "
-                    + "describe when trading has stopped being trading, it is very common, and "
-                    + "there is real help for it - a problem gambling helpline in your country "
-                    + "will talk to anyone, free, without judgement, and without you having to "
-                    + "call yourself anything.";
+                    + "done so consistently. Ballast counts that; it is not qualified to tell "
+                    + "you what it means. But sizing up to recover a loss is the shape people "
+                    + "describe when trading has stopped being trading. It is common, it is not "
+                    + "a character flaw, and there is help that costs nothing: "
+                    + CareHelp.For(CareHelp.Region());
             }
             catch { }
         }

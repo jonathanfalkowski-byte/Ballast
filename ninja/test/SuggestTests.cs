@@ -30,6 +30,33 @@ public static class SuggestTests
         TheRevengeWindowIsMeasuredNotAssumed();
         ALosingDayEverywhereIsNotAboutTiming();
         EscalationNeedsFarMoreThanARoughWeek();
+        TheHelpLineMatchesTheCountry();
+    }
+
+    /// <summary>
+    /// The numbers were read off each operator's own site on 6 August 2026, not
+    /// recalled - and the first one proves why. From memory the United States
+    /// line would have shipped as 1-800-522-4700, which is now the legacy
+    /// number. A wrong number in this particular message is worse than no
+    /// message, because it is read by someone who has finally decided to ask.
+    /// </summary>
+    static void TheHelpLineMatchesTheCountry()
+    {
+        T.S("the help line matches the country");
+
+        T.Ok(CareHelp.For("US").IndexOf("MY-RESET") >= 0, "the current US number, not the old one");
+        T.Ok(CareHelp.For("US").IndexOf("522-4700") < 0, "which is no longer the one to call");
+        T.Ok(CareHelp.For("GB").IndexOf("0808 8020 133") >= 0, "Great Britain");
+        T.Ok(CareHelp.For("CA").IndexOf("provincial") >= 0,
+             "Canada has no national line and the message says so");
+        T.Ok(CareHelp.For("CA").IndexOf("1-866-531-2600") >= 0, "with Ontario named");
+
+        // Europe has no single number, so it falls through to the global service
+        // rather than being sent somewhere that cannot help.
+        T.Ok(CareHelp.For("DE").IndexOf("gamblingtherapy.org") >= 0, "Germany");
+        T.Ok(CareHelp.For("FR").IndexOf("34 languages") >= 0, "France, and in its own language");
+        T.Ok(CareHelp.For("").IndexOf("gamblingtherapy.org") >= 0,
+             "and an unknown region is never left with nothing");
     }
 
     static readonly DateTime D0 = new DateTime(2026, 6, 1, 10, 0, 0);
