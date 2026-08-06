@@ -7,17 +7,32 @@ on:
 permissions:
   contents: read
 
+# One run, cancelled by the next push on the same branch. Without this a burst
+# of commits leaves several runs competing for the same runners, which is one of
+# the ways a job ends up reported as cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ninja-stub-tests:
-    runs-on: windows-latest
+    # Linux, not Windows. The Windows runner was the fragile half of this
+    # workflow: scarcer, billed at twice the rate, and when one cannot be
+    # allocated the job reports as CANCELLED - which reads like a broken build
+    # when nothing is broken. Mono is also the toolchain these tests are written
+    # against day to day, so a green run here means what it says.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Install Mono
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mono-devel
       - name: Compile and run NinjaTrader-independent tests
-        shell: powershell
-        run: ./scripts/test-ninja.ps1
+        run: ./scripts/test-ninja.sh
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
