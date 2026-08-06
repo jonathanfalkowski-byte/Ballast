@@ -321,6 +321,13 @@ namespace Ballast
     /// the honest answer to "does this setup actually make money, or have I just
     /// not lost with it yet?"
     /// </summary>
+    /// <summary>
+    /// How far back a page is looking. Calendar based, because that is how a
+    /// trader talks: "this week" ends on Sunday whatever Monday looked like, and
+    /// "year to date" is January onwards and not the last 365 days.
+    /// </summary>
+    public enum JournalPeriod { Today, Week, Month, Year, Everything }
+
     public class EdgeReadResult
     {
         public int Count;
@@ -1206,6 +1213,103 @@ namespace Ballast
         /// EdgeRead for one setup key over manual trades only. The convenience the
         /// window actually calls, one per setup on the Journal tab.
         /// </summary>
+        /// <summary>
+        /// Trades inside a calendar period, judged by when they were CLOSED.
+        ///
+        /// Closed rather than opened, because a trade belongs to the day it was
+        /// resolved - that is the day its result landed on the account and the
+        /// day the trader lived through it. A position opened on Friday and let
+        /// go on Monday is a Monday problem.
+        ///
+        /// The week starts on Monday. Sunday-evening futures sessions belong to
+        /// the week they lead into, not the one they trail.
+        /// </summary>
+        public static List<BallastTrade> InPeriod(List<BallastTrade> source, DateTime now,
+                                                  JournalPeriod period)
+        {
+            List<BallastTrade> list = new List<BallastTrade>();
+            if (source == null) return list;
+            if (period == JournalPeriod.Everything) { list.AddRange(source); return list; }
+
+            DateTime from = PeriodStart(now, period);
+
+            for (int i = 0; i < source.Count; i++)
+                if (source[i] != null && source[i].ExitTime >= from) list.Add(source[i]);
+
+            return list;
+        }
+
+        public static DateTime PeriodStart(DateTime now, JournalPeriod period)
+        {
+            DateTime d = now.Date;
+
+            if (period == JournalPeriod.Today) return d;
+
+            if (period == JournalPeriod.Week)
+            {
+                int back = (int)d.DayOfWeek - (int)DayOfWeek.Monday;
+                if (back < 0) back += 7;              // Sunday counts back to last Monday
+                return d.AddDays(-back);
+            }
+
+            if (period == JournalPeriod.Month) return new DateTime(d.Year, d.Month, 1);
+            if (period == JournalPeriod.Year) return new DateTime(d.Year, 1, 1);
+
+            return DateTime.MinValue;
+        }
+
+        public static string PeriodName(JournalPeriod period)
+        {
+            if (period == JournalPeriod.Today) return "today";
+            if (period == JournalPeriod.Week) return "this week";
+            if (period == JournalPeriod.Month) return "this month";
+            if (period == JournalPeriod.Year) return "this year";
+            return "everything";
+        }
+
+        /// <summary>
+        /// Every setup that appears in a set of trades, with an honest read on
+        /// each, worst first.
+        ///
+        /// "i want to know if my entry strategies work...i think that is
+        /// important too, no?" It is the most important thing, and it is the one
+        /// question a trader can never answer from memory: the setup that feels
+        /// like it works is the one whose wins are memorable, which has nothing
+        /// to do with whether it makes money.
+        ///
+        /// Built from the labels actually ON the trades rather than from the
+        /// current setup list, so a setup he has since retired still reports what
+        /// it did - otherwise deleting a bad setup would delete the evidence that
+        /// it was bad.
+        /// </summary>
+        public List<EdgeReadResult> SetupEdges(List<BallastTrade> source, int minSample)
+        {
+            List<string> keys = new List<string>();
+            List<BallastTrade> manual = ManualOnly(source);
+
+            for (int i = 0; i < manual.Count; i++)
+            {
+                BallastTrade e = manual[i];
+                if (e == null || e.IsReconstructed) continue;
+                if (string.IsNullOrEmpty(e.Setup)) continue;
+                if (!keys.Contains(e.Setup)) keys.Add(e.Setup);
+            }
+
+            List<EdgeReadResult> outp = new List<EdgeReadResult>();
+            for (int i = 0; i < keys.Count; i++)
+            {
+                EdgeReadResult r = EdgeForSetup(manual, keys[i], minSample);
+                if (r == null) continue;
+                r.Verdict = keys[i] + " - " + r.Verdict;
+                outp.Add(r);
+            }
+
+            // Worst money first. The setup costing him is the one he has to see,
+            // and it is the one he will scroll past if it is at the bottom.
+            outp.Sort(delegate(EdgeReadResult a, EdgeReadResult b) { return a.Total.CompareTo(b.Total); });
+            return outp;
+        }
+
         public EdgeReadResult EdgeForSetup(List<BallastTrade> source, string setupKey, int minSample)
         {
             List<BallastTrade> manual = ManualOnly(source);

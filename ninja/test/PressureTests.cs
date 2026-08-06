@@ -32,7 +32,107 @@ public static class PressureTests
         NoDifferenceMeansNoSentence();
         MoneyIsNeverTheArgument();
         BotTradesAndGapsAreNotBehaviour();
+        PeriodsAreCalendarPeriods();
+        EntriesAreJudgedWorstFirst();
     }
+
+    /// <summary>
+    /// "look at your week, month year to date"
+    ///
+    /// Calendar periods, because that is how a trader talks. "This week" ends on
+    /// Sunday whatever Monday looked like, and "year to date" is January onward
+    /// rather than the last 365 days.
+    ///
+    /// A trade belongs to the day it was CLOSED. That is the day its result
+    /// landed on the account and the day he lived through it - a position opened
+    /// on Friday and let go on Monday is a Monday problem.
+    /// </summary>
+    static void PeriodsAreCalendarPeriods()
+    {
+        T.S("week, month and year are calendar periods");
+
+        // Thursday 6 August 2026.
+        DateTime now = new DateTime(2026, 8, 6, 14, 0, 0);
+
+        T.Eq(BallastJournal.PeriodStart(now, JournalPeriod.Today),
+             new DateTime(2026, 8, 6), "today starts at midnight");
+        T.Eq(BallastJournal.PeriodStart(now, JournalPeriod.Week),
+             new DateTime(2026, 8, 3), "the week starts on Monday");
+        T.Eq(BallastJournal.PeriodStart(now, JournalPeriod.Month),
+             new DateTime(2026, 8, 1), "the month on the first");
+        T.Eq(BallastJournal.PeriodStart(now, JournalPeriod.Year),
+             new DateTime(2026, 1, 1), "and year to date means January");
+
+        // A Sunday counts back to the Monday that led into it, not forward.
+        DateTime sunday = new DateTime(2026, 8, 9, 20, 0, 0);
+        T.Eq(BallastJournal.PeriodStart(sunday, JournalPeriod.Week),
+             new DateTime(2026, 8, 3), "Sunday belongs to the week it trails, not the one it leads");
+
+        List<BallastTrade> book = new List<BallastTrade>();
+        BallastTrade july = Tr(0, 100, 10, BallastJournal.Verdict_ByTheBook, -1, 1);
+        july.EntryTime = new DateTime(2026, 7, 30, 10, 0, 0);
+        july.ExitTime = july.EntryTime.AddMinutes(10);
+        book.Add(july);
+
+        BallastTrade monday = Tr(0, 100, 10, BallastJournal.Verdict_ByTheBook, -1, 1);
+        monday.EntryTime = new DateTime(2026, 8, 3, 10, 0, 0);
+        monday.ExitTime = monday.EntryTime.AddMinutes(10);
+        book.Add(monday);
+
+        // Opened last week, closed this one. It is a this-week trade.
+        BallastTrade across = Tr(0, 100, 10, BallastJournal.Verdict_ByTheBook, -1, 1);
+        across.EntryTime = new DateTime(2026, 7, 31, 15, 0, 0);
+        across.ExitTime = new DateTime(2026, 8, 4, 9, 0, 0);
+        book.Add(across);
+
+        T.Eq(BallastJournal.InPeriod(book, now, JournalPeriod.Week).Count, 2,
+             "the Monday trade and the one that closed on Tuesday");
+        T.Eq(BallastJournal.InPeriod(book, now, JournalPeriod.Month).Count, 2,
+             "August by close, so July's opening does not drag it back");
+        T.Eq(BallastJournal.InPeriod(book, now, JournalPeriod.Year).Count, 3, "all three this year");
+        T.Eq(BallastJournal.InPeriod(book, now, JournalPeriod.Everything).Count, 3, "and all of them ever");
+    }
+
+    /// <summary>
+    /// "i want to know if my entry strategies work...i think that is important
+    /// too, no?"
+    ///
+    /// It is the most important thing, and the one question a trader can never
+    /// answer from memory: the setup that FEELS like it works is the one whose
+    /// wins are memorable, which has nothing to do with whether it makes money.
+    /// </summary>
+    static void EntriesAreJudgedWorstFirst()
+    {
+        T.S("entry strategies, worst money first");
+
+        BallastJournal j = new BallastJournal();
+        List<BallastTrade> book = new List<BallastTrade>();
+
+        for (int i = 0; i < 10; i++)
+        {
+            BallastTrade good = Tr(i % 3, 200, 20, BallastJournal.Verdict_ByTheBook, -1, 1);
+            good.Setup = "A - EMA cross";
+            book.Add(good);
+
+            BallastTrade bad = Tr(i % 3, -150, 20, BallastJournal.Verdict_ByTheBook, -1, 1);
+            bad.Setup = "B - pivot";
+            book.Add(bad);
+        }
+
+        List<EdgeReadResult> edges = j.SetupEdges(book, 20);
+        T.Eq(edges.Count, 2, "both setups reported");
+        T.Ok(edges[0].Verdict.IndexOf("B - pivot") >= 0,
+             "the one costing money is first: " + edges[0].Verdict);
+        T.Near(edges[0].Total, -1500, 0.01, "with what it cost");
+        T.Near(edges[1].Total, 2000, 0.01, "and the other with what it made");
+
+        // A setup he has since retired still has to report what it did, or
+        // deleting a bad setup would delete the evidence that it was bad.
+        BallastJournal.Setups = new List<string>();
+        T.Eq(j.SetupEdges(book, 20).Count, 2,
+             "the labels on the trades are the record, not the current list");
+    }
+
 
     static readonly DateTime D0 = new DateTime(2026, 8, 3, 10, 0, 0);
 

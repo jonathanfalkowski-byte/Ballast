@@ -109,7 +109,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         private CheckBox windowAnyTimeBox;
         private CheckBox automatedBox, planStandingBox;
         private ComboBox acctGenBox, purposeBox;
-        private StackPanel pressurePanel;
+        private StackPanel pressurePanel, entriesPanel, periodRow;
+        private TextBlock periodNote;
+        private JournalPeriod journalPeriod = JournalPeriod.Month;
         private TextBlock detectionNote;
         private readonly Dictionary<string, string> accountLabels = new Dictionary<string, string>();
 
@@ -1565,6 +1567,33 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "did not write this morning is one you have not committed to."));
 
             p.Children.Add(Spacer(16));
+            // How far back everything below is looking. One control for the
+            // whole page, because two date ranges on one screen is how a trader
+            // ends up comparing March against last Tuesday without noticing.
+            periodRow = new StackPanel();
+            periodRow.Orientation = Orientation.Horizontal;
+            periodRow.Margin = new Thickness(0, 0, 0, 4);
+            p.Children.Add(periodRow);
+
+            periodNote = new TextBlock();
+            periodNote.Foreground = ColFaint;
+            periodNote.FontSize = 11;
+            periodNote.TextWrapping = TextWrapping.Wrap;
+            periodNote.Margin = new Thickness(0, 0, 0, 16);
+            p.Children.Add(periodNote);
+
+            p.Children.Add(SectionHeader("DO YOUR ENTRIES WORK"));
+
+            p.Children.Add(Note("Your own setups, worst money first, net of commission. This is the "
+                + "question you cannot answer from memory: the setup that FEELS like it works is "
+                + "the one whose wins are memorable, which has nothing to do with whether it makes "
+                + "money. Where the sample is too thin to mean anything, it says so instead of "
+                + "pretending."));
+
+            entriesPanel = new StackPanel();
+            entriesPanel.Margin = new Thickness(0, 0, 0, 18);
+            p.Children.Add(entriesPanel);
+
             p.Children.Add(SectionHeader("UNDER PRESSURE"));
 
             p.Children.Add(Note("The only experiment you ever run on yourself: same person, same "
@@ -6554,6 +6583,117 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// a wrong side is worse than a missing one: it does not weaken the
         /// finding, it inverts it.
         /// </summary>
+        private void BuildPeriodRow()
+        {
+            if (periodRow == null) return;
+
+            periodRow.Children.Clear();
+            AddPeriodButton("Today", JournalPeriod.Today);
+            AddPeriodButton("Week", JournalPeriod.Week);
+            AddPeriodButton("Month", JournalPeriod.Month);
+            AddPeriodButton("Year", JournalPeriod.Year);
+            AddPeriodButton("All", JournalPeriod.Everything);
+
+            if (periodNote != null)
+            {
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+
+                periodNote.Text = journalPeriod == JournalPeriod.Everything
+                    ? "Everything Ballast has ever recorded."
+                    : "From " + BallastJournal.PeriodStart(now, journalPeriod)
+                        .ToString("d MMM", CultureInfo.InvariantCulture) + " onward.";
+            }
+        }
+
+        private void AddPeriodButton(string label, JournalPeriod which)
+        {
+            JournalPeriod w = which;
+            Button b = journalPeriod == which
+                ? PrimaryButton(label, delegate { SetPeriod(w); })
+                : QuietButton(label, delegate { SetPeriod(w); });
+            periodRow.Children.Add(b);
+        }
+
+        private void SetPeriod(JournalPeriod which)
+        {
+            journalPeriod = which;
+            BuildPeriodRow();
+            RenderEntries();
+            RenderPressure();
+        }
+
+        /// <summary>Trades inside the page's chosen period.</summary>
+        private List<BallastTrade> PeriodTrades()
+        {
+            DateTime now;
+            try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+            return BallastJournal.InPeriod(monitor.Journal.All, now, journalPeriod);
+        }
+
+        /// <summary>
+        /// Does each setup make money? Worst first, with the sample stated so a
+        /// verdict is never read as more than it is.
+        /// </summary>
+        private void RenderEntries()
+        {
+            if (entriesPanel == null) return;
+
+            try
+            {
+                entriesPanel.Children.Clear();
+
+                List<EdgeReadResult> edges = monitor.Journal.SetupEdges(PeriodTrades(), 20);
+
+                if (edges.Count == 0)
+                {
+                    entriesPanel.Children.Add(Note(BallastJournal.Setups.Count == 0
+                        ? "No setups defined yet. Name them under MY SETUPS in Setup, then tag "
+                          + "each trade with the one you took."
+                        : "No trades tagged with a setup " + BallastJournal.PeriodName(journalPeriod)
+                          + ". The picker is on every journal row."));
+                    return;
+                }
+
+                for (int i = 0; i < edges.Count; i++)
+                {
+                    EdgeReadResult r = edges[i];
+
+                    Grid g = new Grid();
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition());
+                    g.ColumnDefinitions.Add(new ColumnDefinition());
+                    g.ColumnDefinitions.Add(new ColumnDefinition());
+                    g.Margin = new Thickness(0, 6, 0, 0);
+
+                    string name = r.Verdict;
+                    int dash = name.IndexOf(" - ");
+                    string label = dash > 0 ? name.Substring(0, dash) : name;
+                    string said = dash > 0 ? name.Substring(dash + 3) : "";
+
+                    g.Children.Add(Cell(label, ColInk, 0, FontWeights.Bold));
+                    g.Children.Add(Cell(r.Count + (r.Count == 1 ? " trade" : " trades"),
+                                        ColMuted, 1, FontWeights.Normal));
+                    g.Children.Add(Cell(Money(r.Expectancy) + " each", ColMuted, 2, FontWeights.Normal));
+                    g.Children.Add(Cell(Money(r.Total),
+                                        r.Total < 0 ? ColRed : ColGreen, 3, FontWeights.Bold));
+                    entriesPanel.Children.Add(g);
+
+                    if (said.Length > 0)
+                    {
+                        TextBlock v = new TextBlock();
+                        v.Text = said;
+                        v.Foreground = ColFaint;
+                        v.FontSize = 11;
+                        v.TextWrapping = TextWrapping.Wrap;
+                        v.Margin = new Thickness(0, 1, 0, 0);
+                        entriesPanel.Children.Add(v);
+                    }
+                }
+            }
+            catch { }
+        }
+
         private void RenderPressure()
         {
             if (pressurePanel == null) return;
@@ -6588,7 +6728,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
 
-                List<BallastTrade> all = monitor.Journal.All;
+                List<BallastTrade> all = PeriodTrades();
                 BehaviourProfile pp = BallastJournal.Behaviour(
                     BallastJournal.FromAccounts(all, practice, true), "practice", 5);
                 BehaviourProfile rp = BallastJournal.Behaviour(
@@ -6685,6 +6825,8 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void RenderJournal()
         {
+            BuildPeriodRow();
+            RenderEntries();
             RenderPressure();
             RenderTiltRecord();
 
