@@ -77,6 +77,23 @@ namespace Ballast
         /// </summary>
         public bool IsAutomated = false;
 
+        /// <summary>
+        /// What this account is FOR, in the trader's own terms.
+        ///
+        /// Not the same question as whether the platform calls it a simulator.
+        /// He runs a NinjaTrader sim account deliberately as though it were
+        /// funded, to test a strategy under something like real conditions - so
+        /// the provider says "simulation" and the intent says otherwise. Only he
+        /// knows which, and the difference decides what any comparison between
+        /// accounts is actually measuring.
+        ///
+        /// Practice, evaluation and funded are three different psychological
+        /// situations. An evaluation has a target and a deadline; funded money
+        /// has consequences; practice has neither, which is exactly what makes it
+        /// the control in the experiment.
+        /// </summary>
+        public AccountPurpose Purpose = AccountPurpose.Unsaid;
+
         /// <summary>The firm's own hard contract cap, 0 if unknown. Never exceeded.</summary>
         public int FirmMaxContracts = 0;
 

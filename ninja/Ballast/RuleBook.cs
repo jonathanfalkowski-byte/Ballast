@@ -60,6 +60,14 @@ namespace Ballast
     /// </summary>
     public enum AccountGeneration { Auto, Legacy, Current }
 
+    /// <summary>
+    /// What an account is for. Unsaid is the honest default: an account whose
+    /// purpose nobody has stated is left out of any comparison rather than
+    /// guessed at, because guessing is how a finding about a trader turns into a
+    /// finding about a mislabelled account.
+    /// </summary>
+    public enum AccountPurpose { Unsaid, Practice, Evaluation, Funded }
+
     public class RuleBook
     {
         private readonly List<FirmAccountSpec> specs = new List<FirmAccountSpec>();

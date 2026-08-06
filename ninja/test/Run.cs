@@ -43,6 +43,7 @@ public static class Program
         MismatchTests.Run();
         ResetTests.Run();
         LessonTests.Run();
+        PressureTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

@@ -108,7 +108,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock windowClock;
         private CheckBox windowAnyTimeBox;
         private CheckBox automatedBox, planStandingBox;
-        private ComboBox acctGenBox;
+        private ComboBox acctGenBox, purposeBox;
+        private StackPanel pressurePanel;
         private TextBlock detectionNote;
         private readonly Dictionary<string, string> accountLabels = new Dictionary<string, string>();
 
@@ -1564,6 +1565,19 @@ namespace NinjaTrader.NinjaScript.AddOns
               + "did not write this morning is one you have not committed to."));
 
             p.Children.Add(Spacer(16));
+            p.Children.Add(SectionHeader("UNDER PRESSURE"));
+
+            p.Children.Add(Note("The only experiment you ever run on yourself: same person, same "
+                + "setups, same market, same hours, and one thing changed - whether the money is "
+                + "real. Behaviour only, never money: a simulator's fills flatter you, so a P&L "
+                + "gap is part psychology and part generosity and nobody can say which. No fill "
+                + "engine decides whether you chased, or whether you held a winner. Mark each "
+                + "account's purpose in Setup to turn this on."));
+
+            pressurePanel = new StackPanel();
+            pressurePanel.Margin = new Thickness(0, 0, 0, 18);
+            p.Children.Add(pressurePanel);
+
             p.Children.Add(SectionHeader("WHAT YOUR TRADES SHOW"));
 
             Border insightCard = new Border();
@@ -2313,6 +2327,29 @@ namespace NinjaTrader.NinjaScript.AddOns
             firmFields.Children.Add(acctGenBox);
 
             acct.Children.Add(firmFields);
+
+            // What the account is FOR, which is not what the platform calls it.
+            //
+            // He runs a NinjaTrader sim deliberately as though it were funded, to
+            // test a strategy under something like real conditions - so the
+            // provider says "simulation" and the intent says otherwise. Only he
+            // knows which, and the difference decides what any comparison
+            // between his accounts is actually measuring.
+            acct.Children.Add(Label("What is this account for?"));
+            purposeBox = new ComboBox();
+            purposeBox.Margin = new Thickness(0, 0, 0, 4);
+            purposeBox.Items.Add("Rather not say");
+            purposeBox.Items.Add("Practice");
+            purposeBox.Items.Add("Evaluation");
+            purposeBox.Items.Add("Funded - real money");
+            purposeBox.SelectedIndex = 0;
+            acct.Children.Add(purposeBox);
+
+            acct.Children.Add(Note("Nothing here changes a rule. It is what lets Ballast compare "
+                + "how you trade when it is practice against how you trade when it counts - the "
+                + "only experiment on yourself where everything is held constant except the "
+                + "pressure. An account left unsaid stays out of that comparison rather than "
+                + "being guessed at."));
 
             // ── Where the day's P&L comes from ───────────────────────────────
             trustRealisedBox = new CheckBox();
@@ -3431,6 +3468,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     && (trustRealisedBox.IsChecked == true) != c.TrustAccountRealised) return true;
                 if (acctGenBox != null && acctGenBox.SelectedIndex >= 0
                     && (AccountGeneration)acctGenBox.SelectedIndex != c.Generation) return true;
+                if (purposeBox != null && purposeBox.SelectedIndex >= 0
+                    && (AccountPurpose)purposeBox.SelectedIndex != c.Purpose) return true;
 
                 DrawdownType shownDd = ddTypeBox.SelectedIndex == 1
                     ? DrawdownType.EndOfDay : DrawdownType.Intraday;
@@ -4795,6 +4834,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (automatedBox != null) automatedBox.IsChecked = c.IsAutomated;
             if (trustRealisedBox != null) trustRealisedBox.IsChecked = c.TrustAccountRealised;
             if (acctGenBox != null) acctGenBox.SelectedIndex = (int)c.Generation;
+            if (purposeBox != null) purposeBox.SelectedIndex = (int)c.Purpose;
             ddTypeBox.SelectedIndex = c.DrawdownType == DrawdownType.EndOfDay ? 1 : 0;
 
             // No window at all is stored as start == end. The boxes keep showing
@@ -4830,6 +4870,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (trustRealisedBox != null) c.TrustAccountRealised = trustRealisedBox.IsChecked == true;
             if (acctGenBox != null && acctGenBox.SelectedIndex >= 0)
                 c.Generation = (AccountGeneration)acctGenBox.SelectedIndex;
+            if (purposeBox != null && purposeBox.SelectedIndex >= 0)
+                c.Purpose = (AccountPurpose)purposeBox.SelectedIndex;
             c.DrawdownType        = ddTypeBox.SelectedIndex == 1 ? DrawdownType.EndOfDay : DrawdownType.Intraday;
 
             // A time that cannot be read is left alone rather than defaulted. A
@@ -6504,8 +6546,146 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// changes - redrawing buttons under a trader's cursor once a second
         /// would make them un-clickable.
         /// </summary>
+        /// <summary>
+        /// The practice-against-funded comparison, rebuilt from the whole book.
+        ///
+        /// Accounts whose purpose has not been stated are left out entirely.
+        /// Guessing would put an account on the wrong side of the comparison, and
+        /// a wrong side is worse than a missing one: it does not weaken the
+        /// finding, it inverts it.
+        /// </summary>
+        private void RenderPressure()
+        {
+            if (pressurePanel == null) return;
+
+            try
+            {
+                pressurePanel.Children.Clear();
+
+                List<string> practice = new List<string>();
+                List<string> real = new List<string>();
+
+                foreach (string name in monitor.MonitoredNames)
+                {
+                    BallastTracker t = monitor.Get(name);
+                    if (t == null) continue;
+
+                    if (t.Config.Purpose == AccountPurpose.Practice) practice.Add(name);
+                    else if (t.Config.Purpose == AccountPurpose.Funded
+                          || t.Config.Purpose == AccountPurpose.Evaluation) real.Add(name);
+                }
+
+                if (practice.Count == 0 || real.Count == 0)
+                {
+                    pressurePanel.Children.Add(Note(practice.Count == 0 && real.Count == 0
+                        ? "No account has said what it is for yet. Set that in each account's "
+                          + "rules and this fills itself in."
+                        : practice.Count == 0
+                            ? "Nothing is marked as practice, so there is no control to compare "
+                              + "against."
+                            : "Nothing is marked as an evaluation or funded, so there is nothing "
+                              + "to compare the practice against."));
+                    return;
+                }
+
+                List<BallastTrade> all = monitor.Journal.All;
+                BehaviourProfile pp = BallastJournal.Behaviour(
+                    BallastJournal.FromAccounts(all, practice, true), "practice", 5);
+                BehaviourProfile rp = BallastJournal.Behaviour(
+                    BallastJournal.FromAccounts(all, real, true), "for real", 5);
+
+                pressurePanel.Children.Add(PressureRow(pp, rp));
+
+                List<string> lines = BallastJournal.PressureGap(pp, rp);
+                if (lines.Count == 0)
+                {
+                    pressurePanel.Children.Add(Note(
+                        pp.Trades < BallastJournal.PressureMinSample
+                        || rp.Trades < BallastJournal.PressureMinSample
+                            ? "Not enough on both sides yet. It needs at least "
+                              + BallastJournal.PressureMinSample + " hand-taken trades either way "
+                              + "before it will say anything about you, because a sentence built "
+                              + "on four trades is a sentence that might be wrong."
+                            : "No difference worth reporting. You trade the same either way, "
+                              + "which is the thing everyone is trying to achieve."));
+                    return;
+                }
+
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    TextBlock tb = new TextBlock();
+                    tb.Text = "- " + lines[i];
+                    tb.Foreground = ColInk;
+                    tb.FontSize = 13;
+                    tb.TextWrapping = TextWrapping.Wrap;
+                    tb.Margin = new Thickness(0, 6, 0, 0);
+                    pressurePanel.Children.Add(tb);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>The two profiles side by side, so the sentences have their numbers under them.</summary>
+        private UIElement PressureRow(BehaviourProfile a, BehaviourProfile b)
+        {
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.Margin = new Thickness(0, 4, 0, 6);
+
+            StackPanel wrap = new StackPanel();
+
+            wrap.Children.Add(PressureLine("", a.Label, b.Label, true));
+            wrap.Children.Add(PressureLine("trades", a.Trades.ToString(CultureInfo.InvariantCulture),
+                                           b.Trades.ToString(CultureInfo.InvariantCulture), false));
+            wrap.Children.Add(PressureLine("off plan", Pc(a.OffPlanRate), Pc(b.OffPlanRate), false));
+            wrap.Children.Add(PressureLine("winners held vs losers",
+                                           Ratio(a.HoldRatio), Ratio(b.HoldRatio), false));
+            wrap.Children.Add(PressureLine("straight after a loss",
+                                           Pc(a.RevengeRate), Pc(b.RevengeRate), false));
+            wrap.Children.Add(PressureLine("trades a day",
+                                           Dec(a.TradesPerDay), Dec(b.TradesPerDay), false));
+            wrap.Children.Add(PressureLine("average size",
+                                           Dec(a.AvgContracts), Dec(b.AvgContracts), false));
+            return wrap;
+        }
+
+        private UIElement PressureLine(string what, string left, string right, bool head)
+        {
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.Margin = new Thickness(0, 2, 0, 0);
+
+            Brush ink = head ? ColMuted : ColInk;
+            FontWeight w = head ? FontWeights.Bold : FontWeights.Normal;
+
+            g.Children.Add(Cell(what, ColMuted, 0, FontWeights.Normal));
+            g.Children.Add(Cell(left, ink, 1, w));
+            g.Children.Add(Cell(right, ink, 2, w));
+            return g;
+        }
+
+        private static string Pc(double v)
+        {
+            return Math.Round(v * 100).ToString("0", CultureInfo.InvariantCulture) + "%";
+        }
+
+        private static string Ratio(double v)
+        {
+            return v <= 0 ? "-" : v.ToString("0.0", CultureInfo.InvariantCulture) + "x";
+        }
+
+        private static string Dec(double v)
+        {
+            return v.ToString("0.0", CultureInfo.InvariantCulture);
+        }
+
         private void RenderJournal()
         {
+            RenderPressure();
             RenderTiltRecord();
 
             List<BallastTrade> pending = monitor.Journal.Pending();

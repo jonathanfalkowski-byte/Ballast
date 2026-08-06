@@ -232,6 +232,61 @@ namespace Ballast
         }
     }
 
+    /// <summary>
+    /// How a trader behaves, stripped of how much he made.
+    ///
+    /// Money is deliberately absent. The whole point of this class is to compare
+    /// a simulator against a funded account, and a simulator's fills flatter
+    /// you - no slippage, no queue, limits that fill when they would not have.
+    /// So any P&L gap is part psychology and part generosity, and the two cannot
+    /// be separated. An argument that can be explained away is not worth having.
+    ///
+    /// A fill engine does not decide whether you chased. It does not decide
+    /// whether you held a winner to target or grabbed it at half. It does not
+    /// decide how many seconds after a loss you clicked again. Those come
+    /// entirely from the person, which is why they are the only honest ground
+    /// for the comparison.
+    /// </summary>
+    public class BehaviourProfile
+    {
+        public string Label = "";
+        public int Trades;
+        public int Wins;
+        public int OffPlan;              // chased, unplanned, or sloppy
+        public int Revenge;              // entered inside the cooldown after a loss
+        public int Days;
+        public double WinnerMinutes;     // total, for the average
+        public int Winners;
+        public double LoserMinutes;
+        public int Losers;
+        public double Contracts;
+
+        public double OffPlanRate { get { return Trades == 0 ? 0 : (double)OffPlan / Trades; } }
+        public double RevengeRate { get { return Trades == 0 ? 0 : (double)Revenge / Trades; } }
+        public double TradesPerDay { get { return Days == 0 ? 0 : (double)Trades / Days; } }
+        public double AvgWinnerMinutes { get { return Winners == 0 ? 0 : WinnerMinutes / Winners; } }
+        public double AvgLoserMinutes { get { return Losers == 0 ? 0 : LoserMinutes / Losers; } }
+        public double AvgContracts { get { return Trades == 0 ? 0 : Contracts / Trades; } }
+
+        /// <summary>
+        /// Winners held against losers held, which is the shape that matters.
+        ///
+        /// Above 1 means winners are given more room than losers - the discipline
+        /// everyone says they want. Below 1 means the opposite: grabbing profits
+        /// and nursing losses, which is the single most common way a working
+        /// setup is turned into a losing account.
+        /// </summary>
+        public double HoldRatio
+        {
+            get
+            {
+                if (Winners == 0 || Losers == 0) return 0;
+                double l = AvgLoserMinutes;
+                return l <= 0 ? 0 : AvgWinnerMinutes / l;
+            }
+        }
+    }
+
     /// <summary>A group of trades reduced to the numbers worth looking at.</summary>
     public class JournalBucket
     {
@@ -754,6 +809,159 @@ namespace Ballast
         /// trader's habit and not the account's, and a dollar is a dollar across
         /// two funded accounts. It does not pool across the sim line.
         /// </summary>
+        /// <summary>
+        /// Build a behaviour profile from a set of trades.
+        ///
+        /// Manual, watched trades only. A strategy has no psychology and a
+        /// reconstructed gap has no timestamps worth trusting.
+        /// </summary>
+        public static BehaviourProfile Behaviour(List<BallastTrade> source, string label,
+                                                 int revengeMinutes)
+        {
+            BehaviourProfile p = new BehaviourProfile();
+            p.Label = label ?? "";
+
+            List<BallastTrade> manual = ManualOnly(source);
+            List<string> days = new List<string>();
+
+            for (int i = 0; i < manual.Count; i++)
+            {
+                BallastTrade e = manual[i];
+                if (e == null || e.IsReconstructed) continue;
+
+                p.Trades++;
+                if (e.Pnl > 0) p.Wins++;
+                p.Contracts += e.MaxContracts;
+
+                string v = e.Planned;
+                if (v == Verdict_Chased || v == Verdict_OffPlan || v == Verdict_Sloppy) p.OffPlan++;
+
+                if (e.PreviousTradeWasLoss && e.MinutesSincePreviousLoss >= 0
+                    && e.MinutesSincePreviousLoss < revengeMinutes) p.Revenge++;
+
+                double mins = (e.ExitTime - e.EntryTime).TotalMinutes;
+                if (mins < 0) mins = 0;
+                if (e.Pnl > 0) { p.Winners++; p.WinnerMinutes += mins; }
+                else if (e.Pnl < 0) { p.Losers++; p.LoserMinutes += mins; }
+
+                string d = e.ExitTime.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+                if (!days.Contains(d)) days.Add(d);
+            }
+
+            p.Days = days.Count;
+            return p;
+        }
+
+        /// <summary>The fewest trades on each side before a difference is worth stating.</summary>
+        public const int PressureMinSample = 8;
+
+        /// <summary>
+        /// What changes about a trader when the money becomes real.
+        ///
+        /// This is the only controlled experiment a trader ever runs on himself:
+        /// same person, same setups, same market, same hours, and one variable
+        /// moved. Everything a backtest cannot tell him lives in the difference.
+        ///
+        /// It reports differences in BEHAVIOUR and never in money - see
+        /// BehaviourProfile for why that is not squeamishness but the only way
+        /// the finding survives an argument.
+        ///
+        /// Silence is the default. Each comparison needs a real sample on both
+        /// sides and a difference big enough that it is not noise, because the
+        /// worst outcome here is not saying nothing - it is telling a trader
+        /// something about himself that is not true.
+        /// </summary>
+        public static List<string> PressureGap(BehaviourProfile practice, BehaviourProfile real)
+        {
+            List<string> lines = new List<string>();
+            if (practice == null || real == null) return lines;
+            if (practice.Trades < PressureMinSample || real.Trades < PressureMinSample) return lines;
+
+            // Rule-breaking. The clearest of the lot, and the least deniable:
+            // no fill engine decides whether a trade was chased.
+            double offGap = real.OffPlanRate - practice.OffPlanRate;
+            if (Math.Abs(offGap) >= 0.15)
+            {
+                lines.Add(offGap > 0
+                    ? "You take " + Pct(real.OffPlanRate) + " of your funded trades off plan, against "
+                      + Pct(practice.OffPlanRate) + " in practice. The rules go first when it is real."
+                    : "You keep to your plan MORE when it is real - " + Pct(real.OffPlanRate)
+                      + " off plan funded against " + Pct(practice.OffPlanRate)
+                      + " in practice. Whatever you are doing under pressure, keep doing it.");
+            }
+
+            // Holding. Winners against losers, on each side.
+            if (practice.HoldRatio > 0 && real.HoldRatio > 0)
+            {
+                double ratio = real.HoldRatio / practice.HoldRatio;
+                if (ratio <= 0.7)
+                {
+                    lines.Add("In practice you hold winners "
+                        + Times(practice.HoldRatio) + " as long as losers. Funded, "
+                        + Times(real.HoldRatio) + ". The setup did not change - you are cutting "
+                        + "the good ones and sitting with the bad ones when it counts.");
+                }
+                else if (ratio >= 1.4)
+                {
+                    lines.Add("You hold winners longer relative to losers when it is real ("
+                        + Times(real.HoldRatio) + " against " + Times(practice.HoldRatio)
+                        + "). That is the right direction and it is rare.");
+                }
+            }
+
+            // Revenge.
+            double revGap = real.RevengeRate - practice.RevengeRate;
+            if (Math.Abs(revGap) >= 0.12)
+            {
+                lines.Add(revGap > 0
+                    ? Pct(real.RevengeRate) + " of your funded trades come straight after a loss, "
+                      + "against " + Pct(practice.RevengeRate) + " in practice. Real money is what "
+                      + "makes you reach for it back."
+                    : "You chase a loss less on the funded account than in practice - "
+                      + Pct(real.RevengeRate) + " against " + Pct(practice.RevengeRate) + ".");
+            }
+
+            // Frequency.
+            if (practice.Days > 0 && real.Days > 0 && practice.TradesPerDay > 0)
+            {
+                double f = real.TradesPerDay / practice.TradesPerDay;
+                if (f >= 1.5)
+                    lines.Add("You take " + One(real.TradesPerDay) + " trades a day funded against "
+                        + One(practice.TradesPerDay) + " in practice. More trades under pressure is "
+                        + "not more opportunity, it is less patience.");
+                else if (f <= 0.6)
+                    lines.Add("You take " + One(real.TradesPerDay) + " trades a day funded against "
+                        + One(practice.TradesPerDay) + " in practice. Fewer, which may be discipline "
+                        + "or may be flinching - your own numbers will not tell you which.");
+            }
+
+            // Size.
+            if (practice.AvgContracts > 0 && real.AvgContracts > 0)
+            {
+                double s = real.AvgContracts / practice.AvgContracts;
+                if (s >= 1.3)
+                    lines.Add("And you size UP when it is real: " + One(real.AvgContracts)
+                        + " contracts against " + One(practice.AvgContracts) + " in practice.");
+            }
+
+            return lines;
+        }
+
+        private static string Pct(double v)
+        {
+            return Math.Round(v * 100).ToString("0", CultureInfo.InvariantCulture) + "%";
+        }
+
+        private static string Times(double v)
+        {
+            return v.ToString("0.0", CultureInfo.InvariantCulture) + "x";
+        }
+
+        private static string One(double v)
+        {
+            return v.ToString("0.0", CultureInfo.InvariantCulture);
+        }
+
         public static List<BallastTrade> FromAccounts(List<BallastTrade> source,
                                                       List<string> accounts, bool include)
         {

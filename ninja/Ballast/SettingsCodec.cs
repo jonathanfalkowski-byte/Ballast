@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 25;
+        public const int CurrentFieldCount = 26;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -64,7 +64,8 @@ namespace Ballast
                 D(c.ProfitTarget),                                                 // 21
                 D(c.FirmDailyLossLimit),                                           // 22
                 c.TrustAccountRealised ? "1" : "0",                                // 23
-                I(c.TradingDayResetMinute)                                          // 24
+                I(c.TradingDayResetMinute),                                         // 24
+                ((int)c.Purpose).ToString(CultureInfo.InvariantCulture)             // 25
             });
         }
 
@@ -156,6 +157,12 @@ namespace Ballast
             // previous calendar-day behaviour.
             if (f.Length >= 25 && int.TryParse(f[24], out n) && n >= 0 && n < 1440)
                 c.TradingDayResetMinute = n;
+
+            // Field 26 is what the account is FOR - practice, evaluation, funded.
+            // Absent means unsaid, and unsaid keeps an account out of any
+            // comparison rather than putting it on the wrong side of one.
+            if (f.Length >= 26 && int.TryParse(f[25], out n) && n >= 0 && n <= 3)
+                c.Purpose = (AccountPurpose)n;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.
