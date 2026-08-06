@@ -182,7 +182,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 Description = "Shows the Ballast warning for one account across the top of this chart.";
                 Name = "BallastChartWarning";
-                Calculate = Calculate.OnEachTick;
+
+                // Bar close, not every tick.
+                //
+                // Nothing here is measured from price. The panel is repainted by
+                // its own one-second timer - see StartClock - so asking to be
+                // woken on every tick of NQ bought nothing at all and cost a
+                // redraw at tick rate on the chart's UI thread. On a fast
+                // instrument in a busy morning that is thousands of pointless
+                // repaints a minute, on the same thread the chart uses to draw
+                // price, and the backlog only grows.
+                Calculate = Calculate.OnBarClose;
 
                 // Its own panel, not the price panel. This is the fix for being
                 // buried - see the header.
@@ -258,8 +268,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             // stop the painting - which is the part that matters.
             try { Values[0][0] = 0; } catch { }
             try { StartClock(); } catch { }
-            try { Paint(); }
-            catch (Exception ex) { Complain("paint from bar update", ex); }
+
+            // No painting from here any more. The clock does it once a second,
+            // which is both often enough for a discipline warning and the only
+            // rate that does not scale with how fast the market happens to be
+            // trading. Painting here as well meant the busiest moments - exactly
+            // when the chart most needs its thread - carried the most redundant
+            // work.
         }
 
         /// <summary>
@@ -410,12 +425,34 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { }
         }
 
+        /// <summary>What was last drawn, so an unchanged panel is not redrawn.</summary>
+        private string lastSaid = null;
+
         private void Say(string text, Brush ink, Brush back, double scale, TextPosition where)
         {
             int baseSize = TextSize < 8 ? 8 : (TextSize > 72 ? 72 : TextSize);
             int size = (int)Math.Round(baseSize * scale);
             if (size < 11) size = 11;
             if (size > 72) size = 72;
+
+            // Redraw only when something actually changed.
+            //
+            // Draw.TextFixed is not free: it goes through NinjaTrader's draw
+            // object machinery and invalidates the chart. This panel says the
+            // same sentence for minutes at a time - a trade count and a cushion
+            // do not move on every tick - so almost every repaint was replacing
+            // a string with an identical copy of itself and asking the chart to
+            // redraw for it.
+            //
+            // The key covers everything that can change what is on screen. Miss
+            // one and the panel goes stale, which is worse than slow: a stale
+            // discipline warning is a lie told quietly.
+            string key = text + "|" + size + "|" + where
+                       + "|" + (ink == null ? "" : ink.ToString())
+                       + "|" + (back == null ? "" : back.ToString());
+
+            if (key == lastSaid) return;
+            lastSaid = key;
 
             try
             {
@@ -529,7 +566,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             string text = BallastState.ChartBanner(st);
-            if (text.Length == 0) { RemoveDrawObject(Tag); return; }
+            if (text.Length == 0) { lastSaid = null; RemoveDrawObject(Tag); return; }
 
             // "Can lose" alongside "stop" reads as a budget to spend. Once the
             // account is past a hard line there is no number to offer.
