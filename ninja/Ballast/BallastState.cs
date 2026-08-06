@@ -168,18 +168,29 @@ namespace Ballast
             // sacrifice. The budget never grows on a green day - see RoomToday
             // in the window - so a good morning does not quietly buy a bigger
             // afternoon to lose.
+            //
+            // "LEFT" on its own was read as progress toward the target - "i
+            // thought that was my target then realized it is right beside it".
+            // Fair: it sat immediately before the target figure, both in dollars,
+            // both four digits. Left of WHAT is the entire meaning of the number,
+            // and a line read sideways in a second while a position is on cannot
+            // afford to make the reader work it out from context.
             if (s.HasDailyLimit)
-                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT");
+                sb.Append("   ").Append(Money(s.RoomToday)).Append(" LEFT TO LOSE");
 
+            // "OF" rather than a slash, so the target cannot be mistaken for
+            // another count like the 5/12 trades earlier in the same line. One
+            // ratio per line, and it belongs to the counts.
             if (s.DailyTarget > 0)
             {
                 if (s.DailyPnl >= s.DailyTarget) sb.Append("   TARGET HIT");
                 else sb.Append("   ").Append(Money(s.DailyPnl > 0 ? s.DailyPnl : 0))
-                       .Append('/').Append(Money(s.DailyTarget)).Append(" TARGET");
+                       .Append(" OF ").Append(Money(s.DailyTarget)).Append(" TARGET");
             }
 
+            // The account-ending number, named the same way the window names it.
             if (s.HasCushion)
-                sb.Append("   ").Append(Money(s.CanLose)).Append(" TO FLOOR");
+                sb.Append("   ").Append(Money(s.CanLose)).Append(" TO THE FLOOR");
 
             return sb.ToString();
         }

@@ -533,8 +533,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // "Can lose" alongside "stop" reads as a budget to spend. Once the
             // account is past a hard line there is no number to offer.
+            //
+            // Named the same way everywhere else names it. This figure is the
+            // distance to the account ENDING, not today's budget, and the two
+            // sat on adjacent lines under different words - "CAN LOSE" here,
+            // "TO THE FLOOR" on the count line and in the window - which invited
+            // exactly the mix-up the count line has just been fixed for.
             if (st.HasCushion && !st.Locked)
-                text += "        CAN LOSE " + Money(st.CanLose);
+                text += "        " + Money(st.CanLose) + " TO THE FLOOR";
 
             // An alarm fills Ballast's own strip: solid background, no
             // transparency, centred. There is nothing underneath it to blend

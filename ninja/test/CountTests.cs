@@ -36,9 +36,17 @@ public static class CountTests
         T.Ok(line.IndexOf("SIM110") >= 0, "the count names the account");
         T.Ok(line.IndexOf("2/5 TRADES") >= 0, "it shows trades taken against the limit");
         T.Ok(line.IndexOf("1/3 LOSSES") >= 0, "it shows losses in a row against the limit");
-        T.Ok(line.IndexOf("$2,400 LEFT") >= 0, "it shows what is left of today's budget");
-        T.Ok(line.IndexOf("$0/$750 TARGET") >= 0, "and today's target, which is the other end of the same decision");
-        T.Ok(line.IndexOf("$6,500 TO FLOOR") >= 0, "and the room to the floor");
+        // Left of WHAT. "$1,200 LEFT" sat immediately before the target figure,
+        // both in dollars, both four digits - "i thought that was my target then
+        // realized it is right beside it". A line read sideways in a second while
+        // a position is on cannot make the reader work it out from context.
+        T.Ok(line.IndexOf("$2,400 LEFT TO LOSE") >= 0, "it says what is left of today's budget, and of what");
+
+        // "OF" not a slash, so the target cannot be read as another count like
+        // the trades ratio earlier in the same line.
+        T.Ok(line.IndexOf("$0 OF $750 TARGET") >= 0, "and today's target, which is the other end of the same decision");
+        T.Ok(line.IndexOf("/$750") < 0, "with only one ratio on the line, and it belongs to the counts");
+        T.Ok(line.IndexOf("$6,500 TO THE FLOOR") >= 0, "and the room to the floor, named as the window names it");
 
         // The actual complaint: changing an account's rules produced no visible
         // change on the chart, because the chart only ever said "BALLAST OK".
