@@ -1273,7 +1273,23 @@ namespace Ballast
                     if (i == 0 && line.StartsWith("Account,")) continue;
 
                     BallastTrade e = FromCsvLine(line);
-                    if (e != null) entries.Add(e);
+                    if (e == null) continue;
+
+                    // A round trip that ended before it began is not a trade, and
+                    // a journal that already holds one should not carry it around
+                    // for the rest of its life. These came from NinjaTrader
+                    // replaying a position's executions out of order on connect -
+                    // the closing sell of a long reading as the opening of a short
+                    // - and a fresh one appeared on every restart, which is why
+                    // trades already tagged kept coming back to be tagged again.
+                    //
+                    // Dropped on the way in rather than left to be filtered
+                    // everywhere they are read, and the file is written back
+                    // without them, so the journal heals itself the first time it
+                    // is opened by a build that knows better.
+                    if (e.ExitTime < e.EntryTime) continue;
+
+                    entries.Add(e);
                 }
                 return true;
             }
