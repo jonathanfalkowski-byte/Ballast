@@ -56,6 +56,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		// What each label currently says, so an unchanged one is not redrawn.
 		private readonly Dictionary<string, string> drawn = new Dictionary<string, string>();
+
+		// The last TPO bracket each price row was credited for. This is what makes
+		// the count TIME rather than bar count: a row touched by forty range bars
+		// inside one thirty-minute bracket still scores one.
+		private readonly Dictionary<int, long> lastBracket = new Dictionary<int, long>();
 		private DateTime	devDate = DateTime.MinValue;
 		private bool		devSessionStarted;
 		private double		pPocLevel, pVahLevel, pValLevel;
@@ -91,9 +96,26 @@ namespace NinjaTrader.NinjaScript.Indicators
 			}
 			else if (State == State.Configure)
 			{
-				// The TPO brackets — a time series, independent of the chart's bars,
-				// so "time at price" is honest on a range or tick chart.
-				AddDataSeries(BarsPeriodType.Minute, TpoPeriodMinutes);
+				// NO SECOND DATA SERIES. This is the whole performance fix.
+				//
+				// It used to add a 30-minute series so that "time at price" was
+				// honest on a range chart. The intent was right and the cost was
+				// ruinous: a second series means NinjaTrader builds and maintains
+				// a second set of bars from the same feed, and then has to
+				// interleave them with the primary by timestamp on every update.
+				// On a RANGE chart, whose bars close at irregular times and can
+				// close several times a second in a fast market, that
+				// synchronisation is the expensive part - and it is paid on every
+				// tick, all session, growing with the number of bars held.
+				//
+				// It is not needed. A TPO count is "how many distinct 30-minute
+				// brackets did this price trade in", and a bar's own TIMESTAMP
+				// says which bracket it falls in. So the brackets are derived from
+				// the chart's own bars instead of from a parallel series: each
+				// price row is credited once per bracket, however many bars touch
+				// it. That is the same measurement - time, not bar count - and it
+				// is correct on a range chart for exactly the reason the second
+				// series was added.
 			}
 			else if (State == State.DataLoaded)
 			{
@@ -104,16 +126,20 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 		protected override void OnBarUpdate()
 		{
-			// Series 1 = the 30-minute TPO brackets. Build the profile here.
-			if (BarsInProgress == 1) { AccumulateTpo(); return; }
 			if (BarsInProgress != 0) return;
 
-			// Roll on the PRIMARY series' calendar day too, not just when the
-			// first 30-min bracket closes at 10:00 — otherwise the prior-day lines
-			// would be missing through the 09:30-10:00 open, which is exactly the
-			// window that matters. Rolling here puts yesterday's levels on the
-			// chart the instant the new day begins.
+			// Roll on the calendar day BEFORE the session filter, not after.
+			//
+			// Accumulation only looks at RTH bars, so if the roll lived only in
+			// there, yesterday's levels would not appear until the first bar after
+			// 09:30 - and the overnight session and the open, which is exactly
+			// when those levels are being traded against, would still be showing
+			// the day before's. Rolling here puts them up the instant the date
+			// turns. RollIfNewDay is idempotent, so the call inside AccumulateTpo
+			// costs nothing.
 			RollIfNewDay(Time[0].Date);
+
+			AccumulateTpo();
 
 			bool haveDev = ShowDevelopingPOC && devCounts.Count > 0;
 			double devLevel = haveDev ? PriceOf(devPocRow) : double.NaN;
@@ -142,17 +168,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 		// ── TPO accumulation ────────────────────────────────────────────────
 		private void AccumulateTpo()
 		{
-			DateTime t   = Times[1][0];
+			DateTime t   = Time[0];
 			int      tod = t.Hour * 60 + t.Minute;
 			int      s   = SessionStartET / 100 * 60 + SessionStartET % 100;
 			int      e   = SessionEndET   / 100 * 60 + SessionEndET   % 100;
 
-			// A 30-min bar is stamped at its CLOSE, so the 09:30-10:00 bracket is
-			// stamped 10:00. Keep brackets whose close falls in (start, end].
+			// A bar is stamped at its CLOSE, so a bar closing at exactly 09:30
+			// belongs to the pre-open. Keep bars closing in (start, end].
 			if (tod <= s || tod > e) return;
 
 			RollIfNewDay(t.Date);
-			AddRange(Lows[1][0], Highs[1][0]);
+
+			// Which bracket this bar closed in. Minutes since midnight divided by
+			// the bracket length, made unique per day so yesterday's 10:00 bracket
+			// can never be mistaken for today's.
+			long bracket = t.Date.Ticks / TimeSpan.TicksPerDay * 1000L
+			             + (tod / (TpoPeriodMinutes < 1 ? 1 : TpoPeriodMinutes));
+
+			AddRange(Low[0], High[0], bracket);
 		}
 
 		// Freeze the finished session into the prior-session levels and start a
@@ -168,6 +201,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				priorValid = true;
 			}
 			devCounts.Clear();
+			lastBracket.Clear();
 			devPocRow = 0;
 			devPocCount = -1;
 			drawn.Clear();          // yesterday's labels must not be held as current
@@ -175,11 +209,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 			devSessionStarted = true;
 		}
 
-		private void AddRange(double lo, double hi)
+		private void AddRange(double lo, double hi, long bracket)
 		{
 			int rLo = RowOf(lo), rHi = RowOf(hi);
 			for (int r = rLo; r <= rHi; r++)
 			{
+				// Once per bracket per row. Without this a range chart would count
+				// bars, and a busy thirty minutes would out-score a quiet hour -
+				// which is the distortion the whole design exists to avoid.
+				long seen;
+				if (lastBracket.TryGetValue(r, out seen) && seen == bracket) continue;
+				lastBracket[r] = bracket;
+
 				int c;
 				devCounts.TryGetValue(r, out c);
 				devCounts[r] = c + 1;
