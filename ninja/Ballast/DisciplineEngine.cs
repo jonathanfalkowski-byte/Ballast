@@ -227,8 +227,13 @@ namespace Ballast
             if (Has(d.Signals, "over_size"))
                 return "holding " + i.OpenContracts + " over a cap of " + i.MaxContracts;
 
+            // "at your limit" was said at five trades and again at six, so
+            // crossing the line changed nothing on screen. The words have to
+            // move when he does.
             if (Has(d.Signals, "over_trading"))
-                return i.TradesToday + " trades - at your limit";
+                return i.TradesToday > i.MaxTrades
+                    ? i.TradesToday + " trades - PAST your limit of " + i.MaxTrades
+                    : i.TradesToday + " trades - at your limit";
 
             if (d.Action == DisciplineAction.ProtectGreen)
                 return "target hit - bank it or free-roll, do not give it back";
@@ -544,8 +549,15 @@ namespace Ballast
             }
             else if (Has(d.Signals, "over_trading"))
             {
-                action = DisciplineAction.StopForDay; urgency = Urgency.Caution;
-                reason = "this account is at its max trades for today";
+                // Amber AT the limit, red PAST it. The whole point of a limit is
+                // that something happens when it is crossed, and holding one
+                // colour either side of the line meant nothing did.
+                action = DisciplineAction.StopForDay;
+                bool past = i.TradesToday > i.MaxTrades;
+                urgency = past ? Urgency.Alert : Urgency.Caution;
+                reason = past
+                    ? "this account is past its max trades for today"
+                    : "this account is at its max trades for today";
             }
             else if (Has(d.Signals, "over_size"))
             {

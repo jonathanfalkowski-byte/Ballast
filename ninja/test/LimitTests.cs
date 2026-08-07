@@ -28,6 +28,95 @@ public static class LimitTests
         FirmDailyLimitStillBinds();
         LimitsSurviveTheSettingsFile();
         EngineActsOnEachAccountsOwnNumbers();
+        TheTradeCountStopsHimTheSameWayALossStreakDoes();
+    }
+
+    /// <summary>
+    /// "didnt even see the warning to stop. Bizaare we may need to fix that"
+    ///
+    /// Six trades on APEX-11325-105 against a limit of five. Everything Ballast
+    /// was built to do had happened - the row was amber, the action read DONE
+    /// TODAY, the chart carried "6 TRADES - AT YOUR LIMIT" - and he walked
+    /// straight through all of it, because none of it was any different from
+    /// what the chart says all day.
+    ///
+    /// Two holes. The trade count was the one line a trader draws that had no
+    /// wall behind it: max losses got one, max trades got a colour. And the
+    /// words did not change when he crossed - "at your limit" was said at five
+    /// and again at six, so the moment of crossing looked exactly like the
+    /// moment before it.
+    /// </summary>
+    static void TheTradeCountStopsHimTheSameWayALossStreakDoes()
+    {
+        T.S("the trade count stops him the way a loss streak does");
+
+        // His account, his numbers, at the moment he reached the limit.
+        DisciplineInput at = new DisciplineInput();
+        at.StartingBalance = 250000; at.TrailingDrawdown = 6500;
+        at.CurrentEquity = 247427; at.HasValidEquity = true;
+        at.FloorLevel = 243500; at.CushionToFloor = 3927;
+        at.MaxTrades = 5; at.TradesToday = 5;
+        at.MaxLossesBeforeStop = 3; at.LossesToday = 1;
+        at.DailyPnl = 46; at.PeakDailyPnl = 46; at.DailyTarget = 750;
+        at.MaxContracts = 4; at.NowMinuteEt = 600; at.MinutesSinceLastLoss = -1;
+
+        DisciplineDecision dAt = DisciplineEngine.Evaluate(at);
+        T.Eq(dAt.Action, DisciplineAction.StopForDay, "at five, the account is done");
+        T.Eq(dAt.Urgency, Urgency.Caution, "amber - he is at the line, not through it");
+        T.Ok(DisciplineEngine.RowWarning(at, dAt).IndexOf("at your limit") >= 0,
+             "and the row says so");
+
+        List<TiltTrigger> wallAt = TiltLockout.EvaluateAll("APEX-11325-105", at, dAt, true);
+        bool found = false;
+        for (int n = 0; n < wallAt.Count; n++)
+            if (wallAt[n].Kind == TiltKind.MaxTrades) found = true;
+        T.Ok(found, "and there is now something standing in front of the sixth trade");
+
+        // One trade later - the screenshot.
+        DisciplineInput past = new DisciplineInput();
+        past.StartingBalance = 250000; past.TrailingDrawdown = 6500;
+        past.CurrentEquity = 247427; past.HasValidEquity = true;
+        past.FloorLevel = 243500; past.CushionToFloor = 3927;
+        past.MaxTrades = 5; past.TradesToday = 6;
+        past.MaxLossesBeforeStop = 3; past.LossesToday = 1;
+        past.DailyPnl = 46; past.PeakDailyPnl = 46; past.DailyTarget = 750;
+        past.MaxContracts = 4; past.NowMinuteEt = 600; past.MinutesSinceLastLoss = -1;
+
+        DisciplineDecision dPast = DisciplineEngine.Evaluate(past);
+        T.Eq(dPast.Urgency, Urgency.Alert,
+             "past the line it goes red, so crossing it LOOKS like crossing it");
+
+        string row = DisciplineEngine.RowWarning(past, dPast);
+        T.Ok(row.IndexOf("PAST your limit of 5") >= 0,
+             "and the words move with him: " + row);
+        T.Ok(row.IndexOf("at your limit") < 0,
+             "rather than saying the same thing either side of the line");
+
+        // The chart is told, which is what was missing - a count breach used to
+        // light nothing, so the banner read the same as it does all morning.
+        T.Ok(TiltLockout.IsHardBreaker(TiltKind.MaxTrades),
+             "a line he drew himself counts as a breaker, the same as his loss limit");
+
+        // A bot has no line to break, and an account with no limit set has no
+        // line at all - neither gets a wall.
+        DisciplineInput bot = past;
+        bot.IsAutomated = true;
+        T.Eq(TiltLockout.EvaluateAll("APEX-11325-105", bot, DisciplineEngine.Evaluate(bot), true).Count, 0,
+             "a strategy is not talked out of its sixth trade");
+        bot.IsAutomated = false;
+
+        DisciplineInput none = new DisciplineInput();
+        none.StartingBalance = 250000; none.TrailingDrawdown = 6500;
+        none.CurrentEquity = 247427; none.HasValidEquity = true;
+        none.FloorLevel = 243500; none.CushionToFloor = 3927;
+        none.MaxTrades = 0; none.TradesToday = 40;
+        none.MaxLossesBeforeStop = 3; none.NowMinuteEt = 600; none.MinutesSinceLastLoss = -1;
+
+        List<TiltTrigger> noWall = TiltLockout.EvaluateAll("APEX-11325-105", none,
+                                                          DisciplineEngine.Evaluate(none), true);
+        for (int n = 0; n < noWall.Count; n++)
+            T.Ok(noWall[n].Kind != TiltKind.MaxTrades,
+                 "a trader who set no trade limit is never told he passed one");
     }
 
     static FirmAccountSpec Spec(string firm, string label, double size, double dd,

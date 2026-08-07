@@ -44,6 +44,12 @@ namespace Ballast
         public const string PastFloor      = "past_floor";
         public const string DailyLossLimit = "daily_loss_limit";
         public const string LossStreak     = "loss_streak";
+
+        /// <summary>
+        /// The trade count. Keyed to the discipline signal it comes from, so the
+        /// wall and the row can never disagree about whether it is in force.
+        /// </summary>
+        public const string MaxTrades      = "over_trading";
         public const string GiveBack       = "give_back";
 
         public static string Label(string kind)
@@ -51,6 +57,7 @@ namespace Ballast
             if (kind == PastFloor)      return "past the floor";
             if (kind == DailyLossLimit) return "past the daily loss limit";
             if (kind == LossStreak)     return "max losses for the day";
+            if (kind == MaxTrades)      return "max trades for the day";
             if (kind == GiveBack)       return "handing back a green day";
             return kind;
         }
@@ -740,6 +747,34 @@ namespace Ballast
                 outp.Add(t);
             }
 
+            // "didnt even see the warning to stop."
+            //
+            // He had set five trades and taken six. Everything Ballast is
+            // supposed to do had happened: the row went amber, the action said
+            // DONE TODAY, the chart carried "6 TRADES - AT YOUR LIMIT". None of
+            // it interrupted him, because none of it was different from what the
+            // chart says all day. The count was the only line he had drawn that
+            // could be walked through without anything standing in the way.
+            //
+            // There was no principle behind that, only an omission. He picks the
+            // number of losses that ends his day and gets a wall; he picks the
+            // number of trades that ends his day and got a colour. Both are
+            // lines drawn by the calm version of him, and the wall exists
+            // precisely for the moment the calm version is not the one at the
+            // keyboard.
+            if (Has(d.Signals, TiltKind.MaxTrades) && i.MaxTrades > 0)
+            {
+                TiltTrigger t = New(name, TiltKind.MaxTrades, i);
+                t.Title = "You are done for the day.";
+                t.Line = name + " has taken " + i.TradesToday
+                       + (i.TradesToday == 1 ? " trade" : " trades")
+                       + " - you said " + i.MaxTrades + " was your limit.";
+                t.Ask = "A trade count is not about this trade being bad. It is the number you "
+                      + "picked because past it you stop choosing setups and start taking them. "
+                      + "You are past it.";
+                outp.Add(t);
+            }
+
             // The give-back signal fires on how much of a peak has been handed
             // back, which can happen on a day that has since gone red. Telling
             // someone they are "still up -$200" is exactly the kind of visibly
@@ -770,7 +805,8 @@ namespace Ballast
         {
             return kind == TiltKind.PastFloor
                 || kind == TiltKind.DailyLossLimit
-                || kind == TiltKind.LossStreak;
+                || kind == TiltKind.LossStreak
+                || kind == TiltKind.MaxTrades;
         }
 
         private static TiltTrigger New(string name, string kind, DisciplineInput i)
