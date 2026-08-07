@@ -73,6 +73,60 @@ namespace Ballast
         private readonly List<FirmAccountSpec> specs = new List<FirmAccountSpec>();
 
         public string VerifiedDate = "unknown";
+
+        /// <summary>
+        /// When each firm's figures were last read off that firm's own pages, and
+        /// where. Keyed by firm name.
+        ///
+        /// One date for the whole file was a quiet lie. It said "verified 4
+        /// August" across a rule book in which two firms had been checked
+        /// properly and seven had not, and a reader - on the public rules page,
+        /// or in the window trusting a cushion - had no way to tell which kind of
+        /// row he was looking at.
+        ///
+        /// A row nobody has confirmed is not a scandal. Presenting it as though
+        /// somebody had is. So the file can now say, per firm, who checked and
+        /// when, and everything without an entry reports itself as unconfirmed.
+        /// </summary>
+        private readonly Dictionary<string, string> firmVerified =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private readonly Dictionary<string, string> firmSource =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The date a firm's figures were last confirmed, or "" if never.</summary>
+        public string VerifiedFor(string firm)
+        {
+            string v;
+            if (firm != null && firmVerified.TryGetValue(firm, out v)) return v;
+            return "";
+        }
+
+        /// <summary>Where a firm's figures were read from, or "" if unrecorded.</summary>
+        public string SourceFor(string firm)
+        {
+            string v;
+            if (firm != null && firmSource.TryGetValue(firm, out v)) return v;
+            return "";
+        }
+
+        /// <summary>
+        /// One line about how much weight a firm's numbers will carry. Shown
+        /// wherever those numbers are, because a trader deciding whether to trust
+        /// a cushion is entitled to know which kind of figure it rests on.
+        /// </summary>
+        public string ConfidenceFor(string firm)
+        {
+            string when = VerifiedFor(firm);
+            if (when.Length == 0)
+                return "Not independently confirmed. These figures came from the firm's public "
+                     + "marketing rather than a page Ballast has checked - treat them as a "
+                     + "starting point and verify against your own dashboard.";
+
+            string src = SourceFor(firm);
+            return "Read off " + (src.Length > 0 ? src : "the firm's own pages") + " on " + when
+                 + ". Verify against your own dashboard before trusting a cushion.";
+        }
         public string LoadError = null;
         public string SourcePath = null;
         public int Count { get { return specs.Count; } }
@@ -607,7 +661,18 @@ namespace Ballast
 
                     if (f.Length >= 2 && f[0].Trim().ToUpperInvariant() == "VERIFIED")
                     {
-                        VerifiedDate = f[1].Trim();
+                        // VERIFIED|date                 - the file as a whole
+                        // VERIFIED|firm|date|source     - one firm, checked properly
+                        if (f.Length >= 3)
+                        {
+                            string firm = f[1].Trim();
+                            firmVerified[firm] = f[2].Trim();
+                            if (f.Length >= 4) firmSource[firm] = f[3].Trim();
+                        }
+                        else
+                        {
+                            VerifiedDate = f[1].Trim();
+                        }
                         continue;
                     }
 

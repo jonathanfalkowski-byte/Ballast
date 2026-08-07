@@ -27,10 +27,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Bump on every rule change. Clients compare this to decide whether to update. */
-export const RULES_VERSION = 14;
+export const RULES_VERSION = 15;
 
 /** Date the figures below were last checked against the firms' own pages. */
-export const RULES_VERIFIED = "2026-08-04";
+export const RULES_VERIFIED = "2026-08-06";
 
 /** Pages a maintenance job should re-check for changes. */
 export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
@@ -39,6 +39,8 @@ export const RULE_SOURCES: Array<{ firm: string; url: string }> = [
   { firm: "Apex Trader Funding", url: "https://apextraderfunding.com/help-center/evaluation-accounts-ea/legacy-evaluation-rules/" },
   { firm: "Topstep", url: "https://www.topstep.com/express-funded-account-rules" },
   { firm: "Topstep", url: "https://help.topstep.com/en/articles/8284204-what-is-the-maximum-loss-limit" },
+  { firm: "Topstep", url: "https://help.topstep.com/en/articles/10490293-daily-loss-limit-in-the-trading-combine-and-express-funded-account" },
+  { firm: "Topstep", url: "https://www.topstep.com/topstep-prop" },
   { firm: "Take Profit Trader", url: "https://takeprofittrader.com/" },
   { firm: "MyFundedFutures", url: "https://myfundedfutures.com/" },
   { firm: "Bulenox", url: "https://bulenox.com/help/qualification-account/" },
@@ -55,6 +57,17 @@ export const RULES_TEXT = `# Ballast rule book - served from tradeballast.com/ap
 
 VERSION|${RULES_VERSION}
 VERIFIED|${RULES_VERIFIED}
+
+# Which firms have actually been checked, and against what.
+#
+# One date for the whole file was a quiet lie: it read "verified" across a rule
+# book in which some firms had been confirmed against their own pages and most
+# had not, and nothing told a reader which kind of row he was looking at. A
+# figure nobody has confirmed is not a scandal - presenting it as though
+# somebody had is. A firm with no line here reports itself as unconfirmed.
+VERIFIED|Apex Trader Funding|2026-08-04|Apex's own help centre
+VERIFIED|MyFundedFutures|2026-08-04|MyFundedFutures' own rules pages
+VERIFIED|Topstep|2026-08-06|help.topstep.com and topstep.com/topstep-prop
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ballast rule book
@@ -173,15 +186,21 @@ Apex Trader Funding|Legacy 100K Static|100000|625|EOD|0|2000|Legacy STATIC drawd
 # Unlike Apex, Topstep DOES lock during the evaluation: their help centre says
 # the Maximum Loss Limit "locks permanently" once it reaches the starting
 # balance, and that is the Trading Combine, not just the funded account.
-Topstep|Trading Combine|50000|2000|EOD|1000|3000|Daily loss limit resets 5:00pm CT.|50000
-Topstep|Trading Combine|100000|3000|EOD|2000|6000|Daily loss limit resets 5:00pm CT.|100000
-Topstep|Trading Combine|150000|4500|EOD|3000|9000|Daily loss limit resets 5:00pm CT.|150000
+# Topstep, confirmed 6 Aug 2026 against help.topstep.com and topstep.com.
+# The MLL rises on END-OF-DAY balance but is monitored in REAL TIME, and both
+# realised and unrealised P&L count toward it - so the floor moves overnight
+# while the breach can happen mid-trade. It locks permanently once it reaches
+# the starting balance, i.e. when the balance reaches start + MLL. Not start
+# + 100; that is Apex's rule, not Topstep's.
+Topstep|Trading Combine|50000|2000|EOD|1000|3000|MLL trails end-of-day but is checked live, unrealised included. Locks at 50,000 once you reach 52,000. Daily loss resets 5:00pm CT.|50000|5
+Topstep|Trading Combine|100000|3000|EOD|2000|6000|MLL trails end-of-day but is checked live, unrealised included. Locks at 100,000 once you reach 103,000. Daily loss resets 5:00pm CT.|100000|10
+Topstep|Trading Combine|150000|4500|EOD|3000|9000|MLL trails end-of-day but is checked live, unrealised included. Locks at 150,000 once you reach 154,500. Daily loss resets 5:00pm CT.|150000|15
 
 # ── Take Profit Trader ───────────────────────────────────────────────────────
 # Test and PRO+ use end-of-day trailing. PRO uses INTRADAY - the drawdown moves
 # on unrealised gains, so a winner that round-trips still ratchets your floor.
 Take Profit Trader|Test (evaluation)|25000|1500|EOD|0|1500|No daily loss limit on Test accounts.|0
-Take Profit Trader|Test (evaluation)|50000|2000|EOD|0|3000|No daily loss limit on Test accounts.|0
+Take Profit Trader|Test (evaluation)|50000|2000|EOD|0|3000|Confirmed 6 Aug 2026: 3,000 target, 2,000 EOD trail, daily loss limit removed. Cap 6 minis.|0|6
 Take Profit Trader|Test (evaluation)|75000|2500|EOD|0|4500|No daily loss limit on Test accounts.|0
 Take Profit Trader|Test (evaluation)|100000|3000|EOD|0|6000|No daily loss limit on Test accounts.|0
 Take Profit Trader|Test (evaluation)|150000|4500|EOD|0|9000|No daily loss limit on Test accounts.|0
