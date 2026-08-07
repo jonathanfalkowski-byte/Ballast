@@ -163,6 +163,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private readonly Dictionary<string, DateTime> gapSince =
             new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// What that difference was when the clock started, so a figure that is
+        /// still MOVING is never mistaken for one that has settled.
+        ///
+        /// Waiting on the clock alone was not enough. During start-up the
+        /// account's daily P&L arrives in pieces and can hold a wrong value for
+        /// longer than the wait, so a gap that was never real sat still long
+        /// enough to be believed and was booked as a trade. Every time the
+        /// figure moves the wait begins again, and only a number that has not
+        /// changed for the whole of it is written down.
+        /// </summary>
+        private readonly Dictionary<string, double> gapSize =
+            new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         private DateTime lastSessionSave = DateTime.MinValue;
 
         // Journal
@@ -1172,19 +1186,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     break;
                 }
                 PublishLockSticky(s.AccountName, hard, hardLine, now);
-
-                // How long an acknowledgement has left, so the chart can dim for
-                // exactly as long as it lasts and no longer.
-                int ackLeft = 0;
-                if (hard && tiltGate != null)
-                    for (int k = 0; k < triggers.Count; k++)
-                    {
-                        if (!TiltLockout.IsHardBreaker(triggers[k].Kind)) continue;
-                        if (!tiltGate.IsReleased(s.AccountName, triggers[k].Kind, now)) continue;
-                        int m = tiltGate.MinutesLeft(s.AccountName, triggers[k].Kind, now);
-                        if (m > ackLeft) ackLeft = m;
-                    }
-                BallastState.PublishAck(s.AccountName, ackLeft, now);
 
                 if (!tiltEnabled) continue;
 
@@ -4098,6 +4099,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (missing > -noise && missing < noise)
             {
                 gapSince.Remove(name);
+                gapSize.Remove(name);
                 return;
             }
 
@@ -4106,10 +4108,25 @@ namespace NinjaTrader.NinjaScript.AddOns
             // before it shows up in the journal, and booking that instant as a
             // missing trade would invent one on every single trade the trader
             // takes while watching.
+            //
+            // And it has to hold the same VALUE. A figure that is still moving
+            // has not settled, it is arriving - which is exactly what the
+            // account's daily P&L does for the first seconds after NinjaTrader
+            // starts. Any real movement restarts the wait, so what finally gets
+            // written is a number that stopped changing before it was believed.
             DateTime since;
-            if (!gapSince.TryGetValue(name, out since)) { gapSince[name] = now; return; }
+            double was;
+            if (!gapSince.TryGetValue(name, out since)
+                || !gapSize.TryGetValue(name, out was)
+                || Math.Abs(missing - was) >= noise)
+            {
+                gapSince[name] = now;
+                gapSize[name] = missing;
+                return;
+            }
             if ((now - since).TotalSeconds < 20) return;
             gapSince.Remove(name);
+            gapSize.Remove(name);
 
             DateTime from;
             if (!lastSeenAt.TryGetValue(name, out from)) from = now;
@@ -4132,6 +4149,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (existing != null)
             {
                 existing.Pnl += missing;
+
+                // If the correction cancels the row out, take the row away
+                // rather than leaving a trade behind that accounts for nothing.
+                // This is the shape the bug had: a difference appeared during
+                // start-up, was booked, and then the account's own figure
+                // settled and took it straight back - leaving a row that said
+                // "$0 happened while Ballast was not running" and counted as a
+                // trade on a day he had not traded.
+                if (existing.Pnl > -noise && existing.Pnl < noise
+                    && Math.Abs(existing.Commission) < 0.005)
+                {
+                    monitor.Journal.Remove(existing);
+                    journalDirty = true;
+                    SeedTodaysCounts(CurrentTradingDayTrades(now));
+                    return;
+                }
+
                 existing.ExitTime = now;
                 existing.Note = GapNote(name, t, existing.Pnl, existing.EntryTime, now);
                 journalDirty = true;
@@ -5800,6 +5834,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             // owner never went near - so they are collapsed once, here.
             if (monitor.Journal.ConsolidateReconstructed() > 0) journalDirty = true;
 
+            // And a gap row carrying no money is a record of nothing that still
+            // counts as a trade. One of those got written on a morning he had
+            // not placed an order, and told him he had. It goes on sight.
+            if (monitor.Journal.DropEmptyReconstructed() > 0) journalDirty = true;
+
             // Recover today's plan from the trades it was stamped on, so reopening
             // the window mid-session doesn't lose it. Yesterday's plan is not
             // carried forward on purpose: a plan you didn't write this morning is
@@ -7052,11 +7091,20 @@ namespace NinjaTrader.NinjaScript.AddOns
             // trades recorded. Your own trades: 10" - today's number followed
             // immediately by an all-time one, with nothing to say they were
             // different periods, so it simply looked wrong.
-            List<BallastTrade> mineToday = BallastJournal.ManualOnly(today);
+            // Counted, not merely recorded. A reconstructed row is a hole in
+            // the record rather than a trade he took, and counting it as "your
+            // own" told him he had traded on a morning he had not touched the
+            // platform. It is still reported - it just says what it is.
+            List<BallastTrade> mineToday = BallastJournal.Countable(today);
+            int gapsToday = BallastJournal.ManualOnly(today).Count - mineToday.Count;
 
             journalSummary.Text =
-                "Today: " + today.Count + (today.Count == 1 ? " trade" : " trades") + " recorded, "
-              + mineToday.Count + " of them your own. "
+                "Today: " + mineToday.Count + (mineToday.Count == 1 ? " trade" : " trades")
+              + " of your own"
+              + (gapsToday > 0
+                    ? ", plus " + gapsToday + (gapsToday == 1 ? " stretch" : " stretches")
+                      + " reconstructed from while Ballast was closed. "
+                    : " recorded. ")
               + "All time: " + mine.Count + (mine.Count == 1 ? " trade" : " trades") + " of yours, "
               + (mine.Count - monitor.Journal.Untagged().Count) + " tagged - "
               + "planned " + pl[0].Count + " (" + BallastTrade.Money(pl[0].Net) + "), "

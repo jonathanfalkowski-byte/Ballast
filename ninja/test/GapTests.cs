@@ -33,6 +33,8 @@ public static class GapTests
         CommissionIsRecordedPerTrade();
         ReconstructedRowsAreMoneyNotDecisions();
         OldJournalsAreConsolidated();
+        AGapThatAccountsForNothingIsNotATrade();
+        AGapMustHoldStillBeforeItIsBelieved();
     }
 
     static TrackerConfig Cfg()
@@ -369,6 +371,128 @@ public static class GapTests
         clean.Add(At(Row("APEX-105", 1, 250), day.AddHours(10)));
         T.Eq(clean.ConsolidateReconstructed(), 0, "nothing to do on a watched journal");
         T.Eq(clean.All.Count, 2, "and nothing is lost");
+    }
+
+    /// <summary>
+    /// "it says 1 trade traded today but i havent done anything yet today"
+    ///
+    /// He was right, and the row it was counting said so itself: "$0 of today's
+    /// P&L on this account happened while Ballast was not running, between 09:11
+    /// and 09:11." Ballast had opened, watched the account's daily figure arrive
+    /// in pieces, booked the difference as trading it had missed, and then
+    /// watched the figure settle and take the difference straight back - leaving
+    /// behind a row that measured nothing except its own start-up.
+    ///
+    /// That row is not harmless. It counts toward the day's trade limit, it can
+    /// count as a loss toward the stop-after-N rule, and it tells a man who has
+    /// not placed an order that he has traded. Worse, it is the one row in the
+    /// journal he cannot check, because it has no entry, no size and no chart -
+    /// so there is nothing for him to disagree with.
+    /// </summary>
+    static void AGapThatAccountsForNothingIsNotATrade()
+    {
+        T.S("a gap that accounts for no money is not a trade");
+
+        DateTime day = new DateTime(2026, 8, 7);
+
+        BallastJournal j = new BallastJournal();
+        j.Add(At(Row("Sim103", 0, 0), day.AddHours(9)));          // his exact phantom
+        j.Add(At(Row("Sim103", 2, 150), day.AddHours(10)));       // a trade he took
+        j.Add(At(Row("APEX-105", 0, -1372), day.AddHours(11)));   // a gap with money in it
+
+        T.Eq(j.DropEmptyReconstructed(), 1, "the empty row goes");
+        T.Eq(j.All.Count, 2, "and only that one");
+
+        List<BallastTrade> left = j.All;
+        T.Ok(left[0].MaxContracts == 2, "the watched trade stays: " + left[0].MaxContracts);
+        T.Near(left[1].Pnl, -1372, 0.01, "and so does the gap that actually accounts for something");
+
+        // It is a repair, so running it twice does nothing the second time.
+        T.Eq(j.DropEmptyReconstructed(), 0, "a cleaned journal stays cleaned");
+
+        // A WATCHED trade that scratched for exactly nothing is a trade he sat
+        // through, decided on and can learn from. It is not touched.
+        BallastJournal scratch = new BallastJournal();
+        scratch.Add(At(Row("Sim103", 1, 0), day.AddHours(9)));
+        T.Eq(scratch.DropEmptyReconstructed(), 0,
+             "a real trade that scratched for zero is still a real trade");
+        T.Eq(scratch.All.Count, 1, "and it stays in the record");
+
+        // A gap row that carries only commission still explains where money
+        // went, so it survives too.
+        BallastJournal comm = new BallastJournal();
+        BallastTrade c = At(Row("Sim103", 0, 0), day.AddHours(9));
+        c.Commission = 4.36;
+        comm.Add(c);
+        T.Eq(comm.DropEmptyReconstructed(), 0, "commission is money and stays accounted for");
+
+        // And the count the trader actually reads.
+        BallastJournal shown = new BallastJournal();
+        shown.Add(At(Row("Sim103", 0, 0), day.AddHours(9)));
+        T.Eq(BallastJournal.Countable(shown.All).Count, 0,
+             "before it is even cleaned up, it is not counted as one of his trades");
+    }
+
+    /// <summary>
+    /// Why the row got written at all. The wait before believing a difference
+    /// was a wait on the CLOCK - twenty seconds since the gap was first seen -
+    /// with no check that the figure had stopped moving. During start-up the
+    /// account's daily P&L arrives in pieces, so a wrong number can sit still
+    /// for longer than the wait and be written down as fact.
+    /// </summary>
+    static void AGapMustHoldStillBeforeItIsBelieved()
+    {
+        T.S("a difference that is still moving has not settled");
+
+        double noise = Noise(0, 0);          // $5 with no commission yet
+
+        // Start-up: the figure arrives in pieces. Every step is a real move, so
+        // every step restarts the wait and nothing is ever written.
+        double[] arriving = new double[] { -1300, -840, -420, -60, 0 };
+        DateTime t0 = new DateTime(2026, 8, 7, 9, 11, 0);
+
+        bool believed = false;
+        DateTime since = DateTime.MinValue;
+        double was = 0;
+        bool have = false;
+
+        for (int i = 0; i < arriving.Length; i++)
+        {
+            DateTime now = t0.AddSeconds(i * 10);      // ten seconds apart
+            double missing = arriving[i];
+
+            if (Ignored(missing, noise)) { have = false; continue; }
+
+            if (!have || Math.Abs(missing - was) >= noise)
+            {
+                have = true; since = now; was = missing; continue;
+            }
+            if ((now - since).TotalSeconds < 20) continue;
+            believed = true;
+        }
+
+        T.Ok(!believed,
+             "a figure still arriving is never booked - which is the whole bug: "
+           + "forty seconds of movement used to be forty seconds of waiting");
+
+        // A genuine gap does not move. It is believed on schedule, exactly as
+        // before, so nothing real is lost by the stricter test.
+        believed = false; have = false;
+        for (int i = 0; i < 5; i++)
+        {
+            DateTime now = t0.AddSeconds(i * 10);
+            double missing = -884;
+
+            if (Ignored(missing, noise)) { have = false; continue; }
+            if (!have || Math.Abs(missing - was) >= noise)
+            {
+                have = true; since = now; was = missing; continue;
+            }
+            if ((now - since).TotalSeconds < 20) continue;
+            believed = true;
+        }
+
+        T.Ok(believed, "a real gap holds its value and is still written down");
     }
 
     static BallastTrade At(BallastTrade e, DateTime when)

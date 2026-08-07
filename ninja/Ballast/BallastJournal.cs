@@ -655,6 +655,66 @@ namespace Ballast
             return removed;
         }
 
+        /// <summary>Take a row back out. Returns whether it was there.</summary>
+        public bool Remove(BallastTrade e)
+        {
+            if (e == null) return false;
+            return entries.Remove(e);
+        }
+
+        /// <summary>
+        /// Throw away reconstructed rows that account for no money, and return
+        /// how many went.
+        ///
+        /// "it says 1 trade traded today but i havent done anything yet today"
+        ///
+        /// He was right. The row said, in full: "$0 of today's P&L on this
+        /// account happened while Ballast was not running, between 09:11 and
+        /// 09:11." A sentence about nothing, counted as a trade, on a morning he
+        /// had not placed an order. Ballast had seen the account's daily figure
+        /// wobble during start-up, booked the difference, and then watched the
+        /// figure settle back - leaving a row that measured its own confusion.
+        ///
+        /// A reconstructed row exists to say "money moved here and I cannot tell
+        /// you how". With no money in it there is nothing to say, and leaving it
+        /// there costs more than the record is worth: it counts against the
+        /// day's trade limit, it can count as a loss, and it tells a trader who
+        /// has not traded that he has.
+        ///
+        /// Run on load as well as after a correction, so a journal written by an
+        /// older build cleans itself up once rather than carrying the phantom
+        /// forward for the life of the file.
+        /// </summary>
+        public int DropEmptyReconstructed()
+        {
+            List<BallastTrade> outp = new List<BallastTrade>();
+            int removed = 0;
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                BallastTrade e = entries[i];
+                if (e == null) continue;
+
+                // Only ever a row with no size AND no money. A watched trade
+                // that scratched for exactly nothing is a real trade the trader
+                // sat through, and it stays.
+                if (e.IsReconstructed && Math.Abs(e.Pnl) < 0.005 && Math.Abs(e.Commission) < 0.005)
+                {
+                    removed++;
+                    continue;
+                }
+
+                outp.Add(e);
+            }
+
+            if (removed > 0)
+            {
+                entries.Clear();
+                entries.AddRange(outp);
+            }
+            return removed;
+        }
+
         public void Clear() { entries.Clear(); }
 
         /// <summary>Trades still waiting for a tag, oldest first.</summary>
@@ -1529,7 +1589,7 @@ namespace Ballast
         }
 
         /// <summary>Manual, watched, tagged-or-not trades. The ones he actually took.</summary>
-        private static List<BallastTrade> Countable(List<BallastTrade> source)
+        public static List<BallastTrade> Countable(List<BallastTrade> source)
         {
             List<BallastTrade> outp = new List<BallastTrade>();
             List<BallastTrade> manual = ManualOnly(source);
