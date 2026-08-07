@@ -1178,14 +1178,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // clean on the chart the trader is actually watching.
                 bool hard = false;
                 string hardLine = "";
+
+                // Whether the ORDER BUTTONS should be dead is a different
+                // question from whether the chart says STOP, and the trader drew
+                // the line himself: "any hard breaker but if i type that sentence
+                // in it releases the buttons". So the chart keeps shouting after
+                // an override - that was never his to switch off - while the
+                // buttons come back the moment he has said, in words, that he
+                // means to carry on.
+                bool block = false;
+
                 for (int k = 0; k < triggers.Count; k++)
                 {
                     if (!TiltLockout.IsHardBreaker(triggers[k].Kind)) continue;
-                    hard = true;
-                    hardLine = triggers[k].Title;
-                    break;
+                    if (!hard) { hard = true; hardLine = triggers[k].Title; }
+                    if (!tiltGate.IsReleased(triggers[k].AccountName, triggers[k].Kind, now))
+                        block = true;
                 }
-                PublishLockSticky(s.AccountName, hard, hardLine, now);
+                PublishLockSticky(s.AccountName, hard, hardLine, block, now);
 
                 if (!tiltEnabled) continue;
 
@@ -1234,14 +1244,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// the overlay gets, so the banner does not flash on and off once a
         /// second while a position sits on the floor.
         /// </summary>
-        private void PublishLockSticky(string account, bool hard, string line, DateTime now)
+        private void PublishLockSticky(string account, bool hard, string line, bool block, DateTime now)
         {
             if (string.IsNullOrEmpty(account)) return;
 
             if (hard)
             {
                 lockMissTicks[account] = 0;
-                BallastState.PublishLock(account, true, line, now);
+                BallastState.PublishLock(account, true, line, now, block);
                 return;
             }
 
@@ -1253,7 +1263,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;   // hold the last published state through the gap
             }
 
-            BallastState.PublishLock(account, false, "", now);
+            BallastState.PublishLock(account, false, "", now, false);
         }
 
         private const double Pad = 18;

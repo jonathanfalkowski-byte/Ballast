@@ -144,6 +144,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                  Description = "Turn off if this chart only ever trades one account and the name is just noise.")]
         public bool ShowAccountName { get; set; }
 
+        [Display(Name = "Grey out Chart Trader buy/sell when this account is stopped", Order = 5,
+                 GroupName = "Ballast",
+                 Description = "Turns off the ENTRY buttons on this chart while a hard breaker is in "
+                             + "force. Close, Reverse, Flatten and Cancel always stay live. Typing the "
+                             + "sentence into the Ballast wall brings them back. This is a speed bump, "
+                             + "not a lock - the SuperDOM, order ticket, hotkeys and your firm's web "
+                             + "platform all still work.")]
+        public bool BlockOrderEntry { get; set; }
+
         /// <summary>
         /// Where on the chart to draw.
         ///
@@ -212,6 +221,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 TextSize = 22;
                 ShowCautions = true;
                 ShowAccountName = true;
+
+                // Off by default, and it should stay off until a trader
+                // deliberately asks for it. Everything else in Ballast only
+                // reads the platform; this is the one thing that reaches in and
+                // changes it, and that is not a decision to make on somebody's
+                // behalf by shipping it switched on.
+                BlockOrderEntry = false;
                 // Top RIGHT of the panel. NinjaTrader prints the indicator's own
                 // name and its copyright line down the panel's top left, so that
                 // corner is the one corner of an otherwise empty strip that is
@@ -233,6 +249,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Terminated)
             {
                 StopClock();
+
+                // Never leave a chart with dead buttons because Ballast was
+                // removed, reloaded or crashed. Whatever else happens, the
+                // platform goes back exactly as it was found.
+                try
+                {
+                    if (entryDisabled && ChartControl != null)
+                        ChartControl.Dispatcher.InvokeAsync(new Action(delegate
+                        {
+                            try { SetEntryButtons(true); } catch { }
+                        }));
+                }
+                catch { }
+                entryDisabled = false;
             }
         }
 
@@ -351,6 +381,144 @@ namespace NinjaTrader.NinjaScript.Indicators
             catch { return ""; }
         }
 
+        // ── Turning the order buttons off ───────────────────────────────────
+        //
+        // "is there a way to turn off the buy and sell buttons if i dont want to
+        // trade that account....to avoid me taking another trade ?"
+        //
+        // Three things this deliberately is NOT.
+        //
+        // It is not a lock. Chart Trader is one way into a position out of many -
+        // the SuperDOM, the order ticket, hotkeys, ATM strategies and the firm's
+        // own web platform are all still there and all still work. This is a
+        // speed bump on the door he actually uses, and it says so rather than
+        // letting him believe he is sealed in.
+        //
+        // It is not permanent. He asked for it to come back when he types the
+        // sentence into the wall, and it does - the buttons follow the override,
+        // even though the chart banner deliberately does not.
+        //
+        // And it never touches the way OUT. Close, Reverse, Flatten and Cancel
+        // stay live at all times. Disabling the exit on a locked account with a
+        // position on would be the single most dangerous thing this software
+        // could do, and it is the exact case where the lock is most likely to be
+        // in force.
+        private bool entryDisabled;
+        private int entryButtonsFound = -1;
+
+        private static bool IsEntryButton(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            string t = text.Trim().ToUpperInvariant();
+
+            // The way out is never touched, whatever it is called.
+            if (t.IndexOf("CLOSE", StringComparison.Ordinal) >= 0) return false;
+            if (t.IndexOf("REVERSE", StringComparison.Ordinal) >= 0) return false;
+            if (t.IndexOf("FLATTEN", StringComparison.Ordinal) >= 0) return false;
+            if (t.IndexOf("CANCEL", StringComparison.Ordinal) >= 0) return false;
+            if (t.IndexOf("EXIT", StringComparison.Ordinal) >= 0) return false;
+
+            return t.StartsWith("BUY", StringComparison.Ordinal)
+                || t.StartsWith("SELL", StringComparison.Ordinal);
+        }
+
+        private static string ButtonText(System.Windows.Controls.Button b)
+        {
+            try
+            {
+                if (b == null) return "";
+                string byName = b.Name ?? "";
+                object c = b.Content;
+                string byContent = c == null ? "" : c.ToString();
+                return byContent.Length > 0 ? byContent : byName;
+            }
+            catch { return ""; }
+        }
+
+        private static void CollectButtons(System.Windows.DependencyObject root,
+                                           List<System.Windows.Controls.Button> into, int depth)
+        {
+            if (root == null || into == null || depth > 24) return;
+            try
+            {
+                int n = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+                for (int i = 0; i < n; i++)
+                {
+                    System.Windows.DependencyObject child =
+                        System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                    System.Windows.Controls.Button b = child as System.Windows.Controls.Button;
+                    if (b != null) into.Add(b);
+                    CollectButtons(child, into, depth + 1);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Enable or disable this chart's entry buttons. UI thread only.
+        /// Returns how many it actually changed, or -1 if it could not look.
+        /// </summary>
+        private int SetEntryButtons(bool enabled)
+        {
+            try
+            {
+                if (ChartControl == null) return -1;
+
+                System.Windows.DependencyObject chart = System.Windows.Window.GetWindow(ChartControl);
+                if (chart == null) return -1;
+
+                List<System.Windows.Controls.Button> buttons =
+                    new List<System.Windows.Controls.Button>();
+                CollectButtons(chart, buttons, 0);
+
+                int touched = 0;
+                for (int i = 0; i < buttons.Count; i++)
+                {
+                    if (!IsEntryButton(ButtonText(buttons[i]))) continue;
+                    buttons[i].IsEnabled = enabled;
+                    touched++;
+                }
+                return touched;
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>
+        /// Keep the buttons in step with the published state. Called from the
+        /// clock tick, which already runs on this chart's UI thread.
+        ///
+        /// Only acts on a CHANGE, so the ordinary case costs one bool comparison
+        /// a second rather than a visual-tree walk.
+        /// </summary>
+        private void SyncEntryButtons()
+        {
+            bool want;
+            try
+            {
+                string account = chartAccount;
+                if (string.IsNullOrEmpty(account))
+                {
+                    List<string> known = BallastState.KnownAccounts();
+                    if (known.Count == 1) account = known[0];
+                }
+
+                AccountState st = string.IsNullOrEmpty(account)
+                    ? null : BallastState.Get(account, DateTime.Now);
+
+                // No state is not a reason to disable anything. A closed Ballast
+                // window or a stale feed must always leave the platform as it
+                // found it.
+                want = BlockOrderEntry && st != null && st.OrderEntryBlocked;
+            }
+            catch { want = false; }
+
+            if (want == entryDisabled && entryButtonsFound >= 0) return;
+
+            int touched = SetEntryButtons(!want);
+            entryDisabled = want;
+            entryButtonsFound = touched;
+        }
+
         private void OnClockTick(object sender, EventArgs e)
         {
             // Draw objects must be created on the NinjaScript thread, not on the
@@ -362,6 +530,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             // On the UI thread here, which is the only place it is safe to walk
             // up to the chart window.
             try { chartAccount = ReadChartTraderAccount(); } catch { }
+
+            // Still on the UI thread, which is the only place the chart's own
+            // controls can be touched.
+            try { SyncEntryButtons(); } catch (Exception ex) { Complain("order buttons", ex); }
 
             try
             {
@@ -566,6 +738,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             string text = BallastState.ChartBanner(st);
+
+            // If the buttons were asked for and could not be turned off, that
+            // has to be on the chart in the same breath as the stop.
+            //
+            // A trader who has switched this on will glance at a red banner and
+            // assume the door is shut. If the visual-tree walk found nothing -
+            // a NinjaTrader update moved the controls, Chart Trader is not open
+            // on this chart - then the door is wide open and he is the last
+            // person who should be finding that out by placing an order. A
+            // safety feature that fails quietly is worse than not having it.
+            if (BlockOrderEntry && st.OrderEntryBlocked && entryButtonsFound <= 0)
+                text = text + "   (COULD NOT DISABLE THE BUY/SELL BUTTONS ON THIS CHART)";
+
             if (text.Length == 0) { lastSaid = null; RemoveDrawObject(Tag); return; }
 
             // "Can lose" alongside "stop" reads as a budget to spend. Once the
@@ -583,13 +768,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             // transparency, centred. There is nothing underneath it to blend
             // into, which is the entire reason for having a panel.
             bool alarm = BallastState.IsAlarm(st);
-            bool acknowledged = st.AckMinutes > 0;
             TextPosition where = (CentreAlarms && alarm) ? TextPosition.Center : Where;
 
             Say(text,
                 alarm ? AlarmInk : Amber,
                 alarm ? AlarmBack : PanelBrush,
-                st.Locked && !acknowledged ? 1.4 : 1.0,
+                st.Locked ? 1.4 : 1.0,
                 where);
         }
 

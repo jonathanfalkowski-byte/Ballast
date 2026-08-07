@@ -40,24 +40,28 @@ namespace Ballast
         /// clean-looking chart, and the chart is where they are actually looking.
         /// </summary>
         public bool Locked;
+        public string LockLine = "";
 
         /// <summary>
-        /// Minutes left on an acknowledgement the trader typed out in full.
-        /// Zero when there is none.
+        /// True while order entry on this account should be dead on the chart.
         ///
-        /// The wall's other exit is a sentence he has to type: "I am trading
-        /// outside my plan and I accept I may lose this account." That buys
-        /// fifteen minutes. For those fifteen minutes the chart used to keep
-        /// shouting the same red banner at him - which adds nothing he has not
-        /// just written out by hand, and teaches him to trade underneath a red
-        /// banner. That habit is the one thing that costs the NEXT warning its
-        /// meaning.
+        /// "is there a way to turn off the buy and sell buttons if i dont want
+        /// to trade that account....to avoid me taking another trade ?"
         ///
-        /// So it dims, and it comes back at full strength when the time is up.
-        /// Still said. No longer shouted.
+        /// Not the same flag as Locked, and the difference is the whole design.
+        /// Locked says a hard breaker is in force and stays true even after the
+        /// trader has typed past the wall - overriding buys quiet, it does not
+        /// buy a clean-looking chart. This one goes false the moment he types
+        /// the sentence, because he asked for it to: the buttons are a speed
+        /// bump he can choose to walk over, not a lock somebody else holds the
+        /// key to.
+        ///
+        /// It is deliberately not a promise that he cannot trade. The SuperDOM,
+        /// the order ticket, hotkeys and the firm's own web platform are all
+        /// still there. Anything that reads this flag has to say what it could
+        /// not disable rather than imply a lock it does not have.
         /// </summary>
-        public int AckMinutes;
-        public string LockLine = "";
+        public bool OrderEntryBlocked;
 
         // ── The running count ────────────────────────────────────────────────
         //
@@ -294,6 +298,12 @@ namespace Ballast
         /// </summary>
         public static void PublishLock(string account, bool locked, string line, DateTime now)
         {
+            PublishLock(account, locked, line, now, false);
+        }
+
+        public static void PublishLock(string account, bool locked, string line, DateTime now,
+                                       bool blockOrders)
+        {
             if (string.IsNullOrEmpty(account)) return;
 
             lock (gate)
@@ -303,26 +313,7 @@ namespace Ballast
 
                 s.Locked = locked;
                 s.LockLine = locked ? (line ?? "") : "";
-                if (!locked) s.AckMinutes = 0;
-                if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
-            }
-        }
-
-        /// <summary>
-        /// How long an acknowledgement has left to run. Separate from PublishLock
-        /// because the two are decided in different places on different ticks,
-        /// and neither should be able to blank the other.
-        /// </summary>
-        public static void PublishAck(string account, int minutes, DateTime now)
-        {
-            if (string.IsNullOrEmpty(account)) return;
-
-            lock (gate)
-            {
-                AccountState s;
-                if (!states.TryGetValue(account, out s)) { s = new AccountState(); states[account] = s; }
-
-                s.AckMinutes = minutes < 0 ? 0 : minutes;
+                s.OrderEntryBlocked = locked && blockOrders;
                 if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
             }
         }
@@ -373,15 +364,6 @@ namespace Ballast
             if (locked)
             {
                 if (string.IsNullOrEmpty(line)) line = "You are done for the day.";
-
-                // He has typed the sentence out and bought himself minutes. Say
-                // it back to him quietly with the clock on it, rather than
-                // repeating the shout he has just answered in writing.
-                int ack = s.AckMinutes;
-                if (ack > 0)
-                    return ("You said you are carrying on - " + ack
-                          + (ack == 1 ? " min left - " : " min left - ") + line).ToUpperInvariant();
-
                 return ("STOP - " + line).ToUpperInvariant();
             }
 
@@ -390,19 +372,10 @@ namespace Ballast
             return s.Warning.ToUpperInvariant();
         }
 
-        /// <summary>
-        /// True when the banner should be painted in the alarm colour.
-        ///
-        /// An acknowledged breaker is not an alarm. He has read it, typed it out
-        /// and accepted it in writing; the chart repeating itself in red for the
-        /// next quarter of an hour teaches him only that red is something you
-        /// trade underneath. It goes back to full strength on its own.
-        /// </summary>
+        /// <summary>True when the banner should be painted in the alarm colour.</summary>
         public static bool IsAlarm(AccountState s)
         {
-            if (s == null) return false;
-            if (s.AckMinutes > 0) return false;
-            return s.Locked || s.Urgency >= 2;
+            return s != null && (s.Locked || s.Urgency >= 2);
         }
     }
 }

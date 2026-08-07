@@ -29,6 +29,7 @@ public static class LimitTests
         LimitsSurviveTheSettingsFile();
         EngineActsOnEachAccountsOwnNumbers();
         TheTradeCountStopsHimTheSameWayALossStreakDoes();
+        TypingPastTheWallGivesTheButtonsBack();
     }
 
     /// <summary>
@@ -117,6 +118,60 @@ public static class LimitTests
         for (int n = 0; n < noWall.Count; n++)
             T.Ok(noWall[n].Kind != TiltKind.MaxTrades,
                  "a trader who set no trade limit is never told he passed one");
+    }
+
+    /// <summary>
+    /// "any hard breaker but if i type that sentence in it releases the buttons"
+    ///
+    /// Two flags that look the same and are not. Locked keeps the chart shouting
+    /// after an override - that was never his to switch off, because the chart is
+    /// where he is actually looking. OrderEntryBlocked follows the override
+    /// exactly, because he asked for the buttons to be a speed bump he can choose
+    /// to walk over rather than a lock somebody else holds the key to.
+    ///
+    /// The dangerous mistake would be the other way round: buttons that stay dead
+    /// after he has said, in words, that he means to carry on. That is the state
+    /// where a man with a position on cannot get to his own controls.
+    /// </summary>
+    static void TypingPastTheWallGivesTheButtonsBack()
+    {
+        T.S("typing past the wall gives the buttons back, the chart keeps shouting");
+
+        DateTime now = new DateTime(2026, 8, 7, 10, 30, 0);
+        string acct = "APEX-11325-105";
+
+        BallastState.Clear(acct);
+
+        // A hard breaker, not yet argued with.
+        BallastState.PublishLock(acct, true, "You are done for the day.", now, true);
+        AccountState s = BallastState.Get(acct, now);
+        T.Ok(s != null, "the state is published");
+        T.Ok(s.Locked, "the account is locked");
+        T.Ok(s.OrderEntryBlocked, "and the entry buttons should be dead");
+        T.Ok(BallastState.ChartBanner(s).IndexOf("STOP") >= 0, "the chart says stop");
+
+        // He types the sentence. The wall comes down; the chart does not.
+        BallastState.PublishLock(acct, true, "You are done for the day.", now, false);
+        s = BallastState.Get(acct, now);
+        T.Ok(s.Locked, "the breaker is still in force");
+        T.Ok(!s.OrderEntryBlocked, "but the buttons come back, because he said so in words");
+        T.Ok(BallastState.ChartBanner(s).IndexOf("STOP") >= 0,
+             "and the chart still says stop - overriding buys quiet, not a clean chart");
+
+        // The day ends, or the account recovers. Nothing is left switched off.
+        BallastState.PublishLock(acct, false, "", now, false);
+        s = BallastState.Get(acct, now);
+        T.Ok(!s.Locked && !s.OrderEntryBlocked, "no breaker, nothing blocked");
+
+        // And the flag can never be set without a breaker behind it - a bug that
+        // said "block" on a clear account would kill a working chart's buttons
+        // for no stated reason.
+        BallastState.PublishLock(acct, false, "", now, true);
+        s = BallastState.Get(acct, now);
+        T.Ok(!s.OrderEntryBlocked,
+             "asking to block a clear account blocks nothing");
+
+        BallastState.Clear(acct);
     }
 
     static FirmAccountSpec Spec(string firm, string label, double size, double dd,
