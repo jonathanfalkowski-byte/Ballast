@@ -40,7 +40,19 @@ namespace NinjaTrader.NinjaScript.Indicators
 			public bool   IsSupply;
 			public bool   Broken;
 			public int    BrokenBar;	// bar price closed through it (right edge when broken)
+			public int    BrokenSession;	// session index at the break (for the history window)
 			public double Ratio;
+
+			// Volume-at-price profile built inside the zone (Volumetric bars only).
+			public double[] BandVol;	// accumulated total volume per price band
+			public double   BandBase;	// price of band 0 (== Low at profile build)
+			public double   BandStep;	// price height of one band
+			public int      BandCount;
+			public bool     ProfileInit;
+
+			// Freshness: how far price has traded back into the zone since it formed.
+			public double PenLow  = double.MaxValue;	// lowest low that re-entered (demand)
+			public double PenHigh = double.MinValue;	// highest high that re-entered (supply)
 
 			public double Center { get { return (Low + High) * 0.5; } }
 			public double Height { get { return High - Low; } }
@@ -51,6 +63,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 		private int curDir;
 		private int runLen;
 		private int runStartBar;
+		private int sessionIndex;		// counts trading sessions seen
+		private int lastBrokenCount;	// broken-history draw objects drawn last pass
+
+		// Set in DataLoaded: non-null only when the chart is running Volumetric
+		// (Order Flow) bars, which is the only source of true volume-at-price.
+		private NinjaTrader.NinjaScript.BarsTypes.VolumetricBarsType volBars;
 
 		private static Brush SB(byte r, byte g, byte b)
 		{
@@ -80,15 +98,31 @@ namespace NinjaTrader.NinjaScript.Indicators
 				ShowLabels		= true;
 				ShowBroken		= true;
 				BaseOpacity		= 20;
+				HistoryDays		= 3;		// keep broken zones on screen this many sessions
+				ShowVolume		= true;		// volume-at-price shading + POC line (Volumetric bars)
 
 				SupplyBrush	= SB(0xEF, 0x53, 0x53);
 				DemandBrush	= SB(0x26, 0xA6, 0x9A);
 				BrokenBrush	= SB(0x60, 0x6B, 0x78);
 			}
+			else if (State == State.DataLoaded)
+			{
+				// Volume-at-price only exists on Volumetric (Order Flow) bars. On any
+				// other bar type this stays null and the volume overlay is simply
+				// skipped -- the zones still draw exactly as before.
+				volBars = (BarsArray != null && BarsArray.Length > 0)
+					? BarsArray[0].BarsType as NinjaTrader.NinjaScript.BarsTypes.VolumetricBarsType
+					: null;
+			}
 		}
 
 		protected override void OnBarUpdate()
 		{
+			// Count trading sessions so broken-zone history is aged off in days,
+			// not bars (works on any timeframe or range setting).
+			if (Bars.IsFirstBarOfSession && CurrentBar > 0)
+				sessionIndex++;
+
 			if (CurrentBar < 1)
 				return;
 
@@ -117,8 +151,33 @@ namespace NinjaTrader.NinjaScript.Indicators
 				bool broke = z.IsSupply ? close > z.High : close < z.Low;
 				if (broke)
 				{
-					z.Broken    = true;
-					z.BrokenBar = CurrentBar;
+					z.Broken        = true;
+					z.BrokenBar     = CurrentBar;
+					z.BrokenSession = sessionIndex;
+				}
+			}
+
+			// Age broken zones off once they are older than the history window, so
+			// the chart shows the last few days of broken levels and no more.
+			zones.RemoveAll(z => z.Broken && sessionIndex - z.BrokenSession > HistoryDays);
+
+			// 4) Volume-at-price: keep each live zone's in-band profile up to date and
+			//    track how far price has traded back into it (freshness). Frozen once
+			//    the zone breaks, so a broken zone keeps the picture it had at the break.
+			if (ShowVolume && volBars != null)
+			{
+				foreach (Zone z in zones)
+				{
+					if (z.Broken)
+						continue;
+
+					if (!z.ProfileInit)
+						BuildProfile(z);			// backfills base..now, including this bar
+					else
+					{
+						AddBarToBands(z, CurrentBar);	// this newly closed bar
+						UpdatePenetration(z);
+					}
 				}
 			}
 
@@ -179,8 +238,51 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 			DrawList(SelectNearest(supply, close), "VZ_sup", SupplyBrush, true, 0,        "S", ShowLabels, true);
 			DrawList(SelectNearest(demand, close), "VZ_dem", DemandBrush, true, 0,        "D", ShowLabels, false);
-			DrawList(ShowBroken ? SelectNearest(broken, close) : new List<Zone>(),
-				"VZ_brk", BrokenBrush, false, brokenOp, "x", false, true);
+			DrawBrokenHistory(broken, brokenOp);
+		}
+
+		// Broken zones kept as history for HistoryDays sessions. Unlike the live
+		// supply/demand zones this is deliberately NOT capped to the MaxZones
+		// nearest price -- the whole point is to see the run of broken levels over
+		// the last few days. Each box already stops at its break bar and wears the
+		// broken colour; here we simply show every one still inside the window,
+		// newest break first, with a hard cap so a wild session cannot spawn
+		// hundreds of drawings.
+		private void DrawBrokenHistory(List<Zone> broken, int op)
+		{
+			const int MaxBroken = 60;
+
+			List<Zone> show = new List<Zone>();
+			if (ShowBroken)
+			{
+				show.AddRange(broken);
+				show.Sort((a, b) => b.BrokenBar.CompareTo(a.BrokenBar));	// newest break first
+				if (show.Count > MaxBroken)
+					show.RemoveRange(MaxBroken, show.Count - MaxBroken);
+			}
+
+			for (int i = 0; i < show.Count; i++)
+			{
+				Zone z = show[i];
+				int startBarsAgo = CurrentBar - z.Bar;
+				int endBarsAgo   = CurrentBar - z.BrokenBar;	// stop the box at the break
+				if (endBarsAgo >= startBarsAgo)
+					endBarsAgo = startBarsAgo - 1;
+
+				string tag = "VZ_brk" + i;
+				Draw.Rectangle(this, tag, false,
+					startBarsAgo, z.High, endBarsAgo, z.Low,
+					BrokenBrush, BrokenBrush, op);
+				RemoveDrawObject(tag + "_t");
+			}
+
+			// Clear boxes left over from a busier previous pass.
+			for (int i = show.Count; i < lastBrokenCount; i++)
+			{
+				RemoveDrawObject("VZ_brk" + i);
+				RemoveDrawObject("VZ_brk" + i + "_t");
+			}
+			lastBrokenCount = show.Count;
 		}
 
 		private List<Zone> SelectNearest(List<Zone> cand, double close)
@@ -212,6 +314,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				{
 					RemoveDrawObject(tag);
 					RemoveDrawObject(tag + "_t");
+					RemoveDrawObject(tag + "_hot");
+					RemoveDrawObject(tag + "_poc");
+					RemoveDrawObject(tag + "_used");
 					continue;
 				}
 
@@ -224,6 +329,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 				Draw.Rectangle(this, tag, false,
 					startBarsAgo, z.High, endBarsAgo, z.Low,
 					brush, brush, op);
+
+				// Volume-at-price: shade the heavy band, line the peak, mark what has
+				// been retested. Skipped (and cleared) on non-Volumetric charts.
+				DrawVolumeOverlay(tag, z, brush, startBarsAgo, endBarsAgo);
 
 				if (showLabel)
 				{
@@ -240,6 +349,160 @@ namespace NinjaTrader.NinjaScript.Indicators
 					RemoveDrawObject(tag + "_t");
 				}
 			}
+		}
+
+		// ── Volume-at-price inside a zone (Volumetric bars only) ─────────────
+		//
+		// GetTotalVolumeForPrice gives the real volume traded at each price for a
+		// bar, so we can build a proper little profile confined to the zone's price
+		// band and accumulate it across every bar that trades there while the zone
+		// is alive. Frozen at the break.
+
+		private double VolAtPrice(int barIndex, double price)
+		{
+			if (volBars == null || barIndex < 0) return 0;
+			try
+			{
+				if (volBars.Volumes == null || barIndex >= volBars.Volumes.Length) return 0;
+				return volBars.Volumes[barIndex].GetTotalVolumeForPrice(price);
+			}
+			catch { return 0; }
+		}
+
+		private void BuildProfile(Zone z)
+		{
+			int nticks = (int)Math.Round((z.High - z.Low) / TickSize);
+			if (nticks < 0) nticks = 0;
+
+			// One band per tick, but coarsen if the zone is unusually tall so the
+			// array (and the per-bar loop) stays bounded.
+			int step = 1;
+			int bands = nticks + 1;
+			if (bands > 240) { step = (bands + 239) / 240; bands = (nticks / step) + 1; }
+
+			z.BandBase  = z.Low;
+			z.BandStep  = TickSize * step;
+			z.BandCount = bands;
+			z.BandVol   = new double[bands];
+			z.PenLow    = double.MaxValue;
+			z.PenHigh   = double.MinValue;
+
+			for (int b = z.Bar; b <= CurrentBar; b++)
+				AddBarToBands(z, b);
+
+			z.ProfileInit = true;
+		}
+
+		private void AddBarToBands(Zone z, int barIndex)
+		{
+			if (volBars == null || z.BandVol == null || barIndex < 0) return;
+
+			double bh = High.GetValueAt(barIndex);
+			double bl = Low.GetValueAt(barIndex);
+			if (bh < z.Low || bl > z.High) return;			// bar never traded in the band
+
+			int ticksPerBand = (int)Math.Round(z.BandStep / TickSize);
+			if (ticksPerBand < 1) ticksPerBand = 1;
+
+			for (int i = 0; i < z.BandCount; i++)
+			{
+				double p0 = z.BandBase + i * z.BandStep;
+				double v  = 0;
+				for (int t = 0; t < ticksPerBand; t++)
+					v += VolAtPrice(barIndex, p0 + t * TickSize);
+				z.BandVol[i] += v;
+			}
+		}
+
+		private void UpdatePenetration(Zone z)
+		{
+			double hi = High[0], lo = Low[0];
+			if (hi < z.Low || lo > z.High) return;			// bar did not reach into the zone
+
+			if (z.IsSupply)
+			{
+				double reached = Math.Min(hi, z.High);
+				if (reached > z.PenHigh) z.PenHigh = reached;
+			}
+			else
+			{
+				double reached = Math.Max(lo, z.Low);
+				if (reached < z.PenLow) z.PenLow = reached;
+			}
+		}
+
+		private void DrawVolumeOverlay(string tag, Zone z, Brush brush, int startBarsAgo, int endBarsAgo)
+		{
+			bool off = !ShowVolume || volBars == null || z.BandVol == null || z.BandCount <= 0;
+
+			double sum = 0, max = 0;
+			int    pocIdx = 0;
+			if (!off)
+			{
+				for (int i = 0; i < z.BandCount; i++)
+				{
+					sum += z.BandVol[i];
+					if (z.BandVol[i] > max) { max = z.BandVol[i]; pocIdx = i; }
+				}
+			}
+
+			if (off || sum <= 0 || max <= 0)
+			{
+				RemoveDrawObject(tag + "_hot");
+				RemoveDrawObject(tag + "_poc");
+				RemoveDrawObject(tag + "_used");
+				return;
+			}
+
+			double avg      = sum / z.BandCount;
+			double strength = avg > 0 ? max / avg : 1.0;			// how peaked the profile is
+
+			// Hot span: the run of bands trading clearly above average. Falls back to
+			// just the peak band if nothing clears the bar.
+			const double hotMult = 1.5;
+			int loIdx = -1, hiIdx = -1;
+			for (int i = 0; i < z.BandCount; i++)
+				if (z.BandVol[i] >= avg * hotMult) { if (loIdx < 0) loIdx = i; hiIdx = i; }
+			if (loIdx < 0) { loIdx = hiIdx = pocIdx; }
+
+			double hotLow  = Math.Max(z.Low,  z.BandBase + loIdx * z.BandStep - z.BandStep * 0.5);
+			double hotHigh = Math.Min(z.High, z.BandBase + hiIdx * z.BandStep + z.BandStep * 0.5);
+
+			// Stronger peak -> more opaque highlight.
+			int hotOp = (int)Math.Round(18 + (strength - 1.0) * 14);
+			if (hotOp < 18) hotOp = 18;
+			if (hotOp > 60) hotOp = 60;
+
+			Draw.Rectangle(this, tag + "_hot", false,
+				startBarsAgo, hotHigh, endBarsAgo, hotLow, brush, brush, hotOp);
+
+			// A line straight across the zone at the peak-volume price.
+			double pocPrice = z.BandBase + pocIdx * z.BandStep;
+			Draw.Line(this, tag + "_poc", false,
+				startBarsAgo, pocPrice, endBarsAgo, pocPrice, brush, DashStyleHelper.Solid, 2);
+
+			// Freshness: shade the part already retested since the zone formed. What
+			// is left unshaded is the untouched volume still standing.
+			double usedLow = 0, usedHigh = 0;
+			bool haveUsed = false;
+			if (z.IsSupply && z.PenHigh > double.MinValue)
+			{
+				usedLow  = z.Low;
+				usedHigh = Math.Min(z.High, z.PenHigh);
+				haveUsed = usedHigh > usedLow;
+			}
+			else if (!z.IsSupply && z.PenLow < double.MaxValue)
+			{
+				usedHigh = z.High;
+				usedLow  = Math.Max(z.Low, z.PenLow);
+				haveUsed = usedHigh > usedLow;
+			}
+
+			if (haveUsed)
+				Draw.Rectangle(this, tag + "_used", false,
+					startBarsAgo, usedHigh, endBarsAgo, usedLow, BrokenBrush, BrokenBrush, 10);
+			else
+				RemoveDrawObject(tag + "_used");
 		}
 
 		#region Properties
@@ -290,6 +553,15 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[Display(Name = "Show broken zones", Order = 9, GroupName = "Parameters")]
 		public bool ShowBroken { get; set; }
 
+		[NinjaScriptProperty]
+		[Range(0, int.MaxValue)]
+		[Display(Name = "History (days of broken zones)", Order = 10, GroupName = "Parameters")]
+		public int HistoryDays { get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name = "Volume at price (Volumetric bars)", Order = 11, GroupName = "Parameters")]
+		public bool ShowVolume { get; set; }
+
 		[XmlIgnore] [Display(Name = "Supply color", Order = 10, GroupName = "Visual")]
 		public Brush SupplyBrush { get; set; }
 		[Browsable(false)]
@@ -327,18 +599,18 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
 	{
 		private BallastVolumeZones[] cacheBallastVolumeZones;
-		public BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
-			return BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken);
+			return BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken, historyDays, showVolume);
 		}
 
-		public BallastVolumeZones BallastVolumeZones(ISeries<double> input, int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public BallastVolumeZones BallastVolumeZones(ISeries<double> input, int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
 			if (cacheBallastVolumeZones != null)
 				for (int idx = 0; idx < cacheBallastVolumeZones.Length; idx++)
-					if (cacheBallastVolumeZones[idx] != null && cacheBallastVolumeZones[idx].LegBars == legBars && cacheBallastVolumeZones[idx].BaseBars == baseBars && cacheBallastVolumeZones[idx].UseVolumeFilter == useVolumeFilter && cacheBallastVolumeZones[idx].VolumeLookback == volumeLookback && cacheBallastVolumeZones[idx].VolumeMultiple == volumeMultiple && cacheBallastVolumeZones[idx].MaxZones == maxZones && cacheBallastVolumeZones[idx].ExtendRightBars == extendRightBars && cacheBallastVolumeZones[idx].BaseOpacity == baseOpacity && cacheBallastVolumeZones[idx].ShowLabels == showLabels && cacheBallastVolumeZones[idx].ShowBroken == showBroken && cacheBallastVolumeZones[idx].EqualsInput(input))
+					if (cacheBallastVolumeZones[idx] != null && cacheBallastVolumeZones[idx].LegBars == legBars && cacheBallastVolumeZones[idx].BaseBars == baseBars && cacheBallastVolumeZones[idx].UseVolumeFilter == useVolumeFilter && cacheBallastVolumeZones[idx].VolumeLookback == volumeLookback && cacheBallastVolumeZones[idx].VolumeMultiple == volumeMultiple && cacheBallastVolumeZones[idx].MaxZones == maxZones && cacheBallastVolumeZones[idx].ExtendRightBars == extendRightBars && cacheBallastVolumeZones[idx].BaseOpacity == baseOpacity && cacheBallastVolumeZones[idx].ShowLabels == showLabels && cacheBallastVolumeZones[idx].ShowBroken == showBroken && cacheBallastVolumeZones[idx].HistoryDays == historyDays && cacheBallastVolumeZones[idx].ShowVolume == showVolume && cacheBallastVolumeZones[idx].EqualsInput(input))
 						return cacheBallastVolumeZones[idx];
-			return CacheIndicator<BallastVolumeZones>(new BallastVolumeZones(){ LegBars = legBars, BaseBars = baseBars, UseVolumeFilter = useVolumeFilter, VolumeLookback = volumeLookback, VolumeMultiple = volumeMultiple, MaxZones = maxZones, ExtendRightBars = extendRightBars, BaseOpacity = baseOpacity, ShowLabels = showLabels, ShowBroken = showBroken }, input, ref cacheBallastVolumeZones);
+			return CacheIndicator<BallastVolumeZones>(new BallastVolumeZones(){ LegBars = legBars, BaseBars = baseBars, UseVolumeFilter = useVolumeFilter, VolumeLookback = volumeLookback, VolumeMultiple = volumeMultiple, MaxZones = maxZones, ExtendRightBars = extendRightBars, BaseOpacity = baseOpacity, ShowLabels = showLabels, ShowBroken = showBroken, HistoryDays = historyDays, ShowVolume = showVolume }, input, ref cacheBallastVolumeZones);
 		}
 	}
 }
@@ -347,14 +619,14 @@ namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
 	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
 	{
-		public Indicators.BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public Indicators.BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
-			return indicator.BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken);
+			return indicator.BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken, historyDays, showVolume);
 		}
 
-		public Indicators.BallastVolumeZones BallastVolumeZones(ISeries<double> input , int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public Indicators.BallastVolumeZones BallastVolumeZones(ISeries<double> input , int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
-			return indicator.BallastVolumeZones(input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken);
+			return indicator.BallastVolumeZones(input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken, historyDays, showVolume);
 		}
 	}
 }
@@ -363,14 +635,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
 	{
-		public Indicators.BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public Indicators.BallastVolumeZones BallastVolumeZones(int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
-			return indicator.BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken);
+			return indicator.BallastVolumeZones(Input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken, historyDays, showVolume);
 		}
 
-		public Indicators.BallastVolumeZones BallastVolumeZones(ISeries<double> input , int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken)
+		public Indicators.BallastVolumeZones BallastVolumeZones(ISeries<double> input , int legBars, int baseBars, bool useVolumeFilter, int volumeLookback, double volumeMultiple, int maxZones, int extendRightBars, int baseOpacity, bool showLabels, bool showBroken, int historyDays, bool showVolume)
 		{
-			return indicator.BallastVolumeZones(input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken);
+			return indicator.BallastVolumeZones(input, legBars, baseBars, useVolumeFilter, volumeLookback, volumeMultiple, maxZones, extendRightBars, baseOpacity, showLabels, showBroken, historyDays, showVolume);
 		}
 	}
 }

@@ -45,6 +45,7 @@ public static class Program
         LessonTests.Run();
         PressureTests.Run();
         SuggestTests.Run();
+        PracticeTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

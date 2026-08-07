@@ -444,6 +444,35 @@ namespace Ballast
                 || string.Equals(stem, "Backtest", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Is this NinjaTrader's Market Replay account?
+        ///
+        /// Practice is not sim. A sim account runs on the real clock, on real
+        /// incoming prices, and cannot be rewound - a bad morning on Sim103 is a
+        /// bad morning that happened. A replay is a recording: the clock is the
+        /// recorded one, the fills are modelled against bars that already
+        /// printed, and the whole session can be run again until it goes well.
+        ///
+        /// Everything Ballast measures about real trading has to stay out of
+        /// reach of that, which is why this is its own question rather than a
+        /// shade of IsBuiltInSimName.
+        /// </summary>
+        public static bool IsPracticeAccountName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+
+            string stem = name.Trim();
+            int digits = 0;
+            while (stem.Length > 0 && stem[stem.Length - 1] >= '0' && stem[stem.Length - 1] <= '9')
+            {
+                stem = stem.Substring(0, stem.Length - 1);
+                digits++;
+            }
+            if (digits > 4) return false;
+
+            return string.Equals(stem, "Playback", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static string PlatformFromConnection(string connectionName)
         {
             if (string.IsNullOrEmpty(connectionName)) return "";

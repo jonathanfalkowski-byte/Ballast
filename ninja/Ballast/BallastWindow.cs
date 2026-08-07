@@ -112,6 +112,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private StackPanel pressurePanel, entriesPanel, periodRow, changePanel;
         private TextBlock periodNote, carePanel;
         private JournalPeriod journalPeriod = JournalPeriod.Month;
+        private ComboBox journalAccountBox;
+        private bool suppressJournalAccount;
         private TextBlock detectionNote;
         private readonly Dictionary<string, string> accountLabels = new Dictionary<string, string>();
 
@@ -1598,6 +1600,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             periodRow.Orientation = Orientation.Horizontal;
             periodRow.Margin = new Thickness(0, 0, 0, 4);
             p.Children.Add(periodRow);
+
+            // Which account this read is about. "All accounts" keeps the pooled
+            // view; picking one recomputes the entries and the WHAT TO CHANGE
+            // suggestions from that account alone - because a trader does not
+            // trade every account the same way, and a limit built from all of
+            // them pooled together belongs to none of them in particular.
+            StackPanel acctRow = new StackPanel();
+            acctRow.Orientation = Orientation.Horizontal;
+            acctRow.Margin = new Thickness(0, 0, 0, 4);
+
+            TextBlock acctLbl = new TextBlock();
+            acctLbl.Text = "Account";
+            acctLbl.Foreground = ColMuted;
+            acctLbl.FontSize = 12;
+            acctLbl.VerticalAlignment = VerticalAlignment.Center;
+            acctLbl.Margin = new Thickness(0, 0, 8, 0);
+            acctRow.Children.Add(acctLbl);
+
+            journalAccountBox = new ComboBox();
+            journalAccountBox.MinWidth = 200;
+            journalAccountBox.Items.Add("All accounts");
+            journalAccountBox.SelectedIndex = 0;
+            journalAccountBox.SelectionChanged += delegate { OnJournalAccountChanged(); };
+            acctRow.Children.Add(journalAccountBox);
+
+            p.Children.Add(acctRow);
 
             periodNote = new TextBlock();
             periodNote.Foreground = ColFaint;
@@ -6805,12 +6833,75 @@ namespace NinjaTrader.NinjaScript.AddOns
             RenderCare();
         }
 
-        /// <summary>Trades inside the page's chosen period.</summary>
+        /// <summary>Trades inside the page's chosen period, and - when the account
+        /// selector names one - only that account's.</summary>
         private List<BallastTrade> PeriodTrades()
         {
             DateTime now;
             try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
-            return BallastJournal.InPeriod(monitor.Journal.All, now, journalPeriod);
+            List<BallastTrade> inPeriod = BallastJournal.InPeriod(monitor.Journal.All, now, journalPeriod);
+
+            string acct = CurrentJournalAccount();
+            if (acct.Length == 0) return inPeriod;
+
+            List<BallastTrade> scoped = new List<BallastTrade>();
+            for (int i = 0; i < inPeriod.Count; i++)
+            {
+                if (inPeriod[i] != null
+                    && string.Equals(inPeriod[i].AccountName, acct, StringComparison.OrdinalIgnoreCase))
+                    scoped.Add(inPeriod[i]);
+            }
+            return scoped;
+        }
+
+        /// <summary>The account the Journal read is scoped to, or "" for all accounts.</summary>
+        private string CurrentJournalAccount()
+        {
+            if (journalAccountBox == null) return "";
+            if (journalAccountBox.SelectedIndex <= 0) return "";
+            return journalAccountBox.SelectedItem as string ?? "";
+        }
+
+        private void OnJournalAccountChanged()
+        {
+            if (suppressJournalAccount) return;
+            RenderEntries();
+            RenderChanges();
+        }
+
+        /// <summary>
+        /// Keep the account dropdown in step with the watched accounts, rebuilding
+        /// only when the set actually changes so the per-tick refresh never drops
+        /// the trader's selection or flickers a dropdown they have open.
+        /// </summary>
+        private void RefreshJournalAccounts()
+        {
+            if (journalAccountBox == null) return;
+
+            List<string> names = monitor.MonitoredNames;
+
+            bool same = journalAccountBox.Items.Count == names.Count + 1;
+            if (same)
+            {
+                for (int i = 0; i < names.Count; i++)
+                {
+                    if (!string.Equals(journalAccountBox.Items[i + 1] as string, names[i], StringComparison.Ordinal))
+                    { same = false; break; }
+                }
+            }
+            if (same) return;
+
+            object previous = journalAccountBox.SelectedItem;
+            suppressJournalAccount = true;
+            journalAccountBox.Items.Clear();
+            journalAccountBox.Items.Add("All accounts");
+            for (int i = 0; i < names.Count; i++) journalAccountBox.Items.Add(names[i]);
+
+            if (previous != null && journalAccountBox.Items.Contains(previous))
+                journalAccountBox.SelectedItem = previous;
+            else
+                journalAccountBox.SelectedIndex = 0;
+            suppressJournalAccount = false;
         }
 
         /// <summary>
@@ -6892,7 +6983,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 List<BallastTrade> book = PeriodTrades();
                 TrackerConfig c = monitor.DefaultConfig;
 
-                string who = CurrentEditKey();
+                string who = CurrentJournalAccount();
                 BallastTracker t = who.Length > 0 ? monitor.Get(who) : null;
                 if (t != null) c = t.Config;
 
@@ -6935,31 +7026,84 @@ namespace NinjaTrader.NinjaScript.AddOns
                     e.Margin = new Thickness(0, 0, 0, 6);
                     changePanel.Children.Add(e);
 
+                    // Two choices, never one forced on him. When a single account
+                    // is in view he can put the change on that account alone -
+                    // because he trades it differently - or push it across every
+                    // account at once. With "All accounts" selected there is no
+                    // one account to name, so only the all-accounts button shows.
                     SettingSuggestion applied = s;
-                    changePanel.Children.Add(QuietButton(
-                        "Apply this to " + (who.Length > 0 ? who : "the defaults"),
-                        delegate { ApplySuggestion(applied); }));
+                    WrapPanel btns = new WrapPanel();
+                    btns.Margin = new Thickness(0, 0, 0, 4);
+
+                    if (who.Length > 0)
+                    {
+                        string acct = who;
+                        btns.Children.Add(QuietButton("Apply to " + acct,
+                            delegate { ApplySuggestionToAccount(applied, acct); }));
+                    }
+
+                    btns.Children.Add(QuietButton("Apply to all accounts",
+                        delegate { ApplySuggestionToAll(applied); }));
+
+                    changePanel.Children.Add(btns);
                 }
             }
             catch { }
         }
 
-        private void ApplySuggestion(SettingSuggestion s)
+        /// <summary>Set just the one field this suggestion is about. Never touches
+        /// anything else on the config.</summary>
+        private void ApplySuggestionField(SettingSuggestion s, TrackerConfig c)
+        {
+            if (s == null || c == null) return;
+            if (s.Kind == "maxtrades") c.MaxTrades = s.Proposed;
+            else if (s.Kind == "cooldown") c.CooldownMinutes = s.Proposed;
+        }
+
+        /// <summary>Apply the suggestion to one account only.</summary>
+        private void ApplySuggestionToAccount(SettingSuggestion s, string accountKey)
+        {
+            if (s == null || accountKey == null || accountKey.Length == 0) return;
+
+            try
+            {
+                BallastTracker t = monitor.Get(accountKey);
+                if (t == null) return;
+
+                ApplySuggestionField(s, t.Config);
+                SaveSettings();
+
+                // Only reload the Setup form if it is currently showing this same
+                // account, so its fields never start disagreeing with its selector.
+                if (string.Equals(CurrentEditKey(), accountKey, StringComparison.Ordinal))
+                    LoadConfigIntoFields(t.Config);
+
+                RenderChanges();
+            }
+            catch { }
+        }
+
+        /// <summary>Apply the suggestion to every watched account and to the
+        /// defaults, so it reaches accounts already open - not just future ones.
+        /// Only the one field moves; each account keeps everything else.</summary>
+        private void ApplySuggestionToAll(SettingSuggestion s)
         {
             if (s == null) return;
 
             try
             {
-                string who = CurrentEditKey();
-                TrackerConfig c = monitor.DefaultConfig;
-                BallastTracker t = who.Length > 0 ? monitor.Get(who) : null;
-                if (t != null) c = t.Config;
-
-                if (s.Kind == "maxtrades") c.MaxTrades = s.Proposed;
-                else if (s.Kind == "cooldown") c.CooldownMinutes = s.Proposed;
-
+                List<string> names = monitor.MonitoredNames;
+                for (int i = 0; i < names.Count; i++)
+                {
+                    BallastTracker t = monitor.Get(names[i]);
+                    if (t != null) ApplySuggestionField(s, t.Config);
+                }
+                ApplySuggestionField(s, monitor.DefaultConfig);
                 SaveSettings();
-                LoadConfigIntoFields(c);
+
+                // Reload whatever the Setup form is currently showing, now updated.
+                LoadConfigIntoFields(ConfigForKey(CurrentEditKey()));
+
                 RenderChanges();
             }
             catch { }
@@ -7131,6 +7275,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void RenderJournal()
         {
             BuildPeriodRow();
+            RefreshJournalAccounts();
             RenderEntries();
             RenderChanges();
             RenderPressure();

@@ -260,7 +260,7 @@ namespace Ballast
             if (t == null) return null;
 
             BallastTrade e = t.OnPosition(signedQuantity, realisedNow, now, instrument, accountName);
-            if (e != null) Journal.Add(e);
+            File(e, accountName, now);
             return e;
         }
 
@@ -274,8 +274,46 @@ namespace Ballast
 
             BallastTrade e = t.OnExecution(executionId, instrument, signedQuantity, price,
                                            pointValue, commission, now, accountName);
-            if (e != null) Journal.Add(e);
+            File(e, accountName, now);
             return e;
+        }
+
+        /// <summary>
+        /// Everything a trader practises on, kept away from everything he traded.
+        /// </summary>
+        public readonly PracticeBook Practice = new PracticeBook();
+
+        /// <summary>
+        /// Put a finished round trip where it belongs - and the single most
+        /// important thing here is that replay never reaches the journal.
+        ///
+        /// On a Playback connection "now" is the REPLAY clock, so a trade taken
+        /// while replaying the sixth of August arrives here stamped the sixth of
+        /// August. One Journal.Add and it is sitting beside the funded trades
+        /// taken that morning, indistinguishable, feeding the setup edges and
+        /// the pressure profile and every answer he relies on. Rewind and run
+        /// the morning again and the same trade is filed a second time as a
+        /// second piece of evidence.
+        ///
+        /// This is the only door into the journal, which is why the check lives
+        /// here rather than at the two call sites above.
+        /// </summary>
+        private void File(BallastTrade e, string accountName, DateTime now)
+        {
+            if (e == null) return;
+
+            if (RuleBook.IsPracticeAccountName(accountName))
+            {
+                // DateTime.Now, deliberately, and it is the one place in Ballast
+                // that wants it: "now" is the replayed clock, and what orders one
+                // attempt against another is when he actually sat down to make
+                // it.
+                PracticeRun run = Practice.RunFor(accountName, now, DateTime.Now);
+                run.Trades.Add(e);
+                return;
+            }
+
+            Journal.Add(e);
         }
 
         /// <summary>Evaluate one account and return its snapshot.</summary>
