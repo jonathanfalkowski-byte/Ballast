@@ -40,6 +40,23 @@ namespace Ballast
         /// clean-looking chart, and the chart is where they are actually looking.
         /// </summary>
         public bool Locked;
+
+        /// <summary>
+        /// Minutes left on an acknowledgement the trader typed out in full.
+        /// Zero when there is none.
+        ///
+        /// The wall's other exit is a sentence he has to type: "I am trading
+        /// outside my plan and I accept I may lose this account." That buys
+        /// fifteen minutes. For those fifteen minutes the chart used to keep
+        /// shouting the same red banner at him - which adds nothing he has not
+        /// just written out by hand, and teaches him to trade underneath a red
+        /// banner. That habit is the one thing that costs the NEXT warning its
+        /// meaning.
+        ///
+        /// So it dims, and it comes back at full strength when the time is up.
+        /// Still said. No longer shouted.
+        /// </summary>
+        public int AckMinutes;
         public string LockLine = "";
 
         // ── The running count ────────────────────────────────────────────────
@@ -286,6 +303,26 @@ namespace Ballast
 
                 s.Locked = locked;
                 s.LockLine = locked ? (line ?? "") : "";
+                if (!locked) s.AckMinutes = 0;
+                if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
+            }
+        }
+
+        /// <summary>
+        /// How long an acknowledgement has left to run. Separate from PublishLock
+        /// because the two are decided in different places on different ticks,
+        /// and neither should be able to blank the other.
+        /// </summary>
+        public static void PublishAck(string account, int minutes, DateTime now)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+
+            lock (gate)
+            {
+                AccountState s;
+                if (!states.TryGetValue(account, out s)) { s = new AccountState(); states[account] = s; }
+
+                s.AckMinutes = minutes < 0 ? 0 : minutes;
                 if (s.UpdatedAt == DateTime.MinValue) s.UpdatedAt = now;
             }
         }
@@ -336,6 +373,15 @@ namespace Ballast
             if (locked)
             {
                 if (string.IsNullOrEmpty(line)) line = "You are done for the day.";
+
+                // He has typed the sentence out and bought himself minutes. Say
+                // it back to him quietly with the clock on it, rather than
+                // repeating the shout he has just answered in writing.
+                int ack = s.AckMinutes;
+                if (ack > 0)
+                    return ("You said you are carrying on - " + ack
+                          + (ack == 1 ? " min left - " : " min left - ") + line).ToUpperInvariant();
+
                 return ("STOP - " + line).ToUpperInvariant();
             }
 
@@ -344,10 +390,19 @@ namespace Ballast
             return s.Warning.ToUpperInvariant();
         }
 
-        /// <summary>True when the banner should be painted in the alarm colour.</summary>
+        /// <summary>
+        /// True when the banner should be painted in the alarm colour.
+        ///
+        /// An acknowledged breaker is not an alarm. He has read it, typed it out
+        /// and accepted it in writing; the chart repeating itself in red for the
+        /// next quarter of an hour teaches him only that red is something you
+        /// trade underneath. It goes back to full strength on its own.
+        /// </summary>
         public static bool IsAlarm(AccountState s)
         {
-            return s != null && (s.Locked || s.Urgency >= 2);
+            if (s == null) return false;
+            if (s.AckMinutes > 0) return false;
+            return s.Locked || s.Urgency >= 2;
         }
     }
 }

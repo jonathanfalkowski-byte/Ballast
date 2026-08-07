@@ -583,12 +583,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             // transparency, centred. There is nothing underneath it to blend
             // into, which is the entire reason for having a panel.
             bool alarm = BallastState.IsAlarm(st);
+            bool acknowledged = st.AckMinutes > 0;
             TextPosition where = (CentreAlarms && alarm) ? TextPosition.Center : Where;
 
             Say(text,
                 alarm ? AlarmInk : Amber,
                 alarm ? AlarmBack : PanelBrush,
-                st.Locked ? 1.4 : 1.0,
+                st.Locked && !acknowledged ? 1.4 : 1.0,
                 where);
         }
 

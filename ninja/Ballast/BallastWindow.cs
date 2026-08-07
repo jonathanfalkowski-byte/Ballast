@@ -1173,6 +1173,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 PublishLockSticky(s.AccountName, hard, hardLine, now);
 
+                // How long an acknowledgement has left, so the chart can dim for
+                // exactly as long as it lasts and no longer.
+                int ackLeft = 0;
+                if (hard && tiltGate != null)
+                    for (int k = 0; k < triggers.Count; k++)
+                    {
+                        if (!TiltLockout.IsHardBreaker(triggers[k].Kind)) continue;
+                        if (!tiltGate.IsReleased(s.AccountName, triggers[k].Kind, now)) continue;
+                        int m = tiltGate.MinutesLeft(s.AccountName, triggers[k].Kind, now);
+                        if (m > ackLeft) ackLeft = m;
+                    }
+                BallastState.PublishAck(s.AccountName, ackLeft, now);
+
                 if (!tiltEnabled) continue;
 
                 for (int k = 0; k < triggers.Count; k++)

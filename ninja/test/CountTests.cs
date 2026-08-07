@@ -15,6 +15,46 @@ public static class CountTests
         ChartShowsTheCount();
         MovedQuestion();
         MovedCountsForSomething();
+        AnAcknowledgedBreakerStopsShouting();
+    }
+
+    /// <summary>
+    /// "you are right we dont [want] users to ignore that message after a while"
+    ///
+    /// The wall's second exit is a sentence the trader types out in full - "I am
+    /// trading outside my plan and I accept I may lose this account" - and it
+    /// buys him fifteen minutes. For those fifteen minutes the chart kept
+    /// shouting the same red banner, which adds nothing he has not just written
+    /// by hand and teaches him that red is something you trade underneath. That
+    /// habit is what costs the NEXT warning its meaning.
+    ///
+    /// So it dims for exactly as long as the acknowledgement lasts. Still said,
+    /// no longer shouted, and back at full strength on its own.
+    /// </summary>
+    static void AnAcknowledgedBreakerStopsShouting()
+    {
+        T.S("an acknowledged breaker stops shouting");
+
+        AccountState s = new AccountState();
+        s.Locked = true;
+        s.LockLine = "You are done for the day.";
+        s.Urgency = 2;
+
+        T.Ok(BallastState.ChartBanner(s).StartsWith("STOP - "), "unanswered, it shouts");
+        T.Ok(BallastState.IsAlarm(s), "in the alarm colour");
+
+        s.AckMinutes = 12;
+
+        string quiet = BallastState.ChartBanner(s);
+        T.Ok(quiet.IndexOf("CARRYING ON") >= 0, "answered, it says back what he said: " + quiet);
+        T.Ok(quiet.IndexOf("12 MIN") >= 0, "with the clock on it");
+        T.Ok(quiet.IndexOf("DONE FOR THE DAY") >= 0,
+             "and it still names the breaker - dimmed is not deleted");
+        T.Ok(!BallastState.IsAlarm(s), "but no longer in the alarm colour");
+
+        s.AckMinutes = 0;
+        T.Ok(BallastState.ChartBanner(s).StartsWith("STOP - "), "when the time is up it is back");
+        T.Ok(BallastState.IsAlarm(s), "at full strength, without being asked");
     }
 
     // ── the chart has to show something that moves ───────────────────────────
