@@ -52,6 +52,22 @@ namespace Ballast
         /// <summary>Which named profile produced these numbers. "" == hand-set.</summary>
         public string ProfileKey = "";
 
+        /// <summary>
+        /// What a full stop on ONE contract costs on this account. 0 = not said.
+        ///
+        /// "this section should also be per account i dont have the same loss
+        /// for each account"
+        ///
+        /// It was a single box on a shared page: not saved anywhere, reset to
+        /// zero every restart, and "use it on every account" put one trader's
+        /// NQ stop on his MNQ accounts. His own figures make the point - a
+        /// typical losing contract cost $94 on 105 and $1,260 on 106, because
+        /// they are not trading the same thing. One number cannot describe both,
+        /// and the number is what every position size on the page is worked out
+        /// from.
+        /// </summary>
+        public double StopPerContract = 0;
+
         /// <summary>Percentage of the trailing drawdown intended per trade.</summary>
         public double RiskPctOfDrawdown = 0;
 

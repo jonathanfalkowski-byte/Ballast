@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 26;
+        public const int CurrentFieldCount = 27;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -65,7 +65,8 @@ namespace Ballast
                 D(c.FirmDailyLossLimit),                                           // 22
                 c.TrustAccountRealised ? "1" : "0",                                // 23
                 I(c.TradingDayResetMinute),                                         // 24
-                ((int)c.Purpose).ToString(CultureInfo.InvariantCulture)             // 25
+                ((int)c.Purpose).ToString(CultureInfo.InvariantCulture),            // 25
+                D(c.StopPerContract)                                                // 26
             });
         }
 
@@ -163,6 +164,16 @@ namespace Ballast
             // comparison rather than putting it on the wrong side of one.
             if (f.Length >= 26 && int.TryParse(f[25], out n) && n >= 0 && n <= 3)
                 c.Purpose = (AccountPurpose)n;
+
+            // Field 27 is what a full stop costs on ONE contract on THIS account.
+            // It used to be a single box that was never written down at all, so
+            // every restart lost it and "use it on every account" put one
+            // account's stop on all of them. Absent means unsaid, and unsaid is
+            // exactly what it was before - no position size is worked out from
+            // a figure nobody gave.
+            if (f.Length >= 27 && double.TryParse(f[26], NumberStyles.Any, CultureInfo.InvariantCulture, out d)
+                && d >= 0)
+                c.StopPerContract = d;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.

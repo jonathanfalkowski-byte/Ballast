@@ -292,8 +292,57 @@ public static class TargetTests
     {
         PassTargetIsSeparate();
         AnAccountKnowsWhatTypeItIs();
+        TheStopCostBelongsToTheAccount();
         TheProfitTargetIsRecoveredNotDemanded();
         BotsGetNoWall();
+    }
+
+    /// <summary>
+    /// "this section should also be per account i dont have the same loss for
+    /// each account"
+    ///
+    /// It was one box on a shared page, and it was never written to the settings
+    /// file at all - so it read 0 every restart, and every position size on the
+    /// page was worked out from whatever happened to be typed in it at the time.
+    ///
+    /// His own screen makes the case better than any argument: a typical losing
+    /// contract cost $94 on APEX-11325-105 and $1,260 on APEX-11325-106, because
+    /// he is not trading the same instrument on both. "Use it on every account"
+    /// took one of those numbers and sized every account from it.
+    /// </summary>
+    static void TheStopCostBelongsToTheAccount()
+    {
+        T.S("what a stop costs belongs to the account");
+
+        string key;
+
+        TrackerConfig a = new TrackerConfig();
+        a.StartingBalance = 250000; a.TrailingDrawdown = 6500;
+        a.StopPerContract = 94;
+
+        TrackerConfig b = new TrackerConfig();
+        b.StartingBalance = 250000; b.TrailingDrawdown = 6500;
+        b.StopPerContract = 1260;
+
+        TrackerConfig ba = SettingsCodec.Deserialise(SettingsCodec.Serialise("APEX-11325-105", a), out key);
+        TrackerConfig bb = SettingsCodec.Deserialise(SettingsCodec.Serialise("APEX-11325-106", b), out key);
+
+        T.Near(ba.StopPerContract, 94, 0.01, "105 keeps its own stop cost across a restart");
+        T.Near(bb.StopPerContract, 1260, 0.01, "and 106 keeps a completely different one");
+
+        // A file written before this field existed. It must load as "unsaid" -
+        // never as zero-with-confidence, and never shifted out of another field.
+        string older = "APEX-11325-105|250000|6500|0|3|1965|2000|5|4|265000||0|0|0|4|0|0|570|750|5|27|15000|0|1|0|0";
+        TrackerConfig old = SettingsCodec.Deserialise(older, out key);
+        T.Ok(old != null, "an older settings line still loads");
+        T.Near(old.StopPerContract, 0, 0.01, "with no stop cost, because it was never asked");
+        T.Near(old.ProfitTarget, 15000, 0.01, "and every field before it is still where it was");
+        T.Near(old.LockFloorAt, 265000, 0.01, "including the floor lock");
+        T.Eq(old.FirmMaxContracts, 27, "and the firm's contract cap");
+
+        // Nothing before it moved, which is the only way an added field is safe.
+        T.Eq(SettingsCodec.Serialise("x", a).Split('|').Length, SettingsCodec.CurrentFieldCount,
+             "the line is exactly as long as the codec claims");
     }
 
     static RuleBook Shipped()

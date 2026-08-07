@@ -32,6 +32,7 @@ public static class ResetTests
         AResizedAccountIsCaughtAfterARestart();
         OnlySimAccountsGetTheOneClickVersion();
         AMirroredReplayIsNotASecondTrade();
+        AnEvalThatComesBackADifferentSizeIsNotTrusted();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -279,6 +280,67 @@ public static class ResetTests
         T.Ok(next != null, "the account is not left stuck in a position that never was");
         T.Eq(t.TradesToday, 2, "and the day counts on normally");
         T.Eq(t.LossesToday, 1, "including the loss that really happened");
+    }
+
+    /// <summary>
+    /// "eval accounts do get reset if they ever go below the floor, so does the
+    /// system understand that when it comes back next month with a different
+    /// starting balance potentially"
+    ///
+    /// Two cases, and they are not the same.
+    ///
+    /// Reset to the SAME size is handled - see StartingOverReAnchorsTheFloor. The
+    /// peak comes back down with the balance, so the floor returns to a full
+    /// drawdown below and the account has all its room again.
+    ///
+    /// Reset to a DIFFERENT size is not something Ballast can work out for
+    /// itself, because the settings are the only thing that says how big the
+    /// account is. What it must never do is carry on quoting a cushion from the
+    /// old size - a 250K account's floor on a 50K account reports tens of
+    /// thousands of room that does not exist. So it stops quoting, says the two
+    /// figures cannot both be true, and asks. Amber, not red: nothing has gone
+    /// wrong with the trading.
+    /// </summary>
+    static void AnEvalThatComesBackADifferentSizeIsNotTrusted()
+    {
+        T.S("an eval that comes back a different size is questioned, not guessed at");
+
+        // Set up as the 250K he ran last month; reset has delivered a 50K.
+        DisciplineInput i = new DisciplineInput();
+        i.StartingBalance = 250000;
+        i.TrailingDrawdown = 6500;
+        i.CurrentEquity = 50000;
+        i.HasValidEquity = true;
+        i.FloorLevel = 243500;
+        i.CushionToFloor = 50000 - 243500;
+        i.MaxTrades = 5;
+        i.MaxLossesBeforeStop = 3;
+
+        T.Ok(i.ConfigMismatch, "the size and the balance cannot both be true");
+        T.Ok(!i.PastFloor, "and it is NOT called a dead account");
+
+        DisciplineDecision d = DisciplineEngine.Evaluate(i);
+        T.Eq(d.Action, DisciplineAction.CheckSetup, "it asks about the account");
+        T.Eq(d.Urgency, Urgency.Caution, "in amber - the trading is not the problem");
+
+        string row = DisciplineEngine.RowWarning(i, d);
+        T.Ok(row.IndexOf("250,000") >= 0 && row.IndexOf("50,000") >= 0,
+             "stating both figures so the contradiction is visible: " + row);
+
+        // The same eval reset back to the size it already was needs no help at
+        // all, and must not be dragged into this.
+        DisciplineInput same = new DisciplineInput();
+        same.StartingBalance = 250000;
+        same.TrailingDrawdown = 6500;
+        same.CurrentEquity = 250000;
+        same.HasValidEquity = true;
+        same.FloorLevel = 243500;
+        same.CushionToFloor = 6500;
+        same.MaxTrades = 5;
+        same.MaxLossesBeforeStop = 3;
+
+        T.Ok(!same.ConfigMismatch, "a reset to the same size is just an account at its start");
+        T.Near(same.CushionToFloor, 6500, 0.01, "with the whole drawdown in front of it");
     }
 
     static void StartingOverReAnchorsTheFloor()

@@ -4945,6 +4945,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tbTradingDayReset != null)
                 tbTradingDayReset.Text = DisciplineEngine.HourMinute(c.TradingDayResetMinute);
 
+            // What a stop costs is a property of the account, not of the page.
+            if (tbRiskPerTrade != null)
+                tbRiskPerTrade.Text = c.StopPerContract.ToString(CultureInfo.InvariantCulture);
+
             // And the two dropdowns at the top have to say what this account
             // actually is, rather than whatever happens to be first in the list.
             ShowAccountTypeFor(CurrentEditKey(), c);
@@ -5023,6 +5027,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // keep counting down from a number the trader has already overridden.
             c.BaseMaxContracts    = c.MaxContracts;
             c.LockFloorAt         = ParseD(tbLockAt, c.LockFloorAt);
+            c.StopPerContract     = ParseD(tbRiskPerTrade, c.StopPerContract);
             if (automatedBox != null) c.IsAutomated = automatedBox.IsChecked == true;
             if (trustRealisedBox != null) c.TrustAccountRealised = trustRealisedBox.IsChecked == true;
             if (acctGenBox != null && acctGenBox.SelectedIndex >= 0)
@@ -5638,20 +5643,52 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             double riskPerContract = ParseD(tbRiskPerTrade, 0);
 
+            // The stop cost belongs to the account being edited, whatever else
+            // this button goes on to touch.
+            if (!EditingDefault())
+            {
+                BallastTracker me = monitor.Get(CurrentEditKey());
+                if (me != null && me.Config != null) me.Config.StopPerContract = riskPerContract;
+            }
+            else monitor.DefaultConfig.StopPerContract = riskPerContract;
+
             if (toAll)
             {
+                // "this section should also be per account i dont have the same
+                // loss for each account"
+                //
+                // He is right, and this button was the worst of it. It took the
+                // one number on screen and sized every account from it - so the
+                // $1,250 stop he runs on one account decided position size on
+                // accounts trading a tenth of that. Each account now sizes from
+                // its OWN stop cost, and the box only fills in for accounts that
+                // have never been given one.
+                int borrowed = 0;
                 List<string> names = monitor.MonitoredNames;
                 for (int i = 0; i < names.Count; i++)
                 {
                     BallastTracker t = monitor.Get(names[i]);
-                    if (t != null) t.Config = ApplyOne(p, t.Config, riskPerContract);
+                    if (t == null) continue;
+
+                    double own = t.Config != null ? t.Config.StopPerContract : 0;
+                    if (own <= 0) { own = riskPerContract; if (own > 0) borrowed++; }
+
+                    t.Config = ApplyOne(p, t.Config, own);
+                    if (t.Config != null) t.Config.StopPerContract = own;
                 }
                 monitor.DefaultConfig = ApplyOne(p, monitor.DefaultConfig, riskPerContract);
 
                 detectionNote.Text = "Applied \"" + p.Name + "\" to " + names.Count
                                    + (names.Count == 1 ? " account" : " accounts")
-                                   + ". Each got figures based on its own drawdown, so they differ. "
-                                   + "Verify against your firm before trusting them.";
+                                   + ". Each got figures based on its own drawdown and its own stop "
+                                   + "cost, so they differ."
+                                   + (borrowed > 0
+                                        ? "  " + borrowed + (borrowed == 1 ? " account had" : " accounts had")
+                                          + " no stop cost of its own and used the "
+                                          + Money(riskPerContract) + " on screen - set theirs if that "
+                                          + "is not what you trade there."
+                                        : "")
+                                   + "  Verify against your firm before trusting them.";
             }
             else if (EditingDefault())
             {
