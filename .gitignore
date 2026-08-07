@@ -12,3 +12,6 @@ dist
 # Scratch: files moved aside instead of deleted (the remote bridge cannot
 # delete, so they are parked here for you to remove by hand).
 _to_delete/
+
+# TypeScript's incremental build cache. A machine-local artefact.
+*.tsbuildinfo

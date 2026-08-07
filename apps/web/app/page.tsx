@@ -58,12 +58,12 @@ export default function Home() {
           <Gap
             n="2"
             title="Revenge caught in the moment"
-            body="Tag a trade revenge, FOMO, or boredom, and see your real edge by tag. Then Ballast warns you inside the tilt window — the five minutes after a loss where accounts die."
+            body="One tap says how the trade went — by the book, right idea but sloppy, off plan, or chased — and one says how you felt taking it. Then Ballast measures what each of those actually costs you, and warns you inside the window after a loss where accounts die."
           />
           <Gap
             n="3"
-            title="Graded on rules, not P&L"
-            body="A green day where you broke your rules is a failing day. Ballast scores adherence and tracks your clean-day streak, because the streak is what compounds."
+            title="Judged on rules, not P&L"
+            body="A green day where you broke your rules is a failing day. Ballast reports what the trades you took off plan cost against the ones you took by the book — your own record, not a grade — and points at the setting that would have stopped them."
           />
         </div>
       </section>

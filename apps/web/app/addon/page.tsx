@@ -38,10 +38,11 @@ export default function AddonPage() {
           <WaitlistForm />
         </div>
         <p className="mt-3 text-sm text-[#7f8b98]">
-          Every image below is captioned. The Setup image is a photograph of the working add-on;
-          the rest are illustrations rendered from the add-on&apos;s own source, so the layout,
-          the colours and every word in them are the ones it really puts on screen. Nothing here
-          is a concept.
+          Every image below is captioned. They are illustrations rendered from the add-on&apos;s own
+          source, so the layout, the colours and every word in them are the ones it really puts on
+          screen. Nothing here is a concept. Setup has been rebuilt since the last photograph was
+          taken, so rather than show you the old one there is no image of it below &mdash; a current
+          one goes up when it is taken.
         </p>
       </section>
 
@@ -146,6 +147,11 @@ export default function AddonPage() {
           copying is what kills journals in week two.
         </p>
         <p>
+          You name your own setups once — call them A, B and C, or name them properly — and every
+          trade in the journal carries a picker for which one you took. That is what turns a pile of
+          trades into an answer about your entries rather than a diary.
+        </p>
+        <p>
           It also records what no other journal has —{" "}
           <strong className="text-white">what Ballast was advising when you opened the trade</strong>
           , your cushion at that moment, and how many minutes it had been since your last loss. All
@@ -187,28 +193,126 @@ export default function AddonPage() {
       </section>
 
       {/* Setup */}
-      <Shot
-        eyebrow="Setup"
-        title="It already knows your firm's rules"
-        src="/shots/setup.png"
-        alt="The Ballast Setup tab, showing the account watch list with each account's saved rules, firm and account type selection, and recommended settings."
-        width={1270}
-        height={1049}
-        kind="photo"
-      >
-        <p>
-          Tick an account and Ballast reads the firm from the account name and the size from the
-          balance, then applies that firm&apos;s published drawdown, drawdown type and floor-lock
-          level. Apex, Topstep, Take Profit Trader, MyFundedFutures — evaluations and funded accounts
-          separately, because they do not behave the same, and legacy sizes separately, because they
-          do not either.
+      <section className="mt-16">
+        <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8b97a5]">Setup</p>
+        <h2 className="text-2xl font-bold tracking-tight">
+          Every account gets its own rules, on its own page
+        </h2>
+        <div className="mt-5 space-y-4 text-[#9aa7b4]">
+          <p>
+            Tick an account and Ballast reads the firm from the account name and the size from the
+            balance, then applies that firm&apos;s published drawdown, drawdown type and floor-lock
+            level. Apex, Topstep, Take Profit Trader, MyFundedFutures — evaluations and funded
+            accounts separately, because they do not behave the same, and legacy sizes separately,
+            because they do not either.
+          </p>
+          <p>
+            Setup is two pages now, not one. A list of your accounts, and behind each one{" "}
+            <strong className="text-white">its own page of rules</strong> — daily stop, trade count,
+            losses in a row, target, size, trading window. Click &ldquo;set its rules&rdquo; and that
+            account is in front of you, named at the top, with every field on the page belonging to
+            it and nothing else. A trader running six accounts across two firms does not have one
+            set of limits, and the old single page pretended he did.
+          </p>
+          <p>
+            One thing came out rather than in. There used to be a button that matched every account
+            at once by balance, and a setting above it asking which generation of account you hold.
+            Both are gone.{" "}
+            <em className="not-italic text-[#e3b341]">
+              A single answer to &ldquo;which generation do you hold&rdquo; cannot be true of a
+              person, only of one account at a time
+            </em>{" "}
+            — a legacy 50K trails $2,500 against a 4.0 50K&apos;s $2,000, a balance cannot tell them
+            apart, and you can hold both at once alongside accounts at other firms entirely. Each
+            account states its generation when you pick its type, and there is a per-account override
+            if a label ever lies.
+          </p>
+          <p>
+            Each account also says what it is <em className="not-italic text-white">for</em> —
+            practice, evaluation, or funded. That is not the same question as whether the platform
+            calls it a simulator: plenty of traders run a sim deliberately as though it were funded,
+            to test a strategy under something like real conditions. Only you know which, and it
+            decides what the comparison further down this page is actually measuring.
+          </p>
+          <p>
+            It refuses to guess. A balance that matches no standard size is left for you to fill in,
+            and an account whose purpose you have not stated is left out of the analysis rather than
+            guessed at. The rule book updates itself from this site, so when a firm moves a number
+            your cushion follows without you doing anything.
+          </p>
+        </div>
+      </section>
+
+      {/* What the journal gives back */}
+      <section className="mt-16">
+        <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8b97a5]">
+          What the journal gives back
         </p>
-        <p>
-          It refuses to guess. A balance that matches no standard size is left for you to fill in,
-          and sim accounts are never auto-configured. The rule book updates itself from this site, so
-          when a firm moves a number your cushion follows without you doing anything.
-        </p>
-      </Shot>
+        <h2 className="text-2xl font-bold tracking-tight">
+          A journal nobody reads is just tagging
+        </h2>
+        <div className="mt-5 space-y-4 text-[#9aa7b4]">
+          <p>
+            This is the failure mode every trading journal dies of, and admitting it is the only way
+            past it. You answer a question on every trade for a week, and you never open the page
+            where the answers add up. The tagging is a cost you pay daily for a benefit you never
+            collect.
+          </p>
+          <p>
+            So Ballast does not wait to be opened. When your trading day ends — your window closes,
+            or you press{" "}
+            <strong className="text-white">&ldquo;I&apos;m done for the day&rdquo;</strong> — it puts
+            the day&apos;s strongest finding in front of you, and it does the same before your first
+            trade of the next session, when it can still change a decision. Not{" "}
+            <em className="not-italic">&ldquo;would you like to review your journal&rdquo;</em>,
+            which is a question with an easy no at the end of a losing day. The finding itself:{" "}
+            <em className="not-italic text-[#e3b341]">
+              &ldquo;The 3 you took off your plan cost $650. The 4 you took by the book made $500.
+              That is the whole day.&rdquo;
+            </em>
+          </p>
+          <p>
+            It picks what to say by how <strong className="text-white">actionable</strong> it is
+            rather than how big the number is. Execution first, because &ldquo;stop chasing&rdquo; is
+            an instruction you can follow tomorrow morning. Then which setup is carrying which. Then
+            the feeling that only ever loses. And if none of those can be said honestly, it reports
+            the day and no more — a sentence that overclaims on a three-trade sample is how a journal
+            starts lying to the one trader who finally began reading it.
+          </p>
+        </div>
+
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          <Card title="Do your entries work?">
+            Your own setups, worst money first, net of commission, over today, this week, this month
+            or the year. This is the question you cannot answer from memory: the setup that{" "}
+            <em className="not-italic">feels</em> like it works is the one whose wins are memorable,
+            and memorability has nothing to do with money. Where the sample is too thin to mean
+            anything it says so instead of pretending.
+          </Card>
+          <Card title="What changes when the money is real">
+            The only controlled experiment you ever run on yourself — same person, same setups, same
+            market, same hours, one variable moved. Ballast compares how you trade a practice account
+            against how you trade a funded one: rule-breaking, how long you hold winners against
+            losers, how fast you re-enter after a loss, trades a day, size.
+          </Card>
+          <Card title="Behaviour, never money">
+            A simulator&apos;s fills flatter you — no slippage, no queue, limits that fill when they
+            would not have. So a P&amp;L gap between practice and funded is part psychology and part
+            generosity, and nobody can separate the two. No fill engine decides whether you chased,
+            or whether you held a winner to target. That is the person, and it is the only honest
+            ground for the comparison.
+          </Card>
+          <Card title="It changes the tool, not you">
+            Ballast is not qualified to tell you about your own head and does not try. What it does
+            is point at a number in your own settings that would have changed the outcome:{" "}
+            <em className="not-italic text-[#e3b341]">
+              &ldquo;Across 10 days your first 3 trades made $4,500. Everything after that gave back
+              $5,500. Your limit is 12.&rdquo;
+            </em>{" "}
+            One button applies it. Nothing changes unless you press it.
+          </Card>
+        </div>
+      </section>
 
       {/* Chart warning */}
       <section className="mt-16">
@@ -381,6 +485,15 @@ function Frame({
           : "Illustration \u2014 rendered from the add-on's source, not a photograph. Same layout, same wording."}
       </figcaption>
     </figure>
+  );
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-[#2a333f] bg-[#161b22] p-5">
+      <p className="font-semibold text-white">{title}</p>
+      <p className="mt-2 text-[15px] leading-relaxed text-[#9aa7b4]">{children}</p>
+    </div>
   );
 }
 
