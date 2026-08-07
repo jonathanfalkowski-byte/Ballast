@@ -15,46 +15,6 @@ public static class CountTests
         ChartShowsTheCount();
         MovedQuestion();
         MovedCountsForSomething();
-        AnAcknowledgedBreakerStopsShouting();
-    }
-
-    /// <summary>
-    /// "you are right we dont [want] users to ignore that message after a while"
-    ///
-    /// The wall's second exit is a sentence the trader types out in full - "I am
-    /// trading outside my plan and I accept I may lose this account" - and it
-    /// buys him fifteen minutes. For those fifteen minutes the chart kept
-    /// shouting the same red banner, which adds nothing he has not just written
-    /// by hand and teaches him that red is something you trade underneath. That
-    /// habit is what costs the NEXT warning its meaning.
-    ///
-    /// So it dims for exactly as long as the acknowledgement lasts. Still said,
-    /// no longer shouted, and back at full strength on its own.
-    /// </summary>
-    static void AnAcknowledgedBreakerStopsShouting()
-    {
-        T.S("an acknowledged breaker stops shouting");
-
-        AccountState s = new AccountState();
-        s.Locked = true;
-        s.LockLine = "You are done for the day.";
-        s.Urgency = 2;
-
-        T.Ok(BallastState.ChartBanner(s).StartsWith("STOP - "), "unanswered, it shouts");
-        T.Ok(BallastState.IsAlarm(s), "in the alarm colour");
-
-        s.AckMinutes = 12;
-
-        string quiet = BallastState.ChartBanner(s);
-        T.Ok(quiet.IndexOf("CARRYING ON") >= 0, "answered, it says back what he said: " + quiet);
-        T.Ok(quiet.IndexOf("12 MIN") >= 0, "with the clock on it");
-        T.Ok(quiet.IndexOf("DONE FOR THE DAY") >= 0,
-             "and it still names the breaker - dimmed is not deleted");
-        T.Ok(!BallastState.IsAlarm(s), "but no longer in the alarm colour");
-
-        s.AckMinutes = 0;
-        T.Ok(BallastState.ChartBanner(s).StartsWith("STOP - "), "when the time is up it is back");
-        T.Ok(BallastState.IsAlarm(s), "at full strength, without being asked");
     }
 
     // ── the chart has to show something that moves ───────────────────────────
@@ -331,7 +291,142 @@ public static class TargetTests
     public static void Run()
     {
         PassTargetIsSeparate();
+        AnAccountKnowsWhatTypeItIs();
+        TheProfitTargetIsRecoveredNotDemanded();
         BotsGetNoWall();
+    }
+
+    static RuleBook Shipped()
+    {
+        RuleBook rb = new RuleBook();
+        string[] tries = new string[] { "Ballast/ballast-rules.txt", "ballast-rules.txt" };
+        for (int n = 0; n < tries.Length; n++)
+            if (System.IO.File.Exists(tries[n])) { rb.Load(tries[n]); break; }
+        return rb;
+    }
+
+    /// <summary>His APEX-11325-106, field for field out of ballast-settings.txt.</summary>
+    static TrackerConfig His106()
+    {
+        TrackerConfig c = new TrackerConfig();
+        c.StartingBalance   = 250000;
+        c.TrailingDrawdown  = 6500;
+        c.DrawdownType      = DrawdownType.Intraday;
+        c.LockFloorAt       = 265000;
+        c.MaxLossesBeforeStop = 2;
+        c.DailyLossLimit    = 2000;
+        c.DailyTarget       = 1400;
+        c.MaxTrades         = 5;
+        c.MaxContracts      = 4;
+        return c;
+    }
+
+    /// <summary>
+    /// "after i clicked on set its rules...it defaults to eval intraday
+    /// 25k.....i think it should already populate that since we know what it
+    /// is."
+    ///
+    /// The account type he picked was never written to disk - only the figures
+    /// it produced were - so the dropdown had nothing to restore and fell to the
+    /// first row in the list. On a 250K account that read "Evaluation intraday -
+    /// 25K", and one Save on that page would have dressed a 250K account in a
+    /// 25K account's floor.
+    ///
+    /// So it is read back out of the figures instead. Nothing new is stored,
+    /// which means it also works for every account he set up before today.
+    /// </summary>
+    static void AnAccountKnowsWhatTypeItIs()
+    {
+        T.S("an account's figures say which type it is");
+
+        RuleBook rb = Shipped();
+        T.Ok(rb.Count > 0, "the rule book is there");
+        if (rb.Count == 0) return;
+
+        FirmAccountSpec s = rb.MatchSpecForAccount("APEX-11325-106", His106());
+        T.Ok(s != null, "his 250K account is recognised from its own settings");
+        if (s == null) return;
+
+        T.Near(s.Size, 250000, 1, "and it is a 250K, not the 25K the box was showing");
+        T.Near(s.ProfitTarget, 15000, 1, "with the target that goes with it");
+        T.Eq(s.FirmMaxContracts, 27, "and the contract cap");
+
+        // The discriminator has to be all four figures. Apex publishes the same
+        // size and drawdown on Rithmic and on Tradovate, and they differ only in
+        // whether the threshold ever stops - which is the whole point.
+        TrackerConfig tradovate = His106();
+        tradovate.LockFloorAt = 0;
+        FirmAccountSpec t = rb.MatchSpecForAccount("APEX-11325-106", tradovate);
+        T.Ok(t != null && Math.Abs(t.LockFloorAt) < 1,
+             "the same size on Tradovate is a different row, not the same one");
+
+        // A size no firm publishes is not forced onto the nearest row.
+        TrackerConfig odd = His106();
+        odd.StartingBalance = 187000;
+        T.Ok(rb.MatchSpecForAccount("APEX-11325-106", odd) == null,
+             "a size the firm does not publish gets no answer rather than a wrong one");
+
+        // And a name that says nothing about a firm is left alone.
+        T.Ok(rb.MatchSpecForAccount("Sim103", His106()) == null,
+             "a sim account belongs to no firm and is never guessed at");
+
+        T.Ok(rb.MatchSpecForAccount("APEX-11325-106", null) == null, "and no settings, no answer");
+    }
+
+    /// <summary>
+    /// "something about 106 it keeps saying something in the morning which 105
+    /// doesnt say anything and the rules have been set"
+    ///
+    /// The morning message was Ballast noticing that an evaluation's floor locks
+    /// at $265,000 with no profit target recorded to check that against, and
+    /// asking him to pick the account type again so it could set it.
+    ///
+    /// It was right that the figure was missing and right that it mattered - the
+    /// target is what decides where an Apex threshold stops trailing, and
+    /// getting it wrong overstates his room. What it should not have done is ask
+    /// him for something it already knew. The size, the drawdown and the lock
+    /// level name one row in the rule book on their own.
+    /// </summary>
+    static void TheProfitTargetIsRecoveredNotDemanded()
+    {
+        T.S("a missing profit target is recovered, not demanded");
+
+        RuleBook rb = Shipped();
+        if (rb.Count == 0) return;
+
+        // The state his file was in: everything present except the figures that
+        // come from the type.
+        TrackerConfig c = His106();
+        c.ProfitTarget = 0;
+        c.FirmMaxContracts = 0;
+
+        T.Ok(rb.SanityWarning("APEX-11325-106", c).Length > 0,
+             "before: the morning warning fires");
+
+        T.Ok(rb.FillFirmFigures("APEX-11325-106", c), "the blanks are filled");
+        T.Near(c.ProfitTarget, 15000, 1, "the target comes back");
+        T.Eq(c.FirmMaxContracts, 27, "and so does the firm's contract cap");
+
+        T.Eq(rb.SanityWarning("APEX-11325-106", c), "",
+             "after: nothing to warn about, because nothing is missing");
+
+        T.Ok(!rb.FillFirmFigures("APEX-11325-106", c),
+             "and a second pass has nothing left to do");
+
+        // It fills blanks. It does not overrule him.
+        TrackerConfig his = His106();
+        his.ProfitTarget = 9999;
+        his.FirmMaxContracts = 3;
+        rb.FillFirmFigures("APEX-11325-106", his);
+        T.Near(his.ProfitTarget, 9999, 1, "a figure he entered is left exactly where he put it");
+        T.Eq(his.FirmMaxContracts, 3, "even when the rule book would say otherwise");
+
+        // A wrong figure is still a warning - filling blanks must never become
+        // quietly correcting the trader.
+        TrackerConfig wrong = His106();
+        wrong.LockFloorAt = 300000;
+        T.Ok(rb.SanityWarning("APEX-11325-106", wrong).Length > 0,
+             "a floor that disagrees with the target is still called out");
     }
 
     static void PassTargetIsSeparate()

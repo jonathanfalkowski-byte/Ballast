@@ -4945,8 +4945,69 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tbTradingDayReset != null)
                 tbTradingDayReset.Text = DisciplineEngine.HourMinute(c.TradingDayResetMinute);
 
+            // And the two dropdowns at the top have to say what this account
+            // actually is, rather than whatever happens to be first in the list.
+            ShowAccountTypeFor(CurrentEditKey(), c);
+
             // The sentence above the fold has to move with the fields under it.
             RefreshFirmSummary(c);
+        }
+
+        /// <summary>
+        /// Point the firm and account-type dropdowns at what this account's own
+        /// figures say it is.
+        ///
+        /// "after i clicked on set its rules...it defaults to eval intraday
+        /// 25k.....i think it should already populate that since we know what it
+        /// is."
+        ///
+        /// We do know. The size, drawdown, drawdown type and lock level pick out
+        /// exactly one row in the rule book, and they are all saved. What was
+        /// never saved is the LABEL, so the box had nothing to restore and fell
+        /// to index 0 - which on his 250K accounts read "Evaluation intraday -
+        /// 25K". Nothing was wrong with the account, but the page said it was a
+        /// tenth of its real size, and one Save on that screen would have made
+        /// the page right and the account wrong.
+        ///
+        /// Nothing is written here. It moves two dropdowns to match figures that
+        /// were already on disk, with the apply-on-select guard held down
+        /// throughout so that describing the account never reconfigures it.
+        /// </summary>
+        private void ShowAccountTypeFor(string accountName, TrackerConfig c)
+        {
+            if (firmBox == null || accountTypeBox == null) return;
+            if (c == null || string.IsNullOrEmpty(accountName)) return;
+
+            try
+            {
+                string firm = ruleBook.FirmFromAccountName(accountName);
+                if (string.IsNullOrEmpty(firm)) return;
+
+                FirmAccountSpec s = ruleBook.MatchSpec(firm, c);
+                if (s == null) return;
+
+                suppressTypeApply = true;
+                try
+                {
+                    if (!firm.Equals(firmBox.SelectedItem as string, StringComparison.OrdinalIgnoreCase))
+                    {
+                        firmBox.SelectedItem = firm;
+
+                        // Changing the firm normally repopulates the type list on
+                        // the SelectionChanged event, which is suppressed here -
+                        // so do it explicitly, or the labels below belong to the
+                        // firm we just left.
+                        accountTypeBox.Items.Clear();
+                        List<FirmAccountSpec> list = ruleBook.ForFirm(firm);
+                        for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
+                    }
+
+                    accountTypeBox.SelectedItem = s.Label;
+                    accountLabels[accountName] = s.Firm + " " + s.Label;
+                }
+                finally { suppressTypeApply = false; }
+            }
+            catch { }
         }
 
         private void ReadFieldsInto(TrackerConfig c)
@@ -8048,6 +8109,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (key == "*DEFAULT*") monitor.DefaultConfig = c;
                     else
                     {
+                        // Restore the figures that belong to the account TYPE
+                        // rather than to the trader, where they went missing.
+                        //
+                        // "something about 106 it keeps saying something in the
+                        // morning which 105 doesnt say anything and the rules
+                        // have been set"
+                        //
+                        // The red line every morning was Ballast noticing that
+                        // the floor on an evaluation locks at $265,000 with no
+                        // profit target recorded to check that against - and
+                        // asking him to pick the account type again so it could
+                        // set it. But the size, the drawdown and the lock level
+                        // were all there, and between them they name exactly one
+                        // row in the rule book. Ballast knew the answer while it
+                        // was asking the question.
+                        //
+                        // Only blanks are filled. A figure he typed is his.
+                        // Nothing is written back here. The repair is cheap and
+                        // it runs on every load, so it does not need to be
+                        // persisted to hold - and writing the settings file from
+                        // inside the routine that is reading it is a good way to
+                        // lose the file if anything below throws.
+                        try { ruleBook.FillFirmFigures(key, c); }
+                        catch { }
+
                         bool isWatched = watch == null || Contains(watch, key);
 
                         if (isWatched)

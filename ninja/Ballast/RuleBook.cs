@@ -73,60 +73,6 @@ namespace Ballast
         private readonly List<FirmAccountSpec> specs = new List<FirmAccountSpec>();
 
         public string VerifiedDate = "unknown";
-
-        /// <summary>
-        /// When each firm's figures were last read off that firm's own pages, and
-        /// where. Keyed by firm name.
-        ///
-        /// One date for the whole file was a quiet lie. It said "verified 4
-        /// August" across a rule book in which two firms had been checked
-        /// properly and seven had not, and a reader - on the public rules page,
-        /// or in the window trusting a cushion - had no way to tell which kind of
-        /// row he was looking at.
-        ///
-        /// A row nobody has confirmed is not a scandal. Presenting it as though
-        /// somebody had is. So the file can now say, per firm, who checked and
-        /// when, and everything without an entry reports itself as unconfirmed.
-        /// </summary>
-        private readonly Dictionary<string, string> firmVerified =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        private readonly Dictionary<string, string> firmSource =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>The date a firm's figures were last confirmed, or "" if never.</summary>
-        public string VerifiedFor(string firm)
-        {
-            string v;
-            if (firm != null && firmVerified.TryGetValue(firm, out v)) return v;
-            return "";
-        }
-
-        /// <summary>Where a firm's figures were read from, or "" if unrecorded.</summary>
-        public string SourceFor(string firm)
-        {
-            string v;
-            if (firm != null && firmSource.TryGetValue(firm, out v)) return v;
-            return "";
-        }
-
-        /// <summary>
-        /// One line about how much weight a firm's numbers will carry. Shown
-        /// wherever those numbers are, because a trader deciding whether to trust
-        /// a cushion is entitled to know which kind of figure it rests on.
-        /// </summary>
-        public string ConfidenceFor(string firm)
-        {
-            string when = VerifiedFor(firm);
-            if (when.Length == 0)
-                return "Not independently confirmed. These figures came from the firm's public "
-                     + "marketing rather than a page Ballast has checked - treat them as a "
-                     + "starting point and verify against your own dashboard.";
-
-            string src = SourceFor(firm);
-            return "Read off " + (src.Length > 0 ? src : "the firm's own pages") + " on " + when
-                 + ". Verify against your own dashboard before trusting a cushion.";
-        }
         public string LoadError = null;
         public string SourcePath = null;
         public int Count { get { return specs.Count; } }
@@ -256,6 +202,102 @@ namespace Ballast
                 || p.IndexOf("EVAL", StringComparison.Ordinal) >= 0
                 || p.IndexOf("COMBINE", StringComparison.Ordinal) >= 0
                 || p.IndexOf("TEST", StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>
+        /// Which account type do these saved figures describe? Null when the
+        /// answer is not certain.
+        ///
+        /// "after i clicked on set its rules...it defaults to eval intraday
+        /// 25k.....i think it should already populate that since we know what it
+        /// is."
+        ///
+        /// He is right, and the reason it did not is that the CHOICE was never
+        /// written down - only its consequences were. Ballast saved the size,
+        /// the drawdown, the floor and the target, but not the name of the type
+        /// he picked, so on the next start the dropdown had nothing to restore
+        /// and fell to whatever happened to be first in the list. On a 250K
+        /// account that is "Evaluation intraday - 25K", which is not a cosmetic
+        /// problem: one careless Save and a 250K account is wearing a 25K
+        /// account's floor.
+        ///
+        /// The fix is not to store the choice - a stored label can drift out of
+        /// step with the figures, and then two records disagree and neither is
+        /// obviously right. It is to READ the choice back out of the figures.
+        /// Size, drawdown, whether the drawdown is intraday or end-of-day, and
+        /// where the floor stops trailing identify a row in the rule book on
+        /// their own. They cannot drift, because they ARE the account type.
+        ///
+        /// Only an unambiguous answer counts. If two rows fit, Ballast says
+        /// nothing rather than picking one - a confident wrong type is worse
+        /// than an empty dropdown, because it looks settled.
+        /// </summary>
+        public FirmAccountSpec MatchSpec(string firm, TrackerConfig c)
+        {
+            if (c == null || string.IsNullOrEmpty(firm)) return null;
+            if (c.StartingBalance <= 0 || c.TrailingDrawdown <= 0) return null;
+
+            List<FirmAccountSpec> all = ForFirm(firm);
+            FirmAccountSpec found = null;
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                FirmAccountSpec s = all[i];
+                if (Math.Abs(s.Size - c.StartingBalance) > 1) continue;
+                if (Math.Abs(s.Drawdown - c.TrailingDrawdown) > 1) continue;
+                if (s.DrawdownType != c.DrawdownType) continue;
+                if (Math.Abs(s.LockFloorAt - c.LockFloorAt) > 1) continue;
+
+                if (found != null) return null;      // two fit: say nothing
+                found = s;
+            }
+
+            return found;
+        }
+
+        /// <summary>Same question, starting from the account's own name.</summary>
+        public FirmAccountSpec MatchSpecForAccount(string accountName, TrackerConfig c)
+        {
+            return MatchSpec(FirmFromAccountName(accountName), c);
+        }
+
+        /// <summary>
+        /// Fill in the figures that come from the account TYPE rather than from
+        /// the trader, where they are missing. Returns whether anything changed.
+        ///
+        /// The profit target is the one that bites. It is what tells Ballast
+        /// where an Apex evaluation's threshold stops trailing, and when it goes
+        /// missing the account still knows its size and its floor - so the rules
+        /// check can see that a floor locks at $265,000 with nothing to check it
+        /// against, and says so every morning in red.
+        ///
+        /// That message asked the trader to "pick the account type again so
+        /// Ballast can set it". But if Ballast is sure enough of the type to
+        /// write that sentence, it is sure enough to set the figure itself.
+        /// Asking a man to re-enter something you already know is not a warning,
+        /// it is a chore.
+        ///
+        /// Only ever fills a BLANK. A figure the trader has entered is never
+        /// touched, and neither is one that disagrees - a disagreement is a real
+        /// warning and it still gets one.
+        /// </summary>
+        public bool FillFirmFigures(string accountName, TrackerConfig c)
+        {
+            FirmAccountSpec s = MatchSpecForAccount(accountName, c);
+            if (s == null || c == null) return false;
+
+            bool changed = false;
+
+            if (c.ProfitTarget <= 0 && s.ProfitTarget > 0)
+            { c.ProfitTarget = s.ProfitTarget; changed = true; }
+
+            if (c.FirmMaxContracts <= 0 && s.FirmMaxContracts > 0)
+            { c.FirmMaxContracts = s.FirmMaxContracts; changed = true; }
+
+            if (c.FirmDailyLossLimit <= 0 && s.DailyLossLimit > 0)
+            { c.FirmDailyLossLimit = s.DailyLossLimit; changed = true; }
+
+            return changed;
         }
 
         /// <summary>
@@ -661,18 +703,7 @@ namespace Ballast
 
                     if (f.Length >= 2 && f[0].Trim().ToUpperInvariant() == "VERIFIED")
                     {
-                        // VERIFIED|date                 - the file as a whole
-                        // VERIFIED|firm|date|source     - one firm, checked properly
-                        if (f.Length >= 3)
-                        {
-                            string firm = f[1].Trim();
-                            firmVerified[firm] = f[2].Trim();
-                            if (f.Length >= 4) firmSource[firm] = f[3].Trim();
-                        }
-                        else
-                        {
-                            VerifiedDate = f[1].Trim();
-                        }
+                        VerifiedDate = f[1].Trim();
                         continue;
                     }
 
