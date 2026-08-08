@@ -1634,42 +1634,59 @@ namespace NinjaTrader.NinjaScript.AddOns
             periodNote.Margin = new Thickness(0, 0, 0, 16);
             p.Children.Add(periodNote);
 
-            p.Children.Add(SectionHeader("DO YOUR ENTRIES WORK"));
-
-            p.Children.Add(Note("Your own setups, worst money first, net of commission. This is the "
-                + "question you cannot answer from memory: the setup that FEELS like it works is "
-                + "the one whose wins are memorable, which has nothing to do with whether it makes "
-                + "money. Where the sample is too thin to mean anything, it says so instead of "
-                + "pretending."));
+            // The headline. What this period WAS, in one line, above everything
+            // that explains anything.
+            //
+            // "right now it feels like a wall of text." It was: four sections,
+            // each opening with a paragraph of method and then reporting that it
+            // had nothing to say. Around three hundred words to learn that
+            // nothing had happened, with the one real finding at the bottom.
+            periodHeadline = new TextBlock();
+            periodHeadline.Foreground = ColInk;
+            periodHeadline.FontSize = 15;
+            periodHeadline.TextWrapping = TextWrapping.Wrap;
+            periodHeadline.Margin = new Thickness(0, 0, 0, 16);
+            p.Children.Add(periodHeadline);
 
             entriesPanel = new StackPanel();
-            entriesPanel.Margin = new Thickness(0, 0, 0, 18);
-            p.Children.Add(entriesPanel);
-
-            p.Children.Add(SectionHeader("WHAT TO CHANGE"));
-
-            p.Children.Add(Note("Ballast does not give advice about your head - it is not qualified "
-                + "to, and the moment it tried, every measurement next to it would be worth less. "
-                + "What it can do is read your own record back to you and point at a number in "
-                + "your own settings that would have changed the outcome. Nothing here happens "
-                + "unless you press it."));
+            entriesSection = Section("DO YOUR ENTRIES WORK", entriesPanel,
+                "Why setups are read this way",
+                "Your own setups, worst money first, net of commission. This is the question you "
+              + "cannot answer from memory: the setup that FEELS like it works is the one whose "
+              + "wins are memorable, which has nothing to do with whether it makes money. Where "
+              + "the sample is too thin to mean anything, it says so instead of pretending.");
+            p.Children.Add(entriesSection);
 
             changePanel = new StackPanel();
-            changePanel.Margin = new Thickness(0, 0, 0, 18);
-            p.Children.Add(changePanel);
-
-            p.Children.Add(SectionHeader("UNDER PRESSURE"));
-
-            p.Children.Add(Note("The only experiment you ever run on yourself: same person, same "
-                + "setups, same market, same hours, and one thing changed - whether the money is "
-                + "real. Behaviour only, never money: a simulator's fills flatter you, so a P&L "
-                + "gap is part psychology and part generosity and nobody can say which. No fill "
-                + "engine decides whether you chased, or whether you held a winner. Mark each "
-                + "account's purpose in Setup to turn this on."));
+            changeSection = Section("WHAT TO CHANGE", changePanel,
+                "Why Ballast suggests settings and not habits",
+                "Ballast does not give advice about your head - it is not qualified to, and the "
+              + "moment it tried, every measurement next to it would be worth less. What it can "
+              + "do is read your own record back to you and point at a number in your own "
+              + "settings that would have changed the outcome. Nothing here happens unless you "
+              + "press it.");
+            p.Children.Add(changeSection);
 
             pressurePanel = new StackPanel();
-            pressurePanel.Margin = new Thickness(0, 0, 0, 18);
-            p.Children.Add(pressurePanel);
+            pressureSection = Section("UNDER PRESSURE", pressurePanel,
+                "Why behaviour and never money",
+                "The only experiment you ever run on yourself: same person, same setups, same "
+              + "market, same hours, and one thing changed - whether the money is real. Behaviour "
+              + "only, never money: a simulator's fills flatter you, so a P&L gap is part "
+              + "psychology and part generosity and nobody can say which. No fill engine decides "
+              + "whether you chased, or whether you held a winner.");
+            p.Children.Add(pressureSection);
+
+            // Everything that is switched off, once, quietly, at the bottom -
+            // instead of three paragraphs each explaining its own absence in the
+            // place where a finding should have been.
+            notYet = new TextBlock();
+            notYet.Foreground = ColFaint;
+            notYet.FontSize = 11;
+            notYet.TextWrapping = TextWrapping.Wrap;
+            notYet.Margin = new Thickness(0, 0, 0, 18);
+            notYet.Visibility = Visibility.Collapsed;
+            p.Children.Add(notYet);
 
             carePanel = new TextBlock();
             carePanel.Foreground = ColAmber;
@@ -1826,6 +1843,104 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// A plain paragraph of explanation. Same shape as Label but wraps and
         /// sits under a heading rather than over a field.
         /// </summary>
+        private TextBlock periodHeadline, notYet;
+        private StackPanel entriesSection, changeSection, pressureSection;
+
+        /// <summary>
+        /// A section that knows how to disappear.
+        ///
+        /// The old shape was header, then a paragraph of method, then the
+        /// content - so a section with no finding still cost a heading and four
+        /// sentences, and three of those in a row is a page that looks full and
+        /// says nothing. Now the finding comes first and the method sits behind
+        /// a link, which is where something you read once belongs. With no
+        /// finding the whole section is collapsed by RefreshSections and the
+        /// reason moves to a single quiet line at the bottom of the page.
+        /// </summary>
+        private StackPanel Section(string title, StackPanel content, string why, string answer)
+        {
+            StackPanel sp = new StackPanel();
+            sp.Margin = new Thickness(0, 0, 0, 18);
+            sp.Children.Add(SectionHeader(title));
+            sp.Children.Add(content);
+            sp.Children.Add(Why(why, answer));
+            return sp;
+        }
+
+        /// <summary>The one line that opens the page: what this period was.</summary>
+        private void RefreshHeadline()
+        {
+            if (periodHeadline == null) return;
+            try
+            {
+                string s = BallastJournal.PeriodHeadline(PeriodTrades(), journalPeriod);
+
+                if (s.Length == 0)
+                {
+                    // One sentence, not five. A period with nothing in it is not
+                    // a fault and does not need explaining three times.
+                    periodHeadline.Text = "No trades of your own "
+                                        + BallastJournal.PeriodName(journalPeriod) + ".";
+                    periodHeadline.Foreground = ColMuted;
+                    return;
+                }
+
+                periodHeadline.Text = s;
+                periodHeadline.Foreground = ColInk;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Hide every section that has nothing in it, and say once - at the
+        /// bottom, quietly - what would switch each of them on.
+        /// </summary>
+        private void RefreshSections()
+        {
+            try
+            {
+                List<string> off = new List<string>();
+
+                bool entries = entriesPanel != null && entriesPanel.Children.Count > 0;
+                bool changes = changePanel != null && changePanel.Children.Count > 0;
+                bool pressure = pressurePanel != null && pressurePanel.Children.Count > 0;
+
+                if (entriesSection != null)
+                    entriesSection.Visibility = entries ? Visibility.Visible : Visibility.Collapsed;
+                if (changeSection != null)
+                    changeSection.Visibility = changes ? Visibility.Visible : Visibility.Collapsed;
+                if (pressureSection != null)
+                    pressureSection.Visibility = pressure ? Visibility.Visible : Visibility.Collapsed;
+
+                if (!entries)
+                    off.Add(BallastJournal.Setups.Count == 0
+                        ? "which of your setups make money (name them under MY SETUPS in Setup, "
+                          + "then tag your trades)"
+                        : "which of your setups make money (tag your trades - the picker is on "
+                          + "every journal row)");
+
+                if (!changes)
+                    off.Add("settings worth changing (there is not enough here yet, and a "
+                          + "suggestion built on a handful of trades is worse than none)");
+
+                if (!pressure)
+                    off.Add("how you trade when the money is real (mark what each account is FOR "
+                          + "in its rules)");
+
+                if (notYet == null) return;
+
+                if (off.Count == 0) { notYet.Visibility = Visibility.Collapsed; return; }
+
+                string s = "Not showing yet: ";
+                for (int i = 0; i < off.Count; i++)
+                    s += (i == 0 ? "" : i == off.Count - 1 ? "; and " : "; ") + off[i];
+
+                notYet.Text = s + ".";
+                notYet.Visibility = Visibility.Visible;
+            }
+            catch { }
+        }
+
         private TextBlock Note(string text)
         {
             TextBlock t = new TextBlock();
@@ -6830,6 +6945,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             RenderEntries();
             RenderChanges();
             RenderPressure();
+            RefreshHeadline();
+            RefreshSections();
             RenderCare();
         }
 
@@ -6918,15 +7035,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 List<EdgeReadResult> edges = monitor.Journal.SetupEdges(PeriodTrades(), 20);
 
-                if (edges.Count == 0)
-                {
-                    entriesPanel.Children.Add(Note(BallastJournal.Setups.Count == 0
-                        ? "No setups defined yet. Name them under MY SETUPS in Setup, then tag "
-                          + "each trade with the one you took."
-                        : "No trades tagged with a setup " + BallastJournal.PeriodName(journalPeriod)
-                          + ". The picker is on every journal row."));
-                    return;
-                }
+                // Nothing rendered, deliberately. An empty section now collapses
+                // and RefreshSections says once, at the foot of the page, what
+                // would switch it on - rather than filling the place where a
+                // finding belongs with an explanation of its own absence.
+                if (edges.Count == 0) return;
 
                 for (int i = 0; i < edges.Count; i++)
                 {
@@ -6995,15 +7108,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 SettingSuggestion b = BallastJournal.CooldownSuggestion(book, c.CooldownMinutes, 5);
                 if (b != null) found.Add(b);
 
-                if (found.Count == 0)
-                {
-                    changePanel.Children.Add(Note("Nothing to suggest from "
-                        + BallastJournal.PeriodName(journalPeriod)
-                        + ". Either the settings you have are already holding, or there is not "
-                        + "enough here yet to say otherwise - and a suggestion built on a handful "
-                        + "of trades is worse than none."));
-                    return;
-                }
+                if (found.Count == 0) return;      // collapses - see RefreshSections
 
                 for (int i = 0; i < found.Count; i++)
                 {
@@ -7164,18 +7269,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                           || t.Config.Purpose == AccountPurpose.Evaluation) real.Add(name);
                 }
 
-                if (practice.Count == 0 || real.Count == 0)
-                {
-                    pressurePanel.Children.Add(Note(practice.Count == 0 && real.Count == 0
-                        ? "No account has said what it is for yet. Set that in each account's "
-                          + "rules and this fills itself in."
-                        : practice.Count == 0
-                            ? "Nothing is marked as practice, so there is no control to compare "
-                              + "against."
-                            : "Nothing is marked as an evaluation or funded, so there is nothing "
-                              + "to compare the practice against."));
-                    return;
-                }
+                if (practice.Count == 0 || real.Count == 0) return;   // collapses
 
                 List<BallastTrade> all = PeriodTrades();
                 BehaviourProfile pp = BallastJournal.Behaviour(
@@ -7279,6 +7373,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             RenderEntries();
             RenderChanges();
             RenderPressure();
+            RefreshHeadline();
+            RefreshSections();
             RenderCare();
             RenderTiltRecord();
 

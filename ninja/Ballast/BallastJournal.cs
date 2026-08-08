@@ -848,6 +848,71 @@ namespace Ballast
         /// three-trade sample is how a journal starts lying to a trader who has
         /// finally begun reading it.
         /// </summary>
+        /// <summary>
+        /// The one line at the top of the journal page: what this period WAS.
+        ///
+        /// "could we make Ballast Journal and synopsis of the day week.... better,
+        /// right now it feels like a wall of text."
+        ///
+        /// He was reading four sections that each opened with a paragraph
+        /// explaining why the section existed and then said it had nothing to
+        /// report. Roughly three hundred words to learn that nothing had
+        /// happened - and buried at the bottom, the only real finding on the
+        /// page.
+        ///
+        /// This is the fix at the top: the count, how many worked, the net, and
+        /// at most one thing that stands out. Facts he can check against his own
+        /// platform, in a sentence, before any method is explained to him. The
+        /// explanations still exist - they just moved behind a link, where a
+        /// thing you read once belongs.
+        ///
+        /// Returns "" for a period with nothing in it. An empty page should say
+        /// so once, not five times in five different voices.
+        /// </summary>
+        public static string PeriodHeadline(List<BallastTrade> source, JournalPeriod period)
+        {
+            List<BallastTrade> book = Countable(source);
+            if (book.Count == 0) return "";
+
+            int green = 0;
+            double net = 0;
+            for (int i = 0; i < book.Count; i++)
+            {
+                if (book[i].Pnl > 0) green++;
+                net += book[i].Pnl;
+            }
+
+            string when = PeriodName(period);
+            when = when.Substring(0, 1).ToUpperInvariant() + when.Substring(1);
+
+            string s = when + ": " + book.Count + (book.Count == 1 ? " trade" : " trades")
+                     + ", " + green + " green, net " + BallastTrade.Money(net) + ".";
+
+            // At most ONE thing beyond the facts, and only where both sides of
+            // the comparison actually exist. A period of nothing but planned
+            // trades is not evidence that going off plan costs money - it is
+            // evidence that he did not go off plan.
+            double keptNet = 0, brokeNet = 0;
+            int kept = 0, broke = 0;
+            for (int i = 0; i < book.Count; i++)
+            {
+                string v = book[i].Planned;
+                if (v == Verdict_ByTheBook) { kept++; keptNet += book[i].Pnl; }
+                else if (v == Verdict_Chased || v == Verdict_OffPlan || v == Verdict_Sloppy)
+                { broke++; brokeNet += book[i].Pnl; }
+            }
+
+            if (kept >= 2 && broke >= 2 && brokeNet < keptNet)
+                s += "  The " + broke + " off your plan "
+                   + (brokeNet < 0 ? "cost " + BallastTrade.Money(-brokeNet)
+                                   : "made " + BallastTrade.Money(brokeNet))
+                   + "; the " + kept + " by the book "
+                   + (keptNet < 0 ? "cost " + BallastTrade.Money(-keptNet)
+                                  : "made " + BallastTrade.Money(keptNet)) + ".";
+
+            return s;
+        }
+
         public static string DayLesson(List<BallastTrade> source)
         {
             List<BallastTrade> day = new List<BallastTrade>();

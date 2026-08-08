@@ -27,6 +27,84 @@ public static class LessonTests
         StrategyTradesAndGapsAreNotEvidence();
         NoTradesMeansNothingToSay();
         SimulatedMoneyIsNeverAddedToRealMoney();
+        TheHeadlineIsFactsBeforeAnyExplanation();
+    }
+
+    /// <summary>
+    /// "could we make Ballast Journal and synopsis of the day week.... better,
+    /// right now it feels like a wall of text."
+    ///
+    /// It was. Four sections, each opening with a paragraph explaining why the
+    /// section existed and then reporting that it had nothing to say - roughly
+    /// three hundred words to learn that nothing had happened, with the single
+    /// real finding buried at the bottom.
+    ///
+    /// The headline is the fix at the top: what the period WAS, in facts he can
+    /// check against his own platform, before a word of method. The method still
+    /// exists, behind a link, which is where a thing you read once belongs.
+    /// </summary>
+    static void TheHeadlineIsFactsBeforeAnyExplanation()
+    {
+        T.S("the headline is facts, before any explanation");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Tr(300, BallastJournal.Verdict_ByTheBook, "A", ""));
+        day.Add(Tr(200, BallastJournal.Verdict_ByTheBook, "A", ""));
+        day.Add(Tr(-400, BallastJournal.Verdict_Chased, "B", ""));
+        day.Add(Tr(-250, BallastJournal.Verdict_Chased, "B", ""));
+
+        string s = BallastJournal.PeriodHeadline(day, JournalPeriod.Today);
+
+        T.Ok(s.IndexOf("Today: 4 trades") >= 0, "the count comes first: " + s);
+        T.Ok(s.IndexOf("2 green") >= 0, "then how many worked");
+        T.Ok(s.IndexOf("-$150") >= 0, "then the net, which he can check against his platform");
+        T.Ok(s.IndexOf("$650") >= 0, "and the one thing that stands out");
+        T.Ok(s.IndexOf("$500") >= 0, "with both sides of it");
+
+        // Short enough to be read rather than skimmed past. The old page opened
+        // with 340 words of method before a single number.
+        T.Ok(s.Length < 220, "and it is one line, not a paragraph: " + s.Length + " chars");
+
+        // The period says which period it is - the old page had a separate
+        // "From 7 Aug onward" line doing that job somewhere else entirely.
+        T.Ok(BallastJournal.PeriodHeadline(day, JournalPeriod.Week)
+                .IndexOf("This week:") >= 0, "a week says it is a week");
+        T.Ok(BallastJournal.PeriodHeadline(day, JournalPeriod.Everything)
+                .IndexOf("Everything:") >= 0, "and everything says so too");
+
+        // One-sided evidence claims nothing. A period of nothing but planned
+        // trades is not proof that going off plan costs money.
+        List<BallastTrade> clean = new List<BallastTrade>();
+        clean.Add(Tr(-300, BallastJournal.Verdict_ByTheBook, "", ""));
+        clean.Add(Tr(-200, BallastJournal.Verdict_ByTheBook, "", ""));
+        clean.Add(Tr(-100, BallastJournal.Verdict_ByTheBook, "", ""));
+
+        string q = BallastJournal.PeriodHeadline(clean, JournalPeriod.Today);
+        T.Ok(q.IndexOf("3 trades, 0 green") >= 0, "the facts are still stated: " + q);
+        T.Ok(q.IndexOf("off your plan") < 0,
+             "but nothing is claimed about a comparison that has only one side");
+
+        // Bots and gaps are not his trades and are not in his headline.
+        List<BallastTrade> noise = new List<BallastTrade>();
+        BallastTrade bot = Tr(-5000, BallastJournal.Verdict_Chased, "", "");
+        bot.Automated = true;
+        noise.Add(bot);
+        BallastTrade gap = Tr(-900, "", "", "");
+        gap.MaxContracts = 0;
+        noise.Add(gap);
+        noise.Add(Tr(120, "", "", ""));
+
+        string n = BallastJournal.PeriodHeadline(noise, JournalPeriod.Today);
+        T.Ok(n.IndexOf("1 trade,") >= 0, "only the one he took by hand: " + n);
+        T.Ok(n.IndexOf("$120") >= 0, "and only its money");
+
+        // An empty period returns nothing at all, so the page can say so ONCE
+        // rather than in every section in a different voice.
+        T.Eq(BallastJournal.PeriodHeadline(new List<BallastTrade>(),
+                                           JournalPeriod.Today), "",
+             "an empty period is one sentence elsewhere, not five here");
+        T.Eq(BallastJournal.PeriodHeadline(null, JournalPeriod.Today), "",
+             "and no list at all is the same");
     }
 
     static readonly DateTime D = new DateTime(2026, 8, 6, 10, 0, 0);
