@@ -4917,8 +4917,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (rst != null && rst.ResetSuspected)
                     {
                         TextBlock rq = new TextBlock();
-                        rq.Text = "this account's balance moved with no trade behind it, and its "
-                                + "P&L is back to zero - was it reset? Nothing has been cleared.";
+
+                        // The figures it can actually see, not a claim about
+                        // them. This used to assert "its P&L is back to zero"
+                        // beside a row reading "green $708", and a question that
+                        // is visibly wrong about the thing it is asking about is
+                        // one nobody answers twice.
+                        rq.Text = "this account's balance moved to "
+                                + Money(rst.CurrentEquity) + " with no trade behind it - "
+                                + "that is its starting figure. Was it reset? "
+                                + "Nothing has been cleared.";
                         rq.Foreground = ColAmber;
                         rq.FontSize = 11;
                         rq.TextWrapping = TextWrapping.Wrap;

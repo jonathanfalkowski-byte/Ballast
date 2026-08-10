@@ -1097,14 +1097,53 @@ namespace Ballast
                 && Math.Abs((balanceNow - realisedNow) - DayOpenBalance) > noise)
                 return true;
 
-            // The balance moved and no fill did it. This is what catches a plain
-            // reset back to the same starting figure, where the base never
-            // changes and only the day's P&L is wiped.
+            // The balance moved and no fill did it, AND it has landed back at the
+            // account's starting figure. This catches a plain reset, where the
+            // base never changes and only the day's P&L is wiped - which the
+            // check above cannot see, because cash minus realised is unchanged.
+            //
+            // "this keeps happening at least on the sim accounts so im not sure
+            // why it is doing that"
+            //
+            // It was firing on ordinary trades. The old test was "cash moved by
+            // more than $500 and no fill had been seen since the last equity
+            // tick" - but the fill flag is cleared on EVERY equity tick, and
+            // NinjaTrader does not guarantee that the cash update arrives in the
+            // same beat as the execution. So a close, an equity tick carrying
+            // the old cash, then an equity tick carrying the new cash, reads as
+            // a balance that moved with nothing behind it.
+            //
+            // It hit the sim accounts because that is where the size is. He
+            // trades one MNQ on the funded accounts, where a round trip rarely
+            // clears $500; the sims run NQ, where most of them do.
+            //
+            // Requiring the account to be back AT its start is the fix, and it
+            // is a better test on its own terms: a reset puts an account back to
+            // its starting balance, and a trade lands it anywhere at all. It
+            // also makes the question Ballast asks true - it used to say the P&L
+            // was back to zero while the row beside it read "green $708".
             //
             // And there has to be something to erase: an account that has done
             // nothing today is not "reset", it is just quiet.
+            // Back at the start EXACTLY, and with the session's realised P&L
+            // wiped with it.
+            //
+            // The band here is a few dollars, not the $500 used above, and the
+            // tightness is the point. A trading day crosses its own starting
+            // balance constantly - the first version of this fix allowed $500 of
+            // slack and fired on the second trade of a day that had simply
+            // climbed back through breakeven. A reset is not approximate: the
+            // platform puts the account back to a round number and zeroes what
+            // the session made. Requiring both is what separates one from the
+            // other, and neither alone can.
+            double start = Config != null ? Config.StartingBalance : 0;
+            const double Exact = 5.0;
+
             if (HasValidEquity && CurrentEquity > 0
                 && Math.Abs(equityNow - CurrentEquity) > noise
+                && start > 0
+                && Math.Abs(equityNow - start) <= Exact
+                && Math.Abs(realisedNow) <= Exact
                 && (TradesToday > 0 || DailyLossLimitHit
                     || PeakDailyPnl != 0 || WorstDailyPnl != 0 || DailyPnl != 0))
                 return true;

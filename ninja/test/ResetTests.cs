@@ -33,6 +33,7 @@ public static class ResetTests
         OnlySimAccountsGetTheOneClickVersion();
         AMirroredReplayIsNotASecondTrade();
         AnEvalThatComesBackADifferentSizeIsNotTrusted();
+        AnOrdinaryTradeIsNotAReset();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -60,6 +61,62 @@ public static class ResetTests
         t.OnPosition(1, realisedBefore, at, "NQ SEP26", "Sim103");
         t.OnPosition(0, realisedBefore + pnl, at.AddMinutes(2), "NQ SEP26", "Sim103");
         t.OnEquity(100000 + realisedBefore + pnl, realisedBefore + pnl);
+    }
+
+    /// <summary>
+    /// "this keeps happening at least on the sim accounts so im not sure why it
+    /// is doing that"
+    ///
+    /// It was asking whether an account had been reset after ordinary trades.
+    /// The screenshot carried its own disproof: the row read "green $708" while
+    /// the question underneath claimed the P&L was back to zero.
+    ///
+    /// The old test was "cash moved by more than $500 with no fill seen since
+    /// the last equity tick". But the fill flag is cleared on EVERY equity tick,
+    /// and NinjaTrader does not promise the cash update lands in the same beat
+    /// as the execution - so close, stale tick, fresh tick reads as a balance
+    /// that moved with nothing behind it. It hit the sims because that is where
+    /// the size is: one MNQ on the funded accounts rarely clears $500, and NQ
+    /// usually does.
+    /// </summary>
+    static void AnOrdinaryTradeIsNotAReset()
+    {
+        T.S("an ordinary trade is not a reset");
+
+        // His Sim101, to the dollar: six trades, a $666 hole, and $708 up.
+        BallastTracker t = Fresh();
+        t.Config.StartingBalance = 100000;
+        t.Config.TrailingDrawdown = 6500;
+        t.Config.MaxTrades = 7;
+        t.Config.MaxLossesBeforeStop = 3;
+
+        double realised = 0;
+        double[] day = new double[] { -666.04, 540, -300, 620, -180, 693.84 };
+
+        for (int n = 0; n < day.Length; n++)
+        {
+            DateTime at = T0.AddMinutes(n * 12);
+            t.OnPosition(1, realised, at, "NQ SEP26", "Sim101");
+            realised += day[n];
+            t.OnPosition(0, realised, at.AddMinutes(3), "NQ SEP26", "Sim101");
+
+            // The shape that broke it: the equity tick after the close carries
+            // the OLD cash, and the new figure only arrives on the tick after.
+            t.OnEquity(100000 + realised - day[n], realised);
+            t.OnEquity(100000 + realised, realised);
+            t.OnEquity(100000 + realised, realised);
+
+            T.Ok(!t.ResetSuspected,
+                 "after trade " + (n + 1) + " (" + day[n] + ") nothing is suspected");
+        }
+
+        T.Eq(t.TradesToday, 6, "six trades");
+        T.Near(t.DailyPnl, 707.8, 0.01, "and $707.80 up, exactly as his row said");
+
+        // The thing it is FOR still works: put back to the start with no fill.
+        t.OnEquity(100000, 0);
+        t.OnEquity(100000, 0);
+        T.Ok(t.ResetSuspected, "an account put back to its starting figure is still caught");
     }
 
     static void ARealResetIsSpotted()
