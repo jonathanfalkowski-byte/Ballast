@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastMonitor.cs
 //
 // Multi-account support. Prop traders commonly run several accounts at once
@@ -131,6 +131,12 @@ namespace Ballast
             if (!trackers.TryGetValue(accountName, out t))
             {
                 t = new BallastTracker();
+
+                // Market Replay hands the account its money back the moment the
+                // clock moves to another day. That is not a surprise worth
+                // asking about, and left unanswered it would carry yesterday's
+                // peak - and so yesterday's floor - into a fresh account.
+                t.AutoResets = RuleBook.IsPracticeAccountName(accountName);
 
                 // Its own rules if it has ever had any, the defaults only if it
                 // has genuinely never been set up. Re-ticking an account must

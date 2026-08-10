@@ -234,6 +234,34 @@ namespace Ballast
         public bool LastTradeWasLoss;
 
         public int OpenContracts;
+
+        /// <summary>
+        /// This account resets itself as a matter of course, so a reset is not a
+        /// surprise and is never worth asking about.
+        ///
+        /// "when i use the playback account does it know that when i switch days
+        /// it will reset...playback will usually reset as soon as you move the
+        /// clock, does Ballast understand that?"
+        ///
+        /// It did not. Market Replay puts the account back to its starting
+        /// balance the moment the clock moves to another day, and Ballast saw
+        /// exactly what it sees when a funded account is reset: a balance that
+        /// jumped with no fill behind it. So it raised the question, and waited -
+        /// once per replayed day, for an answer it did not need.
+        ///
+        /// Worse than the nagging is what happens if the question is ignored.
+        /// PeakEquity deliberately survives a day rollover, because a trailing
+        /// drawdown trails the all-time peak and that is correct for a real
+        /// account. On a replay account that has just been handed its money
+        /// back, it means yesterday's high-water mark sets today's floor - so a
+        /// fresh 100K account reads as having far less room than it has, or none.
+        ///
+        /// On these accounts the reset is simply applied.
+        /// </summary>
+        public bool AutoResets;
+
+        private DateTime lastKnownNow = DateTime.MinValue;
+
         public double PeakEquity;        // persistent intraday high-water mark; never resets at day rollover
         public double EndOfDayHighWater; // highest completed-session balance for EOD trailing accounts
         public double LastKnownBalance;  // cash/realised balance used to close the previous session
@@ -921,6 +949,12 @@ namespace Ballast
         /// <summary>Reset accumulators when a new trading day starts.</summary>
         public void EnsureSession(DateTime now, double realisedNow, double equityNow)
         {
+            // The clock, remembered. OnEquity has no "now" of its own, and an
+            // automatic reset needs one to stamp. On a Playback connection this
+            // is the REPLAY clock, which is the right one: the restart belongs
+            // to the replayed session, not to the afternoon he ran it.
+            lastKnownNow = now;
+
             DateTime tradingDay = TradingDay(now);
             if (sessionDate != tradingDay)
             {
@@ -944,6 +978,25 @@ namespace Ballast
                 DailyLossLimitHitAt = null;
                 LastLossAt = null;
                 LastTradeWasLoss = false;
+
+                // On a replay account a new session IS a fresh account, so the
+                // peak goes back with it.
+                //
+                // This cannot be left to the reset detector. Rolling the day
+                // clears TradesToday, the day's P&L and DayOpenBalance - which
+                // are the very things that detector needs to see in order to
+                // believe a reset happened. By the time the restored balance
+                // arrives there is no evidence left, so neither of its branches
+                // can fire and PeakEquity simply survives. Yesterday's
+                // high-water mark then sets today's floor on an account that has
+                // just been handed its money back.
+                if (AutoResets && IsPlausibleEquity(equityNow))
+                {
+                    PeakEquity = equityNow;
+                    EndOfDayHighWater = equityNow;
+                    LastKnownBalance = equityNow;
+                    RestartedAt = now;
+                }
                 // The account's own figure for the day, when the feed reports one.
                 // See TrackerConfig.TrustAccountRealised - this is what makes
                 // Ballast agree with the platform's Accounts tab about a trade it
@@ -1027,7 +1080,15 @@ namespace Ballast
                 if (resetPending)
                 {
                     // A fill turned up in the meantime, so the market explains it.
-                    if (!fillSinceEquity && OpenContracts == 0) ResetSuspected = true;
+                    if (!fillSinceEquity && OpenContracts == 0)
+                    {
+                        // A replay account resetting is not news. Apply it and
+                        // say nothing - which also drags PeakEquity back down
+                        // with the balance, so the new day gets its own floor
+                        // instead of yesterday's.
+                        if (AutoResets) StartOver(lastKnownNow, realisedNow, equityNow);
+                        else ResetSuspected = true;
+                    }
                     resetPending = false;
                 }
                 else if (LooksReset(equityNow, realisedNow, balanceNow))

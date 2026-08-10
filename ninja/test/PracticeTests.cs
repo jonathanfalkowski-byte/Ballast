@@ -30,6 +30,7 @@ public static class PracticeTests
         ItWillNotCallOneTradeProgress();
         NothingToCompareSaysNothing();
         ReplayNeverReachesTheJournal();
+        MovingToTheNextReplayDayJustWorks();
     }
 
     /// <summary>
@@ -84,6 +85,76 @@ public static class PracticeTests
         for (int i = 0; i < day.Count; i++) net += day[i].Pnl;
         T.Near(net, -400, 0.01,
                "the day nets what he actually lost, not what he lost plus what he practised");
+    }
+
+    /// <summary>
+    /// "when i use the playback account does it know that when i switch days it
+    /// will reset...playback will usually reset as soon as you move the clock,
+    /// does Ballast understand that?"
+    ///
+    /// It did not. Market Replay puts the account back to its starting balance
+    /// the moment the clock moves, and Ballast saw what it sees when a funded
+    /// account is reset - a balance that jumped with no fill behind it - so it
+    /// raised the question and waited, once per replayed day.
+    ///
+    /// The nagging is the small half. PeakEquity deliberately survives a day
+    /// rollover, because a trailing drawdown trails the all-time peak and that
+    /// is right for a real account. On a replay account just handed its money
+    /// back it means yesterday's high-water mark sets today's floor - so a fresh
+    /// 100K reads as having almost no room, or none at all.
+    /// </summary>
+    static void MovingToTheNextReplayDayJustWorks()
+    {
+        T.S("moving to the next replay day just works");
+
+        BallastMonitor m = new BallastMonitor();
+        BallastTracker t = m.GetOrCreate("Playback101");
+        T.Ok(t.AutoResets, "a replay account is known to reset itself");
+        T.Ok(!m.GetOrCreate("APEX-11325-106").AutoResets, "a funded account is not");
+        T.Ok(!m.GetOrCreate("Sim103").AutoResets,
+             "and neither is a sim - that one is traded in real time and cannot be rewound");
+
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 100000;
+        t.Config.TrailingDrawdown = 6500;
+        t.Config.MaxTrades = 20;
+        t.Config.TrustAccountRealised = false;
+
+        DateTime day1 = new DateTime(2026, 8, 6, 9, 30, 0);
+        t.EnsureSession(day1, 0, 100000);
+        t.OnEquity(100000, 0);
+
+        // A good replayed morning: up 3,000, so the peak climbs.
+        t.OnPosition(1, 0, day1.AddMinutes(10), "NQ SEP26", "Playback101");
+        t.OnPosition(0, 3000, day1.AddMinutes(20), "NQ SEP26", "Playback101");
+        t.OnEquity(103000, 3000);
+
+        T.Near(t.PeakEquity, 103000, 0.01, "the peak followed the good morning up");
+        T.Near(t.BuildInput(day1.AddHours(1)).FloorLevel, 96500, 0.01,
+               "and the floor trails it, correctly, for the day being replayed");
+
+        // He fast-forwards to the next day. Replay hands the money back.
+        DateTime day2 = new DateTime(2026, 8, 7, 9, 30, 0);
+        t.EnsureSession(day2, 0, 100000);
+        t.OnEquity(100000, 0);
+        t.OnEquity(100000, 0);
+
+        T.Ok(!t.ResetSuspected, "he is not asked - a replay resetting is not news");
+        T.Near(t.PeakEquity, 100000, 0.01,
+               "and the peak came back down with the balance");
+
+        DisciplineInput i = t.BuildInput(day2.AddHours(1));
+        T.Near(i.FloorLevel, 93500, 0.01, "so the new day gets its own floor");
+        T.Near(i.CushionToFloor, 6500, 0.01, "with the whole drawdown in front of it");
+        T.Eq(t.TradesToday, 0, "and yesterday's trades are not today's");
+
+        // The practice book files the two days apart, as two separate attempts
+        // at two separate sessions.
+        PracticeRun a = m.Practice.RunFor("Playback101", day1, RealNow);
+        a.Trades.Add(Tr(1, -1, false, "Trade", BallastJournal.Verdict_ByTheBook));
+        PracticeRun b = m.Practice.RunFor("Playback101", day2, RealNow.AddHours(2));
+        T.Ok(a != b, "two replayed days are two runs");
+        T.Eq(b.RunNumber, 1, "and the second day is its own first attempt, not the first day\'s second");
     }
 
     static readonly DateTime Session = new DateTime(2026, 8, 6, 9, 30, 0);
