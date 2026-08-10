@@ -6752,6 +6752,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnOpenReview()
         {
+            // Open the journal ON the period the card was talking about.
+            //
+            // It used to land on whatever was last selected - so an end-of-day
+            // card saying "that is the day" opened a page headed "This month:
+            // 87 trades". The button and the page were describing different
+            // things, and the page was the louder of the two.
+            if (reviewLast == "closing") SetPeriod(JournalPeriod.Today);
+            else if (reviewLast == "month") SetPeriod(JournalPeriod.Month);
+            else SetPeriod(JournalPeriod.LastSession);
+
             MarkReviewSeen();
             ShowTab(1);                     // the journal
         }
@@ -7222,6 +7232,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             periodRow.Children.Clear();
             AddPeriodButton("Today", JournalPeriod.Today);
+            AddPeriodButton("Last session", JournalPeriod.LastSession);
             AddPeriodButton("Week", JournalPeriod.Week);
             AddPeriodButton("Month", JournalPeriod.Month);
             AddPeriodButton("Year", JournalPeriod.Year);
@@ -7232,9 +7243,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                 DateTime now;
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
 
-                periodNote.Text = journalPeriod == JournalPeriod.Everything
-                    ? "Everything Ballast has ever recorded."
-                    : "From " + BallastJournal.PeriodStart(now, journalPeriod)
+                if (journalPeriod == JournalPeriod.Everything)
+                    periodNote.Text = "Everything Ballast has ever recorded.";
+                else if (journalPeriod == JournalPeriod.LastSession)
+                {
+                    // Name the actual day. "Last session" on its own is the kind
+                    // of label that leaves you counting backwards.
+                    List<BallastTrade> last = BallastJournal.InPeriod(
+                        monitor.Journal.All, now, JournalPeriod.LastSession);
+                    periodNote.Text = last.Count == 0
+                        ? "No earlier session recorded yet."
+                        : last[0].ExitTime.ToString("dddd d MMM",
+                              CultureInfo.InvariantCulture) + " - the last day you traded.";
+                }
+                else
+                    periodNote.Text = "From " + BallastJournal.PeriodStart(now, journalPeriod)
                         .ToString("d MMM", CultureInfo.InvariantCulture) + " onward.";
             }
         }

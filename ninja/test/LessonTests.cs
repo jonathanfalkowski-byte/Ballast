@@ -28,6 +28,7 @@ public static class LessonTests
         NoTradesMeansNothingToSay();
         SimulatedMoneyIsNeverAddedToRealMoney();
         TheHeadlineIsFactsBeforeAnyExplanation();
+        LastSessionIsTheLastDayHeTraded();
     }
 
     /// <summary>
@@ -105,6 +106,68 @@ public static class LessonTests
              "an empty period is one sentence elsewhere, not five here");
         T.Eq(BallastJournal.PeriodHeadline(null, JournalPeriod.Today), "",
              "and no list at all is the same");
+    }
+
+    /// <summary>
+    /// "at the end of the day it says see the day so i see it and then it pops
+    /// me to this page which says month which is a bit misleading"
+    ///
+    /// The card knew which day it was talking about; the page it opened did not,
+    /// and showed whatever period happened to be selected - so "that is the day"
+    /// opened a page headed "This month: 87 trades, net -$4,464".
+    ///
+    /// The closing card now opens on Today and the month card on Month. The
+    /// morning card is about the session BEFORE this one, which needed a period
+    /// that could say so - and "last session" is not "yesterday", because a
+    /// Monday wants Friday.
+    /// </summary>
+    static void LastSessionIsTheLastDayHeTraded()
+    {
+        T.S("last session is the last day he traded, not yesterday");
+
+        DateTime monday = new DateTime(2026, 8, 10, 9, 0, 0);
+
+        List<BallastTrade> book = new List<BallastTrade>();
+        book.Add(At(Tr(300, BallastJournal.Verdict_ByTheBook, "", ""), monday.AddDays(-3)));  // Fri
+        book.Add(At(Tr(-120, BallastJournal.Verdict_Chased, "", ""), monday.AddDays(-3)));    // Fri
+        book.Add(At(Tr(900, BallastJournal.Verdict_ByTheBook, "", ""), monday.AddDays(-7)));  // week before
+        book.Add(At(Tr(50, BallastJournal.Verdict_ByTheBook, "", ""), monday));               // today
+
+        List<BallastTrade> last = BallastJournal.InPeriod(book, monday, JournalPeriod.LastSession);
+        T.Eq(last.Count, 2, "Friday's two trades, over a weekend with nothing in it");
+
+        double net = 0;
+        for (int i = 0; i < last.Count; i++) net += last[i].Pnl;
+        T.Near(net, 180, 0.01, "and only Friday's money");
+
+        // Today is excluded - the morning card is about the session before this
+        // one, and today has barely started.
+        for (int i = 0; i < last.Count; i++)
+            T.Ok(last[i].ExitTime.Date != monday.Date, "nothing from this morning is in it");
+
+        T.Eq(BallastJournal.PeriodName(JournalPeriod.LastSession), "last session", "it has a name");
+        T.Ok(BallastJournal.PeriodHeadline(last, JournalPeriod.LastSession)
+                .IndexOf("Last session: 2 trades") >= 0,
+             "and the headline uses it: "
+           + BallastJournal.PeriodHeadline(last, JournalPeriod.LastSession));
+
+        // A first-ever day has no previous session, and says nothing rather
+        // than falling back to something else.
+        List<BallastTrade> firstDay = new List<BallastTrade>();
+        firstDay.Add(At(Tr(50, BallastJournal.Verdict_ByTheBook, "", ""), monday));
+        T.Eq(BallastJournal.InPeriod(firstDay, monday, JournalPeriod.LastSession).Count, 0,
+             "no earlier session means no trades, not yesterday's absence of them");
+
+        // Today still means today.
+        T.Eq(BallastJournal.InPeriod(book, monday, JournalPeriod.Today).Count, 1,
+             "and Today is untouched by any of this");
+    }
+
+    static BallastTrade At(BallastTrade e, DateTime when)
+    {
+        e.EntryTime = when;
+        e.ExitTime = when.AddMinutes(3);
+        return e;
     }
 
     static readonly DateTime D = new DateTime(2026, 8, 6, 10, 0, 0);

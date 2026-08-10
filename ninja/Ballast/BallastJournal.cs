@@ -387,7 +387,11 @@ namespace Ballast
     /// trader talks: "this week" ends on Sunday whatever Monday looked like, and
     /// "year to date" is January onwards and not the last 365 days.
     /// </summary>
-    public enum JournalPeriod { Today, Week, Month, Year, Everything }
+    /// <summary>
+    /// LastSession is "the last day you actually traded", not "yesterday" - a
+    /// Monday morning wants Friday, and a week off wants the day before it.
+    /// </summary>
+    public enum JournalPeriod { Today, LastSession, Week, Month, Year, Everything }
 
     /// <summary>
     /// A change to a setting the trader already has, with the evidence for it.
@@ -1471,6 +1475,34 @@ namespace Ballast
             if (source == null) return list;
             if (period == JournalPeriod.Everything) { list.AddRange(source); return list; }
 
+            // The last day he traded needs both ends, not a cut-off - everything
+            // else here is "from a date onward".
+            //
+            // "at the end of the day it says see the day so i see it and then it
+            // pops me to this page which says month"
+            //
+            // The card knows which day it is talking about; the page it opened
+            // did not, and showed whatever period was last selected. So the card
+            // now sets it - and the morning card, which is about the session
+            // before this one, needs a period that can say so.
+            if (period == JournalPeriod.LastSession)
+            {
+                DateTime day = DateTime.MinValue;
+                for (int i = 0; i < source.Count; i++)
+                {
+                    if (source[i] == null) continue;
+                    DateTime d = source[i].ExitTime.Date;
+                    if (d >= now.Date) continue;
+                    if (d > day) day = d;
+                }
+                if (day == DateTime.MinValue) return list;
+
+                for (int i = 0; i < source.Count; i++)
+                    if (source[i] != null && source[i].ExitTime.Date == day) list.Add(source[i]);
+
+                return list;
+            }
+
             DateTime from = PeriodStart(now, period);
 
             for (int i = 0; i < source.Count; i++)
@@ -1501,6 +1533,7 @@ namespace Ballast
         public static string PeriodName(JournalPeriod period)
         {
             if (period == JournalPeriod.Today) return "today";
+            if (period == JournalPeriod.LastSession) return "last session";
             if (period == JournalPeriod.Week) return "this week";
             if (period == JournalPeriod.Month) return "this month";
             if (period == JournalPeriod.Year) return "this year";
