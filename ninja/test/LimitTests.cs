@@ -30,6 +30,7 @@ public static class LimitTests
         EngineActsOnEachAccountsOwnNumbers();
         TheTradeCountStopsHimTheSameWayALossStreakDoes();
         ALossStreakIsActuallyAStreak();
+        TheRowAndTheChartNeverDisagree();
         TypingPastTheWallGivesTheButtonsBack();
     }
 
@@ -64,9 +65,15 @@ public static class LimitTests
 
         DisciplineDecision dAt = DisciplineEngine.Evaluate(at);
         T.Eq(dAt.Action, DisciplineAction.StopForDay, "at five, the account is done");
-        T.Eq(dAt.Urgency, Urgency.Caution, "amber - he is at the line, not through it");
-        T.Ok(DisciplineEngine.RowWarning(at, dAt).IndexOf("at your limit") >= 0,
-             "and the row says so");
+
+        // Red, not amber, and this changed once the chart was in the picture.
+        // At the limit the wall goes up and the chart says STOP - so a quiet
+        // amber row beside it was the two halves disagreeing about the same
+        // account. The day being OVER is not a caution; the at/past distinction
+        // belongs in the words, where it now lives.
+        T.Eq(dAt.Urgency, Urgency.Alert, "red, because the day is over and the chart says so");
+        T.Ok(DisciplineEngine.RowWarning(at, dAt).IndexOf("that is your limit") >= 0,
+             "and the row says the day is done");
 
         List<TiltTrigger> wallAt = TiltLockout.EvaluateAll("APEX-11325-105", at, dAt, true);
         bool found = false;
@@ -286,6 +293,78 @@ public static class LimitTests
         r.OnPosition(0, realised, t0.AddMinutes(52), "NQ SEP26", "APEX-11325-105");
         r.OnEquity(250000 + realised, realised);
         T.Eq(r.LossStreak, 0, "one winner clears it");
+    }
+
+    /// <summary>
+    /// "it says wait on ballast but on the chart it is done for the day, so that
+    /// is misleading"
+    ///
+    /// Sim101, seven trades of seven, and four minutes past a loss. Both
+    /// readings were correct; the cooldown was simply checked first, so the row
+    /// said WAIT while the chart said DONE FOR THE DAY.
+    ///
+    /// WAIT is a promise that something changes if he waits. Nothing changes -
+    /// the day is over - so he would have sat out the clock and found the door
+    /// still shut. A state he can wait out must never outrank one he cannot.
+    /// </summary>
+    static void TheRowAndTheChartNeverDisagree()
+    {
+        T.S("a state you can wait out never outranks one you cannot");
+
+        // His row, to the number.
+        DisciplineInput i = Sim101(7, 1);
+        i.LastTradeWasLoss = true;
+
+        DisciplineDecision d = DisciplineEngine.Evaluate(i);
+
+        T.Eq(d.Action, DisciplineAction.StopForDay,
+             "the day is over, and that is what the column says");
+        T.Ok(d.Action != DisciplineAction.Cooldown,
+             "not WAIT - waiting changes nothing when the count is spent");
+        T.Eq(d.Urgency, Urgency.Alert, "red, matching the chart rather than arguing with it");
+
+        string row = DisciplineEngine.RowWarning(i, d);
+        T.Ok(row.IndexOf("the day is done") >= 0, "and the words agree with the column: " + row);
+        T.Ok(row.IndexOf("wait it out") < 0, "rather than telling him to wait for nothing");
+
+        // The chart is told the same thing, which is what "lining up" means.
+        List<TiltTrigger> wall = TiltLockout.EvaluateAll("Sim101", i, d, true);
+        bool hard = false;
+        for (int n = 0; n < wall.Count; n++)
+            if (TiltLockout.IsHardBreaker(wall[n].Kind)) hard = true;
+        T.Ok(hard, "the chart still locks, as it already did");
+
+        // With trades to spare, the cooldown is exactly right and still shows.
+        // Built fresh rather than copied - DisciplineInput is a class, and
+        // assigning it aliases the original instead of copying it.
+        DisciplineInput room = Sim101(3, 1);
+        room.LastTradeWasLoss = true;
+        DisciplineDecision rd = DisciplineEngine.Evaluate(room);
+        T.Eq(rd.Action, DisciplineAction.Cooldown,
+             "a cooldown with trades left is still a cooldown");
+        T.Ok(DisciplineEngine.RowWarning(room, rd).IndexOf("wait it out") >= 0,
+             "and it still says wait, because waiting genuinely helps there");
+
+        // A loss streak already outranked the cooldown and must keep doing so.
+        DisciplineInput streak = Sim101(3, 3);
+        streak.LastTradeWasLoss = true;
+        T.Eq(DisciplineEngine.Evaluate(streak).Action, DisciplineAction.StopForDay,
+             "three in a row ends the day whatever the clock says");
+    }
+
+    /// <summary>His Sim101 row, four minutes past a loss, with the count varied.</summary>
+    static DisciplineInput Sim101(int tradesToday, int streak)
+    {
+        DisciplineInput i = new DisciplineInput();
+        i.StartingBalance = 100000; i.TrailingDrawdown = 6500;
+        i.CurrentEquity = 100049; i.HasValidEquity = true;
+        i.FloorLevel = 95021; i.CushionToFloor = 5028;
+        i.MaxTrades = 7; i.TradesToday = tradesToday;
+        i.MaxLossesBeforeStop = 3; i.LossStreak = streak;
+        i.DailyLossLimit = 1000; i.DailyPnl = 49; i.DailyTarget = 1200;
+        i.MaxContracts = 4; i.NowMinuteEt = 690;
+        i.MinutesSinceLastLoss = 4; i.CooldownMinutes = 15;
+        return i;
     }
 
     static FirmAccountSpec Spec(string firm, string label, double size, double dd,

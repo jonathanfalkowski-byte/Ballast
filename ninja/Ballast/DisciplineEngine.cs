@@ -214,6 +214,13 @@ namespace Ballast
             if (Has(d.Signals, "loss_streak"))
                 return i.LossStreak + " losses in a row - this is your stop line";
 
+            // Terminal before temporary here too, or the row's words disagree
+            // with its own WHAT TO DO column.
+            if (Has(d.Signals, "over_trading"))
+                return i.TradesToday > i.MaxTrades
+                    ? i.TradesToday + " trades - PAST your limit of " + i.MaxTrades
+                    : i.TradesToday + " trades - that is your limit, the day is done";
+
             if (Has(d.Signals, "give_back"))
                 return "was up " + Money(i.PeakDailyPnl) + ", handed back "
                      + Money(i.PeakDailyPnl - i.DailyPnl) + " - do not trade back your profits";
@@ -226,14 +233,6 @@ namespace Ballast
 
             if (Has(d.Signals, "over_size"))
                 return "holding " + i.OpenContracts + " over a cap of " + i.MaxContracts;
-
-            // "at your limit" was said at five trades and again at six, so
-            // crossing the line changed nothing on screen. The words have to
-            // move when he does.
-            if (Has(d.Signals, "over_trading"))
-                return i.TradesToday > i.MaxTrades
-                    ? i.TradesToday + " trades - PAST your limit of " + i.MaxTrades
-                    : i.TradesToday + " trades - at your limit";
 
             if (d.Action == DisciplineAction.ProtectGreen)
                 return "target hit - bank it or free-roll, do not give it back";
@@ -532,6 +531,30 @@ namespace Ballast
                 action = DisciplineAction.StopForDay; urgency = Urgency.Alert;
                 reason = "this account has taken its max losses for today";
             }
+            else if (Has(d.Signals, "over_trading"))
+            {
+                // Above the cooldown and the give-back, and this is the whole
+                // point of where it sits.
+                //
+                // "it says wait on ballast but on the chart it is done for the
+                // day, so that is misleading"
+                //
+                // Both were reading the same account correctly. At 7 trades of 7
+                // he was also 4 minutes past a loss, and the cooldown was
+                // checked first - so the row said WAIT while the chart said
+                // DONE FOR THE DAY. WAIT is a promise that something changes if
+                // he waits. Nothing changes: the day is over, and at 11:30 he
+                // would have waited out the clock and found the door still shut.
+                //
+                // A state he can wait out must never outrank a state he cannot.
+                // Terminal before temporary, always.
+                action = DisciplineAction.StopForDay;
+                bool past = i.TradesToday > i.MaxTrades;
+                urgency = Urgency.Alert;
+                reason = past
+                    ? "this account is past its max trades for today"
+                    : "this account is at its max trades for today";
+            }
             else if (Has(d.Signals, "give_back"))
             {
                 action = DisciplineAction.ProtectGreen; urgency = Urgency.Alert;
@@ -546,18 +569,6 @@ namespace Ballast
             {
                 action = DisciplineAction.SizeDown; urgency = Urgency.Caution;
                 reason = "your cushion to the trailing floor is thin";
-            }
-            else if (Has(d.Signals, "over_trading"))
-            {
-                // Amber AT the limit, red PAST it. The whole point of a limit is
-                // that something happens when it is crossed, and holding one
-                // colour either side of the line meant nothing did.
-                action = DisciplineAction.StopForDay;
-                bool past = i.TradesToday > i.MaxTrades;
-                urgency = past ? Urgency.Alert : Urgency.Caution;
-                reason = past
-                    ? "this account is past its max trades for today"
-                    : "this account is at its max trades for today";
             }
             else if (Has(d.Signals, "over_size"))
             {
