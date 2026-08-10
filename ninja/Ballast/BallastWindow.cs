@@ -253,6 +253,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock reviewHead, reviewBody;
         private StackPanel doneRow;
         private TextBlock doneNote;
+        private Image reviewShot;
+        private Button reviewRevealBtn;
+        private LookBackPick lookBack;
+        private readonly List<string> lookBackShown = new List<string>();
+
         /// <summary>The setups box is holding text that is not on disk yet.</summary>
         private bool setupsDirty;
 
@@ -6143,6 +6148,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             LoadStandingPlan();
             LoadSetups();
             LoadReview();
+            LoadLookBackSeen();
             LoadEvents();
             RenderJournal();
         }
@@ -6703,8 +6709,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             reviewBody.Margin = new Thickness(0, 0, 0, 10);
             s.Children.Add(reviewBody);
 
+            // The entry chart, as it was when he pressed the button.
+            //
+            // This is the whole reason one trade back can work where a table of
+            // yesterday cannot: he is not reading a row, he is looking at the
+            // picture he was looking at when he decided. Ballast already saves
+            // it on every trade.
+            reviewShot = new Image();
+            reviewShot.MaxHeight = 260;
+            reviewShot.HorizontalAlignment = HorizontalAlignment.Left;
+            reviewShot.Margin = new Thickness(0, 0, 0, 10);
+            reviewShot.Stretch = Stretch.Uniform;
+            reviewShot.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewShot);
+
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
+
+            // Answer first, THEN see what happened. Outcome bias is the specific
+            // way looking back at your own trades teaches the wrong lesson, and
+            // a button is the cheapest possible defence against it.
+            reviewRevealBtn = PrimaryButton("Show me what happened",
+                                            delegate { OnRevealLookBack(); });
+            reviewRevealBtn.Visibility = Visibility.Collapsed;
+            btns.Children.Add(reviewRevealBtn);
+
             btns.Children.Add(PrimaryButton("See the day", delegate { OnOpenReview(); }));
             btns.Children.Add(QuietButton("Not now", delegate { OnDismissReview(); }));
             s.Children.Add(btns);
@@ -6814,6 +6843,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         reviewLast = "month";
                         reviewHead.Text = "LAST MONTH AGAINST THE ONE BEFORE";
+                        HideLookBack();
                         reviewBody.Text = month;
                         reviewBorder.Visibility = Visibility.Visible;
                         return;
@@ -6830,6 +6860,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                         reviewLast = "morning";
                         reviewHead.Text = "BEFORE YOU START";
                         reviewBody.Text = "Last session" + where + ": " + lesson;
+
+                        // And one trade, with its picture. He said it himself:
+                        // "i dont actually look at the trades i did yesterday".
+                        // Asking him to go and look was never going to work, so
+                        // one comes to him instead.
+                        ShowLookBack(now);
+
                         reviewBorder.Visibility = Visibility.Visible;
                         return;
                     }
@@ -6845,6 +6882,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         reviewLast = "closing";
                         reviewHead.Text = "THAT IS THE DAY";
+                        HideLookBack();
                         reviewBody.Text = where.Length > 0
                             ? "On your sim accounts: " + lesson
                             : lesson;
@@ -6853,7 +6891,120 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
+                HideLookBack();
                 reviewBorder.Visibility = Visibility.Collapsed;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Put one past trade in the morning card - the entry picture, the facts
+        /// about it, and one question - with what happened next held back until
+        /// he has answered.
+        /// </summary>
+        private void ShowLookBack(DateTime now)
+        {
+            lookBack = null;
+            try
+            {
+                TrackerConfig c = monitor.DefaultConfig;
+                lookBack = LookBack.Pick(monitor.Journal.All, now,
+                                         c != null ? c.MaxTrades : 0,
+                                         c != null ? c.CooldownMinutes : 0,
+                                         lookBackShown);
+                if (lookBack == null) { HideLookBack(); return; }
+
+                reviewBody.Text += "\n\n" + LookBack.Question(lookBack,
+                                       c != null ? c.MaxTrades : 0,
+                                       c != null ? c.CooldownMinutes : 0);
+
+                ShowShot(lookBack.Trade.EntryImage);
+                if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Visible;
+            }
+            catch { HideLookBack(); }
+        }
+
+        private void OnRevealLookBack()
+        {
+            try
+            {
+                if (lookBack == null) return;
+
+                reviewBody.Text += "\n\n" + LookBack.Reveal(lookBack);
+                ShowShot(lookBack.Trade.ExitImage);
+
+                // Once seen it is not offered again - there are only so many
+                // trades, and repeating one is how this becomes wallpaper.
+                string key = LookBack.KeyOf(lookBack.Trade);
+                if (!lookBackShown.Contains(key)) lookBackShown.Add(key);
+                SaveLookBackSeen();
+
+                if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
+                lookBack = null;
+            }
+            catch { }
+        }
+
+        private void ShowShot(string path)
+        {
+            try
+            {
+                if (reviewShot == null) return;
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                { reviewShot.Visibility = Visibility.Collapsed; return; }
+
+                // Loaded on load rather than held open, or the file stays locked
+                // and the retention sweep cannot delete the day.
+                BitmapImage bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(path, UriKind.Absolute);
+                bmp.EndInit();
+                bmp.Freeze();
+
+                reviewShot.Source = bmp;
+                reviewShot.Visibility = Visibility.Visible;
+            }
+            catch { if (reviewShot != null) reviewShot.Visibility = Visibility.Collapsed; }
+        }
+
+        private void HideLookBack()
+        {
+            lookBack = null;
+            if (reviewShot != null) { reviewShot.Source = null; reviewShot.Visibility = Visibility.Collapsed; }
+            if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
+        }
+
+        private string LookBackPath()
+        {
+            try { return Path.Combine(Core.Globals.UserDataDir, "ballast-lookback.txt"); }
+            catch { return "ballast-lookback.txt"; }
+        }
+
+        private void SaveLookBackSeen()
+        {
+            try
+            {
+                // Capped. The window only reaches back ten days, so an unbounded
+                // list would grow forever to remember trades whose charts have
+                // already been deleted.
+                while (lookBackShown.Count > 80) lookBackShown.RemoveAt(0);
+                AtomicFile.WriteAllText(LookBackPath(),
+                    string.Join("\n", lookBackShown.ToArray()));
+            }
+            catch { }
+        }
+
+        private void LoadLookBackSeen()
+        {
+            try
+            {
+                lookBackShown.Clear();
+                string p = LookBackPath();
+                if (!File.Exists(p)) return;
+                string[] lines = File.ReadAllText(p).Replace("\r\n", "\n").Split('\n');
+                for (int i = 0; i < lines.Length; i++)
+                    if (lines[i].Trim().Length > 0) lookBackShown.Add(lines[i].Trim());
             }
             catch { }
         }
