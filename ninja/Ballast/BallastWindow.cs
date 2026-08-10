@@ -253,6 +253,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock reviewHead, reviewBody;
         private StackPanel doneRow;
         private TextBlock doneNote;
+        /// <summary>The setups box is holding text that is not on disk yet.</summary>
+        private bool setupsDirty;
+
+        /// <summary>Set when a save actually happened, so the page can say so.</summary>
+        private string setupsSavedLine = "";
+
         private string reviewShownMorning = "", reviewShownClosing = "", reviewShownMonth = "";
         private string reviewLast = "";
         private int activeTab;
@@ -1372,6 +1378,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private void ShowTab(int index)
         {
+            // Leaving Setup with unsaved setups in the box loses them. A tab
+            // click is not "discard", it is just a tab click, so it saves.
+            if (setupsDirty) { try { SaveSetups(); } catch { } }
+
             activeTab = index;
 
             pageNow.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -2197,8 +2207,33 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbSetups.BorderBrush = ColLine;
             tbSetups.Padding = new Thickness(8, 6, 8, 6);
             tbSetups.Margin = new Thickness(0, 0, 0, 6);
+            // "so i added a 4th type of trade but i cant save it in my
+            // setups....there should be a save button there or something"
+            //
+            // He is right, and the old behaviour was the worst possible: the box
+            // saved only when it lost focus. No button, no confirmation, nothing
+            // on screen that changed. Type a fourth setup, go straight to the
+            // journal to use it, and it was never written - and there was no way
+            // to find that out except by discovering later that it had gone.
+            //
+            // Autosave-on-blur is a reasonable pattern for a one-line field you
+            // tab out of. It is the wrong one for the only multi-line box on the
+            // page, which is exactly where a trader pauses to read back what he
+            // has written. So: an explicit Save, and - more importantly - the
+            // box now SAYS when it is holding something that is not saved.
+            tbSetups.TextChanged += delegate
+            {
+                setupsDirty = true;
+                RefreshSetupsNote();
+            };
             tbSetups.LostFocus += delegate { SaveSetups(); };
             list.Children.Add(tbSetups);
+
+            StackPanel setupBtns = new StackPanel();
+            setupBtns.Orientation = Orientation.Horizontal;
+            setupBtns.Margin = new Thickness(0, 0, 0, 6);
+            setupBtns.Children.Add(PrimaryButton("Save setups", delegate { SaveSetups(); }));
+            list.Children.Add(setupBtns);
 
             setupsNote = new TextBlock();
             setupsNote.Foreground = ColFaint;
@@ -6268,7 +6303,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 setupsDropped = setupBook.SetFromText(tbSetups == null ? "" : tbSetups.Text);
                 BallastJournal.Setups = setupBook.Names;
-                setupBook.Save(SetupsPath());
+                bool ok = setupBook.Save(SetupsPath());
+
+                // Say so, and say what is now on disk. A save that changes
+                // nothing on screen is indistinguishable from one that did not
+                // happen, which is the whole complaint.
+                setupsDirty = false;
+                setupsSavedLine = ok
+                    ? "Saved - " + setupBook.Count
+                      + (setupBook.Count == 1 ? " setup" : " setups")
+                      + " on file. "
+                    : "COULD NOT SAVE to " + SetupsPath() + ". ";
+
                 RefreshSetupsNote();
                 RenderJournal();
             }
@@ -6284,6 +6330,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 BallastJournal.Setups = setupBook.Names;
                 if (tbSetups != null)
                     tbSetups.Text = string.Join("\r\n", setupBook.Names.ToArray());
+
+                // Filling the box fires TextChanged, which would otherwise leave
+                // a freshly loaded list looking like unsaved work.
+                setupsDirty = false;
+                setupsSavedLine = "";
                 RefreshSetupsNote();
             }
             catch { }
@@ -6296,7 +6347,19 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             try
             {
-                string refused = "";
+                // What the box is holding, before anything about what the setups
+                // have done. Unsaved work outranks statistics.
+                if (setupsDirty)
+                {
+                    setupsNote.Foreground = ColAmber;
+                    setupsNote.Text = "Not saved yet - press Save setups. "
+                                    + "Until you do, this list is not on the journal's picker.";
+                    return;
+                }
+
+                setupsNote.Foreground = ColFaint;
+
+                string refused = setupsSavedLine;
                 if (setupsDropped > 0)
                     refused = setupsDropped == 1
                         ? "One line was not kept - either a duplicate or past the limit of "
@@ -8540,6 +8603,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             // Never lose a session's trades because the window was closed.
             try { CommitSessionPlan(); monitor.Journal.Save(JournalPath()); } catch { }
+
+            // Nor a setup he typed and never clicked away from.
+            try { if (setupsDirty) SaveSetups(); } catch { }
 
             // Closing the window at the end of the day is the most likely moment
             // for a session's final P&L to be lost, and that figure is the whole
