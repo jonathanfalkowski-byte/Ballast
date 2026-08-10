@@ -253,7 +253,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock reviewHead, reviewBody;
         private StackPanel doneRow;
         private TextBlock doneNote;
-        private string reviewShownMorning = "", reviewShownClosing = "";
+        private string reviewShownMorning = "", reviewShownClosing = "", reviewShownMonth = "";
         private string reviewLast = "";
         private int activeTab;
         private TextBlock planReminder, emptyNote;
@@ -6675,9 +6675,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 string today = now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
                 if (reviewLast == "morning") reviewShownMorning = today;
+                else if (reviewLast == "month")
+                    reviewShownMonth = today.Substring(0, 6);
                 else reviewShownClosing = today;
 
-                AtomicFile.WriteAllText(ReviewPath(), reviewShownMorning + "|" + reviewShownClosing);
+                AtomicFile.WriteAllText(ReviewPath(),
+                    reviewShownMorning + "|" + reviewShownClosing + "|" + reviewShownMonth);
             }
             catch { }
         }
@@ -6696,6 +6699,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 string[] f = File.ReadAllText(ReviewPath()).Trim().Split('|');
                 if (f.Length > 0) reviewShownMorning = f[0];
                 if (f.Length > 1) reviewShownClosing = f[1];
+                if (f.Length > 2) reviewShownMonth = f[2];
             }
             catch { }
         }
@@ -6726,6 +6730,32 @@ namespace NinjaTrader.NinjaScript.AddOns
                         handTradesToday++;
 
                 List<string> sims = SimAccountNames();
+
+                // The month card, once, on the first session of a new month.
+                //
+                // It goes AHEAD of the morning card because it is rarer and it
+                // is about a longer arc - and because if the two ever competed
+                // for the same morning, the one that only comes twelve times a
+                // year is the one worth the interruption.
+                //
+                // "so after a month we will need to show the user some stats to
+                // know whether they are improving or not." A page he has to go
+                // and find would go the way the journal went - he told me
+                // himself he was not opening it. This comes to him, once, the
+                // way the day card does, and then it is gone.
+                string thisMonth = today.Substring(0, 6);
+                if (handTradesToday == 0 && reviewShownMonth != thisMonth)
+                {
+                    string month = MonthCard(now, sims);
+                    if (month.Length > 0)
+                    {
+                        reviewLast = "month";
+                        reviewHead.Text = "LAST MONTH AGAINST THE ONE BEFORE";
+                        reviewBody.Text = month;
+                        reviewBorder.Visibility = Visibility.Visible;
+                        return;
+                    }
+                }
 
                 // the morning card
                 if (handTradesToday == 0 && reviewShownMorning != today)
@@ -6763,6 +6793,58 @@ namespace NinjaTrader.NinjaScript.AddOns
                 reviewBorder.Visibility = Visibility.Collapsed;
             }
             catch { }
+        }
+
+        /// <summary>
+        /// The month just finished, against the one before it. "" when there is
+        /// nothing honest to say - which will often be the right answer.
+        ///
+        /// Real accounts first and alone, for the same reason the day card works
+        /// that way: practice and funded money are two different psychological
+        /// situations, and pooling them lets the account that cannot be lost
+        /// decide what the month showed. If nothing real was traded the sims get
+        /// to speak, labelled as such.
+        ///
+        /// The rules come from the DEFAULT settings rather than from any one
+        /// account. This report spans every account he traded, and there is no
+        /// single trade count or cooldown that belongs to all of them - so it
+        /// uses the numbers he set as his baseline and says so on the card.
+        /// </summary>
+        private string MonthCard(DateTime now, List<string> sims)
+        {
+            try
+            {
+                if (monitor == null || monitor.Journal == null) return "";
+
+                DateTime firstOfThis = new DateTime(now.Year, now.Month, 1);
+                DateTime lastMonth = firstOfThis.AddMonths(-1);
+                DateTime before = firstOfThis.AddMonths(-2);
+
+                TrackerConfig c = monitor.DefaultConfig;
+                int maxTrades = c != null ? c.MaxTrades : 0;
+                int cooldown = c != null ? c.CooldownMinutes : 0;
+
+                List<BallastTrade> all = monitor.Journal.All;
+
+                List<BallastTrade> real = BallastJournal.FromAccounts(all, sims, false);
+                string label = "";
+
+                MonthStats a = MonthReport.For(real, before, maxTrades, cooldown);
+                MonthStats b = MonthReport.For(real, lastMonth, maxTrades, cooldown);
+                string s = MonthReport.Compare(a, b);
+
+                if (s.Length == 0)
+                {
+                    List<BallastTrade> sim = BallastJournal.FromAccounts(all, sims, true);
+                    a = MonthReport.For(sim, before, maxTrades, cooldown);
+                    b = MonthReport.For(sim, lastMonth, maxTrades, cooldown);
+                    s = MonthReport.Compare(a, b);
+                    if (s.Length > 0) label = "On your sim accounts.  ";
+                }
+
+                return s.Length == 0 ? "" : label + s;
+            }
+            catch { return ""; }
         }
 
         /// <summary>
