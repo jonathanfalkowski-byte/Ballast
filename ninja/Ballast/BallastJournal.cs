@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastJournal.cs
 //
 // The journal most traders abandon fails for a mechanical reason: it asks them
@@ -869,6 +869,37 @@ namespace Ballast
         /// Returns "" for a period with nothing in it. An empty page should say
         /// so once, not five times in five different voices.
         /// </summary>
+        /// <summary>
+        /// Did this trade break one of the trader's own rules?
+        ///
+        /// Defined ONCE, here, because it is asked in two places that must never
+        /// drift apart: the practice score, which tells him whether a replayed
+        /// morning went better, and the month report, which tells him whether the
+        /// year is going better. Two definitions of "clean" would eventually
+        /// disagree, and the first he would hear of it is a month that praised
+        /// him for a session the practice book had marked down.
+        ///
+        /// A blank verdict is not held against him. Silence means not said, and
+        /// counting silence as a broken rule would punish him for the days he was
+        /// too busy trading to tag.
+        /// </summary>
+        public static bool BrokeARule(BallastTrade e, int maxTrades, int cooldownMinutes)
+        {
+            if (e == null) return false;
+
+            if (maxTrades > 0 && e.TradeNumberToday > maxTrades) return true;
+
+            if (cooldownMinutes > 0 && e.PreviousTradeWasLoss
+                && e.MinutesSincePreviousLoss >= 0
+                && e.MinutesSincePreviousLoss < cooldownMinutes) return true;
+
+            if (e.TakenAgainstAdvice) return true;
+
+            if (e.Planned == Verdict_Chased || e.Planned == Verdict_OffPlan) return true;
+
+            return false;
+        }
+
         public static string PeriodHeadline(List<BallastTrade> source, JournalPeriod period)
         {
             List<BallastTrade> book = Countable(source);

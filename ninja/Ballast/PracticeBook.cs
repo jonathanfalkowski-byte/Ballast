@@ -211,16 +211,19 @@ namespace Ballast
 
                 s.Trades++;
 
-                bool broke = false;
+                // One definition of "broke a rule", shared with the month
+                // report - see BallastJournal.BrokeARule. Two copies would
+                // eventually disagree, and he would find out from a month that
+                // praised a session the practice book had marked down.
+                bool broke = BallastJournal.BrokeARule(e, maxTrades, cooldownMinutes);
 
-                if (maxTrades > 0 && e.TradeNumberToday > maxTrades) { s.PastTheCount++; broke = true; }
+                if (maxTrades > 0 && e.TradeNumberToday > maxTrades) s.PastTheCount++;
 
                 if (cooldownMinutes > 0 && e.PreviousTradeWasLoss
                     && e.MinutesSincePreviousLoss >= 0
-                    && e.MinutesSincePreviousLoss < cooldownMinutes)
-                { s.InsideCooldown++; broke = true; }
+                    && e.MinutesSincePreviousLoss < cooldownMinutes) s.InsideCooldown++;
 
-                if (e.TakenAgainstAdvice) { s.AfterAStopSignal++; broke = true; }
+                if (e.TakenAgainstAdvice) s.AfterAStopSignal++;
 
                 // Only counted where he actually answered. A blank is "not said",
                 // and treating silence as a clean trade would flatter the score -
@@ -228,8 +231,7 @@ namespace Ballast
                 // the entire point of it is to be believed when it says he
                 // improved.
                 if (e.Planned == BallastJournal.Verdict_Chased
-                    || e.Planned == BallastJournal.Verdict_OffPlan)
-                { s.OffPlan++; broke = true; }
+                    || e.Planned == BallastJournal.Verdict_OffPlan) s.OffPlan++;
 
                 if (!broke) s.Clean++;
             }
