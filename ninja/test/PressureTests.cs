@@ -121,8 +121,16 @@ public static class PressureTests
 
         List<EdgeReadResult> edges = j.SetupEdges(book, 20);
         T.Eq(edges.Count, 2, "both setups reported");
-        T.Ok(edges[0].Verdict.IndexOf("B - pivot") >= 0,
-             "the one costing money is first: " + edges[0].Verdict);
+        // Setup and verdict are separate fields now. They used to be one string
+        // glued together with " - ", split back apart by the window - which
+        // broke the moment a trader named a setup "C - bollinger bands and dot
+        // forms going direction of the bar", because the split took his own
+        // name apart and ran half of it into the verdict.
+        T.Eq(edges[0].Setup, "B - pivot", "the one costing money is first");
+        T.Ok(edges[0].Verdict.IndexOf("B - pivot") < 0,
+             "and the verdict is the verdict, with the name nowhere in it: " + edges[0].Verdict);
+        T.Ok(edges[0].Short.Length > 0 && edges[0].Short.Length < 32,
+             "with a short form for the row: \"" + edges[0].Short + "\"");
         T.Near(edges[0].Total, -1500, 0.01, "with what it cost");
         T.Near(edges[1].Total, 2000, 0.01, "and the other with what it made");
 

@@ -425,7 +425,26 @@ namespace Ballast
         public double Total;        // net $ across the whole sample
         public double TStat;        // one-sample t of net-per-trade against zero
         public EdgeConfidence Confidence = EdgeConfidence.TooFew;
+
+        /// <summary>
+        /// The setup's own name, on its own field.
+        ///
+        /// It used to be glued onto the front of Verdict and split back apart on
+        /// " - " by the window - which worked until a trader named a setup
+        /// "C - bollinger bands and dot forms going direction of the bar". Then
+        /// the row showed "C" and the rest of his own name ran into the verdict
+        /// underneath it. Two facts in one string is one fact too many.
+        /// </summary>
+        public string Setup = "";
+
         public string Verdict = "";
+
+        /// <summary>
+        /// The verdict in a few words, for the row itself. The long form still
+        /// exists and still explains itself; it just stopped being printed four
+        /// times over in slightly different words.
+        /// </summary>
+        public string Short = "";
     }
 
     public class BallastJournal
@@ -1425,29 +1444,34 @@ namespace Ballast
                 r.Confidence = EdgeConfidence.TooFew;
                 r.Verdict = "Not enough trades yet (" + n + " of " + minSample
                           + "). No verdict until the sample is there — keep going.";
+                r.Short = n + " of " + minSample + " - too few to say";
             }
             else if (r.Expectancy <= 0)
             {
                 r.Confidence = EdgeConfidence.NoEdge;
                 r.Verdict = "Expectancy is " + exp + " after costs. This setup is losing money, not making it.";
+                r.Short = "losing money";
             }
             else if (r.TStat < 1.7)
             {
                 r.Confidence = EdgeConfidence.InTheNoise;
                 r.Verdict = "Positive (" + exp + ") but inside the noise (" + t
                           + "). This could easily be luck — more trades, or it is not real.";
+                r.Short = "could be luck (" + t + ")";
             }
             else if (r.TStat < 2.5)
             {
                 r.Confidence = EdgeConfidence.ProbablyReal;
                 r.Verdict = exp + ", and probably real (" + t
                           + "). Promising — do not touch it, finish the sample.";
+                r.Short = "probably real (" + t + ")";
             }
             else
             {
                 r.Confidence = EdgeConfidence.LikelyReal;
                 r.Verdict = exp + ", and unlikely to be luck (" + t
                           + "). This looks like a genuine edge — prove it out, then size up slowly.";
+                r.Short = "a real edge (" + t + ")";
             }
 
             return r;
@@ -1573,7 +1597,7 @@ namespace Ballast
             {
                 EdgeReadResult r = EdgeForSetup(manual, keys[i], minSample);
                 if (r == null) continue;
-                r.Verdict = keys[i] + " - " + r.Verdict;
+                r.Setup = keys[i];
                 outp.Add(r);
             }
 

@@ -28,12 +28,54 @@ public static class SetupTests
         EdgeReadKnowsTheNoise();
         EdgeReadSeesAProbableEdge();
         EdgeReadSeesARealEdge();
+        ASetupNameWithADashSurvives();
 
         SetupBookAddsTrimsAndDedupes();
         SetupBookRefusesToSprawl();
         SetupBookRemoves();
         SetupBookRoundTripsText();
         SetupBookRoundTripsFile();
+    }
+
+    /// <summary>
+    /// "i feel the journal page is still too much of a wall of text"
+    ///
+    /// Part of that mess was not layout at all - it was a name being taken
+    /// apart. The setup name was glued onto the front of the verdict with " - "
+    /// and split back off by the window, so a setup called "C - bollinger bands
+    /// and dot forms going direction of the bar" rendered as a row labelled "C"
+    /// with the rest of his own name running into the sentence beneath it.
+    /// </summary>
+    static void ASetupNameWithADashSurvives()
+    {
+        T.S("a setup name with a dash in it survives");
+
+        BallastJournal j = new BallastJournal();
+        List<BallastTrade> book = new List<BallastTrade>();
+
+        string full = "C - bollinger bands and dot forms going direction of the bar";
+        for (int i = 0; i < 10; i++)
+        {
+            BallastTrade e = new BallastTrade();
+            e.AccountName = "Sim103";
+            e.Instrument = "NQ SEP26";
+            e.MaxContracts = 1;
+            e.EntryTime = new DateTime(2026, 8, 3, 10, 0, 0).AddDays(i % 4);
+            e.ExitTime = e.EntryTime.AddMinutes(3);
+            e.Pnl = -51;
+            e.Planned = BallastJournal.Verdict_ByTheBook;
+            e.Setup = full;
+            book.Add(e);
+        }
+
+        List<EdgeReadResult> edges = j.SetupEdges(book, 20);
+        T.Eq(edges.Count, 1, "one setup");
+        T.Eq(edges[0].Setup, full, "his whole name, exactly as he typed it");
+        T.Ok(edges[0].Verdict.IndexOf("bollinger") < 0,
+             "and none of it leaks into the verdict: " + edges[0].Verdict);
+        T.Ok(edges[0].Short.IndexOf("10 of 20") >= 0,
+             "the row says the sample is short, in a few words: " + edges[0].Short);
+        T.Eq(edges[0].Confidence, EdgeConfidence.TooFew, "and the confidence agrees");
     }
 
     static BallastTrade Tr(double pnl)

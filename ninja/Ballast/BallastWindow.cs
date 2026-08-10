@@ -7378,36 +7378,39 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     EdgeReadResult r = edges[i];
 
+                    // One line per setup, scannable across.
+                    //
+                    // "i feel the journal page is still too much of a wall of
+                    // text". Each setup used to be a row of figures followed by
+                    // a wrapped sentence, and four setups meant four paragraphs
+                    // that were mostly the same words. The verdict is now a few
+                    // words in the row itself; the full reasoning still exists
+                    // behind the Why link, where reading it once is enough.
                     Grid g = new Grid();
-                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
-                    g.ColumnDefinitions.Add(new ColumnDefinition());
-                    g.ColumnDefinitions.Add(new ColumnDefinition());
-                    g.ColumnDefinitions.Add(new ColumnDefinition());
-                    g.Margin = new Thickness(0, 6, 0, 0);
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+                    g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+                    g.Margin = new Thickness(0, 7, 0, 0);
 
-                    string name = r.Verdict;
-                    int dash = name.IndexOf(" - ");
-                    string label = dash > 0 ? name.Substring(0, dash) : name;
-                    string said = dash > 0 ? name.Substring(dash + 3) : "";
-
-                    g.Children.Add(Cell(label, ColInk, 0, FontWeights.Bold));
+                    g.Children.Add(Cell(r.Setup, ColInk, 0, FontWeights.Bold));
                     g.Children.Add(Cell(r.Count + (r.Count == 1 ? " trade" : " trades"),
                                         ColMuted, 1, FontWeights.Normal));
                     g.Children.Add(Cell(Money(r.Expectancy) + " each", ColMuted, 2, FontWeights.Normal));
                     g.Children.Add(Cell(Money(r.Total),
                                         r.Total < 0 ? ColRed : ColGreen, 3, FontWeights.Bold));
-                    entriesPanel.Children.Add(g);
 
-                    if (said.Length > 0)
-                    {
-                        TextBlock v = new TextBlock();
-                        v.Text = said;
-                        v.Foreground = ColFaint;
-                        v.FontSize = 11;
-                        v.TextWrapping = TextWrapping.Wrap;
-                        v.Margin = new Thickness(0, 1, 0, 0);
-                        entriesPanel.Children.Add(v);
-                    }
+                    // Colour carries the verdict at a glance: grey means the
+                    // sample is not there yet, red means it is losing, amber
+                    // means it could still be luck, green means it stood up.
+                    Brush ink =
+                        r.Confidence == EdgeConfidence.TooFew       ? ColFaint :
+                        r.Confidence == EdgeConfidence.NoEdge       ? ColRed   :
+                        r.Confidence == EdgeConfidence.InTheNoise   ? ColAmber : ColGreen;
+
+                    g.Children.Add(Cell(r.Short, ink, 4, FontWeights.Normal));
+                    entriesPanel.Children.Add(g);
                 }
             }
             catch { }
