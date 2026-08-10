@@ -243,7 +243,15 @@ public static class WindowTests
         }
 
         DisciplineInput i = t.BuildInput(t0.AddHours(1));
-        T.Eq(i.LossesToday, 2, "two of those trades lost");
+        // "it says losses in a row but it really means losses in a day"
+        //
+        // It used to read 2 here, and that was the bug: two of those trades lost
+        // but they were not the last two, and the run was broken by the winner
+        // that followed them. A trader who has just won is not on a losing
+        // streak, and telling him he is - in a column headed LOSSES IN A ROW -
+        // is how the number stops meaning anything.
+        T.Eq(i.LossStreak, 0,
+             "the run is over - the last trade won, so nothing is in a row");
         T.Near(i.DailyPnl, -100, 0.01,
                "but the day is 100 down, not 500 - losers only ever count net against winners");
         T.Near(Room(i), 2400, 0.01,

@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastState.cs
 //
 // A tiny shared noticeboard between the Ballast window and the chart indicator.
@@ -76,7 +76,7 @@ namespace Ballast
         // is left - so they are published whether or not anything is wrong.
         public int TradesToday;
         public int MaxTrades;
-        public int LossesToday;
+        public int LossStreak;
         public int MaxLosses;
         /// <summary>Dollars left before today's loss limit is hit. 0 when no limit is set.</summary>
         public double RoomToday;
@@ -143,7 +143,7 @@ namespace Ballast
 
                 s.TradesToday = tradesToday;
                 s.MaxTrades = maxTrades;
-                s.LossesToday = lossesToday;
+                s.LossStreak = lossesToday;
                 s.MaxLosses = maxLosses;
                 s.RoomToday = roomToday;
                 s.DailyLossLimit = dailyLossLimit;
@@ -187,9 +187,9 @@ namespace Ballast
             if (s.MaxTrades > 0) sb.Append('/').Append(s.MaxTrades);
             sb.Append(s.MaxTrades <= 0 && s.TradesToday == 1 ? " TRADE" : " TRADES");
 
-            sb.Append(Gap).Append(s.LossesToday);
+            sb.Append(Gap).Append(s.LossStreak);
             if (s.MaxLosses > 0) sb.Append('/').Append(s.MaxLosses);
-            sb.Append(s.MaxLosses <= 0 && s.LossesToday == 1 ? " LOSS" : " LOSSES");
+            sb.Append(s.MaxLosses <= 0 && s.LossStreak == 1 ? " LOSS" : " LOSSES");
 
             // Shorter than the window's wording on purpose. This line competes
             // for space with a price chart and gets read sideways, in a second,
@@ -270,11 +270,11 @@ namespace Ballast
             // At a line. These normally carry a banner of their own, so this is
             // mostly here so the count never contradicts one.
             if (s.HasDailyLimit && s.RoomToday <= 0) return 2;
-            if (s.MaxLosses > 0 && s.LossesToday >= s.MaxLosses) return 2;
+            if (s.MaxLosses > 0 && s.LossStreak >= s.MaxLosses) return 2;
             if (s.MaxTrades > 0 && s.TradesToday >= s.MaxTrades) return 2;
 
             // One more of anything ends the day.
-            if (s.MaxLosses > 1 && s.LossesToday >= s.MaxLosses - 1) return 1;
+            if (s.MaxLosses > 1 && s.LossStreak >= s.MaxLosses - 1) return 1;
             if (s.MaxTrades > 1 && s.TradesToday >= s.MaxTrades - 1) return 1;
 
             // Two thirds of today's budget gone. The same third the window uses

@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — DisciplineEngine.cs
 //
 // Pure C# port of the tested TypeScript discipline engine. NO NinjaTrader
@@ -53,7 +53,7 @@ namespace Ballast
     /// <summary>Everything the engine needs to decide, flat and explicit.</summary>
     public class DisciplineInput
     {
-        public int LossesToday;
+        public int LossStreak;
         public int TradesToday;
         public double DailyPnl;
         public double PeakDailyPnl;
@@ -212,7 +212,7 @@ namespace Ballast
                       + "some back does not give the day back";
 
             if (Has(d.Signals, "loss_streak"))
-                return i.LossesToday + " losses - this is your stop line";
+                return i.LossStreak + " losses in a row - this is your stop line";
 
             if (Has(d.Signals, "give_back"))
                 return "was up " + Money(i.PeakDailyPnl) + ", handed back "
@@ -346,10 +346,10 @@ namespace Ballast
                     detail + " Ballast will not clear another trade until the feed is reconciled."));
             }
 
-            if (i.LossesToday >= i.MaxLossesBeforeStop && i.MaxLossesBeforeStop > 0)
+            if (i.LossStreak >= i.MaxLossesBeforeStop && i.MaxLossesBeforeStop > 0)
             {
                 signals.Add(new RiskSignal("loss_streak", Severity.High,
-                    "You've taken " + i.LossesToday + " losses - your stop-after-" + i.MaxLossesBeforeStop + " line."));
+                    "You've taken " + i.LossStreak + " losses in a row - your stop-after-" + i.MaxLossesBeforeStop + " line."));
             }
 
             if (i.DailyLossLimit > 0)

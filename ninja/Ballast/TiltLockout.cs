@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — TiltLockout.cs
 //
 // The thing that gets in the way when a trader has stopped trading and started
@@ -739,8 +739,8 @@ namespace Ballast
             {
                 TiltTrigger t = New(name, TiltKind.LossStreak, i);
                 t.Title = "You are done for the day.";
-                t.Line = name + " has taken " + i.LossesToday
-                       + (i.LossesToday == 1 ? " loss" : " losses")
+                t.Line = name + " has taken " + i.LossStreak
+                       + (i.LossStreak == 1 ? " loss" : " losses") + " in a row"
                        + " - you said " + i.MaxLossesBeforeStop + " was your line.";
                 t.Ask = "You drew that line when you were calm. You are not calm now, "
                       + "so this is not the moment to move it.";

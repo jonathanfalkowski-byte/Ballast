@@ -585,7 +585,7 @@ public static class GapTests
         // whole again.
         fixedT.SeedToday(day, 2, 2, day.AddHours(13), true, -2126, -2126);
         T.Eq(fixedT.TradesToday, 2, "the reconstructed row counts as a trade");
-        T.Eq(fixedT.LossesToday, 2, "and as a loss");
+        T.Eq(fixedT.LossStreak, 2, "and as a loss");
         T.Near(fixedT.DailyPnl, -2126, 0.01, "and re-seeding did not move the day");
 
         // The daily loss limit sees the real number too. On the old behaviour a

@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastTracker.cs
 //
 // Turns raw NinjaTrader account events into the flat state the DisciplineEngine
@@ -191,7 +191,29 @@ namespace Ballast
 
         // Session accumulators
         public int TradesToday;
-        public int LossesToday;
+
+        /// <summary>
+        /// Losing trades IN A ROW. Back to zero the moment one wins.
+        ///
+        /// "it says losses in a row but it really means losses in a day....you
+        /// may want to correct the title of that column or change how the system
+        /// works"
+        ///
+        /// It really did mean losses in a day. This counter only ever went up,
+        /// and yet the risk signal was called loss_streak, the wall was
+        /// TiltKind.LossStreak, and the column, the Setup page and the chart all
+        /// said "losses in a row". Every label in the product described a streak
+        /// and nothing underneath had ever been one - so a day of loss, win,
+        /// win, loss, win, loss ended with Ballast saying "3 losses in a row,
+        /// you said 3 was your line" about a green day with no streak in it.
+        ///
+        /// It is a streak now, because that is the thing worth stopping for:
+        /// three straight losers is where size goes up and the chasing starts,
+        /// and it is what the wall's words were written for. Losses scattered
+        /// through a day are what the DOLLAR daily loss limit is for, and that
+        /// is a separate line the trader sets separately.
+        /// </summary>
+        public int LossStreak;
         public double DailyPnl;          // realised, this session
         public double PeakDailyPnl;      // best realised point this session
 
@@ -314,7 +336,7 @@ namespace Ballast
         private bool seedPending;
         private DateTime seedDay = DateTime.MinValue.Date;
         private int seedTrades;
-        private int seedLosses;
+        private int seedStreak;
         private DateTime? seedLastLossAt;
         private bool seedLastWasLoss;
         private double seedDailyPnl;
@@ -558,7 +580,7 @@ namespace Ballast
             seedPending = true;
             seedDay = day.Date;
             seedTrades = trades < 0 ? 0 : trades;
-            seedLosses = losses < 0 ? 0 : losses;
+            seedStreak = losses < 0 ? 0 : losses;
             seedLastLossAt = lastLossAt;
             seedLastWasLoss = lastWasLoss;
             seedDailyPnl = dailyPnl;
@@ -574,7 +596,7 @@ namespace Ballast
             if (sessionDate != seedDay) return;
 
             TradesToday = seedTrades;
-            LossesToday = seedLosses;
+            LossStreak = seedStreak;
             LastLossAt = seedLastLossAt;
             LastTradeWasLoss = seedLastWasLoss;
 
@@ -751,11 +773,17 @@ namespace Ballast
             TradesToday++;
             if (s.GrossPnl < 0)
             {
-                LossesToday++;
+                LossStreak++;
                 LastLossAt = now;
                 LastTradeWasLoss = true;
             }
-            else LastTradeWasLoss = false;
+            else
+            {
+                // A winner breaks the run. This one line is the whole
+                // difference between "in a row" and "today".
+                LossStreak = 0;
+                LastTradeWasLoss = false;
+            }
 
             BallastTrade e = new BallastTrade();
             e.AccountName = accountName ?? "";
@@ -908,7 +936,7 @@ namespace Ballast
                 resetPending = false;
                 ResetSuspected = false;
                 TradesToday = 0;
-                LossesToday = 0;
+                LossStreak = 0;
                 DailyPnl = 0;
                 PeakDailyPnl = 0;
                 WorstDailyPnl = 0;
@@ -1116,7 +1144,7 @@ namespace Ballast
         public void StartOver(DateTime now, double realisedNow, double equityNow)
         {
             TradesToday = 0;
-            LossesToday = 0;
+            LossStreak = 0;
             DailyPnl = 0;
             PeakDailyPnl = 0;
             WorstDailyPnl = 0;
@@ -1252,12 +1280,13 @@ namespace Ballast
                 TradesToday++;
                 if (tradePnl < 0)
                 {
-                    LossesToday++;
+                    LossStreak++;
                     LastLossAt = now;
                     LastTradeWasLoss = true;
                 }
                 else
                 {
+                    LossStreak = 0;          // a winner breaks the run
                     LastTradeWasLoss = false;
                 }
 
@@ -1309,7 +1338,7 @@ namespace Ballast
         {
             DisciplineInput i = new DisciplineInput();
 
-            i.LossesToday = LossesToday;
+            i.LossStreak = LossStreak;
             i.TradesToday = TradesToday;
             i.IsAutomated = Config.IsAutomated;
             i.ProfitTarget = Config.ProfitTarget;

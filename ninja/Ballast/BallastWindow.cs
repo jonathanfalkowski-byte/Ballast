@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — BallastWindow.cs  (v2: multi-account)
 //
 // Sits next to your DOM. Immutable account executions drive the per-instrument
@@ -4743,10 +4743,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 g.Children.Add(Cell(tradesText, tradesCol, 1, FontWeights.Normal));
 
                 string lossText = s.Input.MaxLossesBeforeStop > 0
-                    ? s.Input.LossesToday + " / " + s.Input.MaxLossesBeforeStop
-                    : s.Input.LossesToday.ToString(CultureInfo.InvariantCulture);
+                    ? s.Input.LossStreak + " / " + s.Input.MaxLossesBeforeStop
+                    : s.Input.LossStreak.ToString(CultureInfo.InvariantCulture);
                 Brush lossCol = s.Input.MaxLossesBeforeStop > 0
-                                && s.Input.LossesToday >= s.Input.MaxLossesBeforeStop
+                                && s.Input.LossStreak >= s.Input.MaxLossesBeforeStop
                     ? ColRed : ColMuted;
                 g.Children.Add(Cell(lossText, lossCol, 2, FontWeights.Normal));
 
@@ -4852,7 +4852,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // effect on it whatsoever.
                 BallastState.PublishCount(s.AccountName,
                     s.Input.TradesToday, s.Input.MaxTrades,
-                    s.Input.LossesToday, s.Input.MaxLossesBeforeStop,
+                    s.Input.LossStreak, s.Input.MaxLossesBeforeStop,
                     room, s.Input.DailyLossLimit,
                     s.Input.DailyPnl, s.Input.DailyTarget, Core.Globals.Now);
 
@@ -6189,8 +6189,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                 int n;
                 trades[a] = trades.TryGetValue(a, out n) ? n + 1 : 1;
 
+                // A RUN of losses, rebuilt in the order they closed - which is
+                // why this loop sorts by exit time above. A winner sets it back
+                // to nothing, exactly as the live counter does, so a recount can
+                // never disagree with what the trader watched happen.
                 if (e.Pnl < 0)
                     losses[a] = losses.TryGetValue(a, out n) ? n + 1 : 1;
+                else
+                    losses[a] = 0;
 
                 // But it can never drive a rule about TIME. The cooldown and the
                 // revenge window ask "how long since your last loss", and the

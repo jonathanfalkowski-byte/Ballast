@@ -29,6 +29,7 @@ public static class LimitTests
         LimitsSurviveTheSettingsFile();
         EngineActsOnEachAccountsOwnNumbers();
         TheTradeCountStopsHimTheSameWayALossStreakDoes();
+        ALossStreakIsActuallyAStreak();
         TypingPastTheWallGivesTheButtonsBack();
     }
 
@@ -57,7 +58,7 @@ public static class LimitTests
         at.CurrentEquity = 247427; at.HasValidEquity = true;
         at.FloorLevel = 243500; at.CushionToFloor = 3927;
         at.MaxTrades = 5; at.TradesToday = 5;
-        at.MaxLossesBeforeStop = 3; at.LossesToday = 1;
+        at.MaxLossesBeforeStop = 3; at.LossStreak = 1;
         at.DailyPnl = 46; at.PeakDailyPnl = 46; at.DailyTarget = 750;
         at.MaxContracts = 4; at.NowMinuteEt = 600; at.MinutesSinceLastLoss = -1;
 
@@ -79,7 +80,7 @@ public static class LimitTests
         past.CurrentEquity = 247427; past.HasValidEquity = true;
         past.FloorLevel = 243500; past.CushionToFloor = 3927;
         past.MaxTrades = 5; past.TradesToday = 6;
-        past.MaxLossesBeforeStop = 3; past.LossesToday = 1;
+        past.MaxLossesBeforeStop = 3; past.LossStreak = 1;
         past.DailyPnl = 46; past.PeakDailyPnl = 46; past.DailyTarget = 750;
         past.MaxContracts = 4; past.NowMinuteEt = 600; past.MinutesSinceLastLoss = -1;
 
@@ -172,6 +173,119 @@ public static class LimitTests
              "asking to block a clear account blocks nothing");
 
         BallastState.Clear(acct);
+    }
+
+    /// <summary>
+    /// "it says losses in a row but it really means losses in a day....you may
+    /// want to correct the title of that column or change how the system works"
+    ///
+    /// He was right, and it went deeper than the column heading. The counter was
+    /// a plain daily total that never came back down - while the risk signal was
+    /// named loss_streak, the wall was TiltKind.LossStreak, and the column, the
+    /// Setup page and the chart all said "losses in a row". Every label in the
+    /// product described a streak and nothing underneath had ever been one.
+    ///
+    /// So a green day of loss, win, win, loss, win, loss ended with Ballast
+    /// stopping him at "3 losses in a row - you said 3 was your line", about a
+    /// day with no streak anywhere in it and money made.
+    ///
+    /// Losses scattered through a day are what the DOLLAR daily loss limit is
+    /// for, and that is a line he sets separately on every account.
+    /// </summary>
+    static void ALossStreakIsActuallyAStreak()
+    {
+        T.S("a loss streak is actually a streak");
+
+        DateTime t0 = new DateTime(2026, 8, 10, 10, 0, 0);
+
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 250000;
+        t.Config.TrailingDrawdown = 6500;
+        t.Config.DailyLossLimit = 2000;
+        t.Config.MaxTrades = 20;
+        t.Config.MaxLossesBeforeStop = 3;
+        t.Config.TrustAccountRealised = false;
+        t.EnsureSession(t0, 0, 250000);
+        t.OnEquity(250000, 0);
+
+        // His green day: loss, win, win, loss, win, loss. Three losers, no run.
+        double realised = 0;
+        double[] day = new double[] { -200, 400, 300, -150, 500, -100 };
+        int[] expected = new int[] { 1, 0, 0, 1, 0, 1 };
+
+        for (int n = 0; n < day.Length; n++)
+        {
+            DateTime at = t0.AddMinutes(n * 10);
+            t.OnPosition(1, realised, at, "NQ SEP26", "APEX-11325-105");
+            realised += day[n];
+            t.OnPosition(0, realised, at.AddMinutes(2), "NQ SEP26", "APEX-11325-105");
+            t.OnEquity(250000 + realised, realised);
+
+            T.Eq(t.LossStreak, expected[n],
+                 "after trade " + (n + 1) + " the run is " + expected[n]);
+        }
+
+        T.Eq(t.TradesToday, 6, "six trades were taken");
+        T.Near(t.DailyPnl, 750, 0.01, "and the day made money");
+
+        DisciplineInput up = t.BuildInput(t0.AddHours(1));
+        T.Eq(up.LossStreak, 1, "one loss in a row, not the three he used to be stopped on");
+
+        bool stopped = false;
+        DisciplineDecision d = DisciplineEngine.Evaluate(up);
+        for (int n = 0; n < d.Signals.Count; n++)
+            if (d.Signals[n].Key == "loss_streak") stopped = true;
+        T.Ok(!stopped, "so a green day with no run in it is not called a stop");
+
+        // And the run it IS for: three straight losers ends the day.
+        BallastTracker r = new BallastTracker();
+        r.Config = new TrackerConfig();
+        r.Config.StartingBalance = 250000;
+        r.Config.TrailingDrawdown = 6500;
+        r.Config.DailyLossLimit = 9000;
+        r.Config.MaxTrades = 20;
+        r.Config.MaxLossesBeforeStop = 3;
+        r.Config.TrustAccountRealised = false;
+        r.EnsureSession(t0, 0, 250000);
+        r.OnEquity(250000, 0);
+
+        realised = 0;
+        double[] run = new double[] { 400, -200, -200, -200 };
+        for (int n = 0; n < run.Length; n++)
+        {
+            DateTime at = t0.AddMinutes(n * 10);
+            r.OnPosition(1, realised, at, "NQ SEP26", "APEX-11325-105");
+            realised += run[n];
+            r.OnPosition(0, realised, at.AddMinutes(2), "NQ SEP26", "APEX-11325-105");
+            r.OnEquity(250000 + realised, realised);
+        }
+
+        T.Eq(r.LossStreak, 3, "three straight losers is a run of three");
+
+        DisciplineInput ri = r.BuildInput(t0.AddHours(1));
+        DisciplineDecision rd = DisciplineEngine.Evaluate(ri);
+        bool caught = false;
+        for (int n = 0; n < rd.Signals.Count; n++)
+            if (rd.Signals[n].Key == "loss_streak") caught = true;
+        T.Ok(caught, "and that is the shape worth stopping - it still stops him");
+
+        T.Ok(DisciplineEngine.RowWarning(ri, rd).IndexOf("in a row") >= 0,
+             "and it now says in a row, which it always claimed to mean");
+
+        List<TiltTrigger> wall = TiltLockout.EvaluateAll("APEX-11325-105", ri, rd, true);
+        string line = "";
+        for (int n = 0; n < wall.Count; n++)
+            if (wall[n].Kind == TiltKind.LossStreak) line = wall[n].Line;
+        T.Ok(line.IndexOf("3 losses in a row") >= 0, "the wall says it too: " + line);
+
+        // A winner after the run gives him his day back. That is the point of a
+        // streak: it is a state he can trade his way out of, not a budget spent.
+        r.OnPosition(1, realised, t0.AddMinutes(50), "NQ SEP26", "APEX-11325-105");
+        realised += 300;
+        r.OnPosition(0, realised, t0.AddMinutes(52), "NQ SEP26", "APEX-11325-105");
+        r.OnEquity(250000 + realised, realised);
+        T.Eq(r.LossStreak, 0, "one winner clears it");
     }
 
     static FirmAccountSpec Spec(string firm, string label, double size, double dd,

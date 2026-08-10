@@ -271,7 +271,7 @@ public static class ResetTests
 
         T.Ok(ghost == null, "the mirror image is not a trade and never reaches the journal");
         T.Eq(t.TradesToday, 1, "the day still holds one trade, not two");
-        T.Eq(t.LossesToday, 0, "and no loss is invented");
+        T.Eq(t.LossStreak, 0, "and no loss is invented");
 
         // And the next real trade still works - the tracker is not left half open.
         DateTime later = new DateTime(2026, 8, 6, 10, 15, 0);
@@ -279,7 +279,7 @@ public static class ResetTests
         BallastTrade next = t.OnPosition(0, 680, later.AddMinutes(3), "NQ SEP26", "APEX-11325-106");
         T.Ok(next != null, "the account is not left stuck in a position that never was");
         T.Eq(t.TradesToday, 2, "and the day counts on normally");
-        T.Eq(t.LossesToday, 1, "including the loss that really happened");
+        T.Eq(t.LossStreak, 1, "including the loss that really happened");
     }
 
     /// <summary>

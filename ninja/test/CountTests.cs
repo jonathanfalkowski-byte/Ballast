@@ -58,7 +58,7 @@ public static class CountTests
         // screen and came back as "PEX-11325-106 ... TO THE / LOOR".
         AccountState full = new AccountState();
         full.TradesToday = 3; full.MaxTrades = 5;
-        full.LossesToday = 1; full.MaxLosses = 2;
+        full.LossStreak = 1; full.MaxLosses = 2;
         full.RoomToday = 2000; full.DailyLossLimit = 2000;
         full.DailyPnl = 876; full.DailyTarget = 1400;
         full.CanLose = 5178; full.HasCushion = true;
@@ -131,27 +131,27 @@ public static class CountTests
         // "nowhere near" are different states.
         AccountState clear = new AccountState();
         clear.TradesToday = 1; clear.MaxTrades = 5;
-        clear.LossesToday = 0; clear.MaxLosses = 3;
+        clear.LossStreak = 0; clear.MaxLosses = 3;
         clear.DailyLossLimit = 3000; clear.RoomToday = 2800;
         T.Eq(BallastState.CountUrgency(clear), 0, "a clean account is clear");
 
         AccountState thin = new AccountState();
         thin.TradesToday = 3; thin.MaxTrades = 5;
-        thin.LossesToday = 2; thin.MaxLosses = 3;
+        thin.LossStreak = 2; thin.MaxLosses = 3;
         thin.DailyLossLimit = 3000; thin.RoomToday = 374;
         T.Eq(BallastState.CountUrgency(thin), 1,
              "$374 of a $3,000 budget with two of three losses is not white");
 
         AccountState budget = new AccountState();
         budget.TradesToday = 1; budget.MaxTrades = 10;
-        budget.LossesToday = 0; budget.MaxLosses = 5;
+        budget.LossStreak = 0; budget.MaxLosses = 5;
         budget.DailyLossLimit = 3000; budget.RoomToday = 900;
         T.Eq(BallastState.CountUrgency(budget), 1,
              "two thirds of the budget gone is enough on its own");
 
         AccountState lastLoss = new AccountState();
         lastLoss.TradesToday = 2; lastLoss.MaxTrades = 10;
-        lastLoss.LossesToday = 2; lastLoss.MaxLosses = 3;
+        lastLoss.LossStreak = 2; lastLoss.MaxLosses = 3;
         T.Eq(BallastState.CountUrgency(lastLoss), 1, "so is one more loss ending the day");
 
         AccountState lastTrade = new AccountState();
@@ -163,7 +163,7 @@ public static class CountTests
         T.Eq(BallastState.CountUrgency(spent), 2, "a spent budget is at a line");
 
         AccountState stopped = new AccountState();
-        stopped.LossesToday = 3; stopped.MaxLosses = 3;
+        stopped.LossStreak = 3; stopped.MaxLosses = 3;
         T.Eq(BallastState.CountUrgency(stopped), 2, "so is the loss streak");
 
         AccountState counted = new AccountState();
@@ -173,7 +173,7 @@ public static class CountTests
         // No limits set means nothing to be close to. An account with no rules
         // must never be painted as though it were about to breach one.
         AccountState bareState = new AccountState();
-        bareState.TradesToday = 40; bareState.LossesToday = 12;
+        bareState.TradesToday = 40; bareState.LossStreak = 12;
         T.Eq(BallastState.CountUrgency(bareState), 0, "no limits set is never a warning");
         T.Eq(BallastState.CountUrgency(null), 0, "and neither is nothing at all");
 
@@ -541,7 +541,7 @@ public static class TargetTests
         DisciplineInput i = new DisciplineInput();
         i.CurrentEquity = 40000; i.FloorLevel = 47500; i.CushionToFloor = -7500;
         i.DailyLossLimit = 1000; i.DailyPnl = -4000;
-        i.MaxLossesBeforeStop = 2; i.LossesToday = 6;
+        i.MaxLossesBeforeStop = 2; i.LossStreak = 6;
         i.MaxTrades = 5; i.MaxContracts = 2; i.NowMinuteEt = 600; i.MinutesSinceLastLoss = -1;
 
         DisciplineDecision d = DisciplineEngine.Evaluate(i);
