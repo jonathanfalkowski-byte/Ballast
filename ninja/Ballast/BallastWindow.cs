@@ -1521,11 +1521,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             Grid hdr = AccountsGrid();
             hdr.Margin = new Thickness(12, 0, 12, 6);
             hdr.Children.Add(MicroCell("ACCOUNT", 0));
-            hdr.Children.Add(MicroCell("TRADES", 1));
-            hdr.Children.Add(MicroCell("LOSSES IN A ROW", 2));
-            hdr.Children.Add(MicroCell("LEFT TO LOSE", 3));
-            hdr.Children.Add(MicroCell("TODAY'S TARGET", 4));
-            hdr.Children.Add(MicroCell("TO THE FLOOR", 5));
+            hdr.Children.Add(MicroCell("TRADES", 1, true));
+            hdr.Children.Add(MicroCell("LOSSES IN A ROW", 2, true));
+            hdr.Children.Add(MicroCell("LEFT TO LOSE", 3, true));
+            hdr.Children.Add(MicroCell("TODAY'S TARGET", 4, true));
+            hdr.Children.Add(MicroCell("TO THE FLOOR", 5, true));
             hdr.Children.Add(MicroCell("WHAT TO DO", 6));
             p.Children.Add(hdr);
 
@@ -2858,11 +2858,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private UIElement MicroCell(string text, int col)
         {
+            return MicroCell(text, col, false);
+        }
+
+        /// <summary>A column heading. Right-aligned when the figures beneath it are.</summary>
+        private UIElement MicroCell(string text, int col, bool rightAligned)
+        {
             TextBlock t = new TextBlock();
             t.Text = text;
             t.Foreground = ColFaint;
             t.FontSize = 9;
             t.FontWeight = FontWeights.Bold;
+            if (rightAligned)
+            {
+                t.HorizontalAlignment = HorizontalAlignment.Right;
+                t.Margin = new Thickness(0, 0, ColumnGap, 0);
+            }
             Grid.SetColumn(t, col);
             return t;
         }
@@ -4780,7 +4791,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     : s.Input.TradesToday.ToString(CultureInfo.InvariantCulture);
                 Brush tradesCol = s.Input.MaxTrades > 0 && s.Input.TradesToday >= s.Input.MaxTrades
                     ? ColAmber : ColMuted;
-                g.Children.Add(Cell(tradesText, tradesCol, 1, FontWeights.Normal));
+                g.Children.Add(Num(tradesText, tradesCol, 1, FontWeights.Normal));
 
                 string lossText = s.Input.MaxLossesBeforeStop > 0
                     ? s.Input.LossStreak + " / " + s.Input.MaxLossesBeforeStop
@@ -4788,7 +4799,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 Brush lossCol = s.Input.MaxLossesBeforeStop > 0
                                 && s.Input.LossStreak >= s.Input.MaxLossesBeforeStop
                     ? ColRed : ColMuted;
-                g.Children.Add(Cell(lossText, lossCol, 2, FontWeights.Normal));
+                g.Children.Add(Num(lossText, lossCol, 2, FontWeights.Normal));
 
                 // How much of today's budget is left. This is the number a trader
                 // actually keeps in their head, and until now it was nowhere on
@@ -4813,7 +4824,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     roomText = Money(room);
                     roomCol = room < s.Input.DailyLossLimit * 0.34 ? ColAmber : ColMuted;
                 }
-                g.Children.Add(Cell(roomText, roomCol, 3, FontWeights.Normal));
+                g.Children.Add(Num(roomText, roomCol, 3, FontWeights.Normal));
 
                 // Today's target, next to today's budget, because they are the
                 // two ends of the same decision: this is the number that lets you
@@ -4837,7 +4848,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                + " / " + Money(s.Input.DailyTarget);
                     targetCol = ColMuted;
                 }
-                g.Children.Add(Cell(targetText, targetCol, 4, FontWeights.Normal));
+                g.Children.Add(Num(targetText, targetCol, 4, FontWeights.Normal));
 
                 string cushionText;
                 Brush cushionCol;
@@ -4866,7 +4877,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 + (s.Input.FloorLocked ? "  fixed" : "");
                     cushionCol = s.Input.CushionToFloor < 400 ? ColRed : ColMuted;
                 }
-                g.Children.Add(Cell(cushionText, cushionCol, 5, FontWeights.Normal));
+                g.Children.Add(Num(cushionText, cushionCol, 5, FontWeights.Normal));
 
                 g.Children.Add(Cell(LongAction(s.Decision.Action), col, 6, FontWeights.Bold));
 
@@ -5084,6 +5095,29 @@ namespace NinjaTrader.NinjaScript.AddOns
             Grid.SetColumn(t, col);
             return t;
         }
+
+        /// <summary>
+        /// A number in a table column: right-aligned, so figures line up on
+        /// their last digit instead of on their first.
+        ///
+        /// "i would justify the columns i dont like when they dont match"
+        ///
+        /// Every cell was left-aligned, which is right for words and wrong for
+        /// money. In a star-sized column "$750" and "$1,978" start together and
+        /// end in different places, so a column of figures reads as a ragged
+        /// edge and you cannot compare two rows by eye - which is the entire
+        /// reason for putting them in a table.
+        /// </summary>
+        private TextBlock Num(string text, Brush brush, int col, FontWeight weight)
+        {
+            TextBlock t = Cell(text, brush, col, weight);
+            t.HorizontalAlignment = HorizontalAlignment.Right;
+            t.Margin = new Thickness(0, 0, ColumnGap, 0);
+            return t;
+        }
+
+        /// <summary>Breathing room so a right-aligned figure never touches the next column.</summary>
+        private const double ColumnGap = 12;
 
         private static string Money(double n)
         {
@@ -7374,6 +7408,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // finding belongs with an explanation of its own absence.
                 if (edges.Count == 0) return;
 
+                // A heading row, so the figures underneath are labelled rather
+                // than left to be worked out from their shape.
+                Grid head = new Grid();
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.2, GridUnitType.Star) });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
+                head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+                head.Margin = new Thickness(0, 0, 0, 2);
+                head.Children.Add(MicroCell("SETUP", 0));
+                head.Children.Add(MicroCell("TRADES", 1, true));
+                head.Children.Add(MicroCell("EACH", 2, true));
+                head.Children.Add(MicroCell("TOTAL", 3, true));
+                head.Children.Add(MicroCell("DOES IT WORK?", 4));
+                entriesPanel.Children.Add(head);
+
                 for (int i = 0; i < edges.Count; i++)
                 {
                     EdgeReadResult r = edges[i];
@@ -7395,11 +7445,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     g.Margin = new Thickness(0, 7, 0, 0);
 
                     g.Children.Add(Cell(r.Setup, ColInk, 0, FontWeights.Bold));
-                    g.Children.Add(Cell(r.Count + (r.Count == 1 ? " trade" : " trades"),
-                                        ColMuted, 1, FontWeights.Normal));
-                    g.Children.Add(Cell(Money(r.Expectancy) + " each", ColMuted, 2, FontWeights.Normal));
-                    g.Children.Add(Cell(Money(r.Total),
-                                        r.Total < 0 ? ColRed : ColGreen, 3, FontWeights.Bold));
+                    g.Children.Add(Num(r.Count + (r.Count == 1 ? " trade" : " trades"),
+                                       ColMuted, 1, FontWeights.Normal));
+                    g.Children.Add(Num(Money(r.Expectancy) + " each", ColMuted, 2, FontWeights.Normal));
+                    g.Children.Add(Num(Money(r.Total),
+                                       r.Total < 0 ? ColRed : ColGreen, 3, FontWeights.Bold));
 
                     // Colour carries the verdict at a glance: grey means the
                     // sample is not there yet, red means it is losing, amber
