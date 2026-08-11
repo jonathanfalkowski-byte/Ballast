@@ -392,6 +392,20 @@ namespace Ballast
         private bool sessionSeedPending;
         private bool sessionRestored;
         private DateTime sessionSeedDay = DateTime.MinValue.Date;
+
+        /// <summary>
+        /// What the previous session finished at. Written to the session file so
+        /// a feed that carries its realised figure into the next day can be
+        /// recognised on sight.
+        /// </summary>
+        public double LastClosingDailyPnl;
+
+        /// <summary>
+        /// Seen carrying its realised figure across a session boundary. Reported
+        /// so a trader can turn the setting off himself rather than wondering
+        /// why one account behaves differently.
+        /// </summary>
+        public bool FeedCarriesRealised;
         private double sessionSeedStartRealised;
         private double sessionSeedPeakEquity;
         private double sessionSeedPeakDailyPnl;
@@ -1002,7 +1016,33 @@ namespace Ballast
                 // Ballast agree with the platform's Accounts tab about a trade it
                 // never saw.
                 bool trust = Config != null && Config.TrustAccountRealised;
-                sessionStartRealised = trust ? 0 : realisedNow;
+
+                // Does this feed actually reset at the session boundary?
+                //
+                // "this is the message i received when i opened up my
+                // ninjatrader this morning...havent placed a trade or even been
+                // on ninjatrader yet"
+                //
+                // Sim103 finished yesterday down $1,357.44. This morning its
+                // realised figure still read -1,357.44, because NinjaTrader's
+                // own Sim accounts accumulate realised P&L rather than zeroing
+                // it each session. Trusting the account's figure then means
+                // starting the day from zero and reading yesterday's loss as
+                // today's - so Ballast threw the daily-loss wall at a man who
+                // had not opened the platform yet, and every figure under it -
+                // left to lose, the floor, the day card - was yesterday's.
+                //
+                // The tell is exact and it costs nothing to look for: the
+                // realised figure at the start of the new day is, to the cent,
+                // what the last one closed at. A feed that resets reads zero
+                // here, and zero is what it would have used anyway - so this
+                // changes nothing for the feeds the setting was written for.
+                bool carried = trust
+                            && Math.Abs(LastClosingDailyPnl) > 1.0
+                            && Math.Abs(realisedNow - LastClosingDailyPnl) < 1.0;
+
+                sessionStartRealised = (trust && !carried) ? 0 : realisedNow;
+                if (carried) FeedCarriesRealised = true;
                 haveBaseline = true;
                 sessionRestored = trust;
                 seedBaselineApplied = false;

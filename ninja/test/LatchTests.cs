@@ -272,6 +272,11 @@ public static class LatchTests
         down.CushionToFloor = 4000;
         down.MaxContracts = 2;
 
+        // An account cannot be $2,700 down without having traded, and a wall now
+        // refuses to appear on one that has not - after a daily-loss wall turned
+        // up on a morning he had not opened the platform.
+        down.TradesToday = 4;
+
         DisciplineDecision dd = DisciplineEngine.Evaluate(down);
         List<TiltTrigger> whileDown = TiltLockout.EvaluateAll("Sim110", down, dd, false);
         T.Ok(HasKind(whileDown, TiltKind.DailyLossLimit),
@@ -287,6 +292,7 @@ public static class LatchTests
         recovered.HasValidEquity = true;
         recovered.CushionToFloor = 4000;
         recovered.MaxContracts = 2;
+        recovered.TradesToday = 5;
 
         DisciplineDecision rd = DisciplineEngine.Evaluate(recovered);
         T.Eq(rd.Action, DisciplineAction.Lockout, "the advice is still a lockout");
@@ -304,6 +310,7 @@ public static class LatchTests
         deeper.HasValidEquity = true;
         deeper.CushionToFloor = 3000;
         deeper.MaxContracts = 2;
+        deeper.TradesToday = 6;
 
         List<TiltTrigger> again = TiltLockout.EvaluateAll("Sim110", deeper,
                                                           DisciplineEngine.Evaluate(deeper), false);

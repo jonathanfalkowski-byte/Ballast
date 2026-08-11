@@ -34,6 +34,7 @@ public static class ResetTests
         AMirroredReplayIsNotASecondTrade();
         AnEvalThatComesBackADifferentSizeIsNotTrusted();
         AnOrdinaryTradeIsNotAReset();
+        YesterdaysLossIsNotThisMornings();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -117,6 +118,91 @@ public static class ResetTests
         t.OnEquity(100000, 0);
         t.OnEquity(100000, 0);
         T.Ok(t.ResetSuspected, "an account put back to its starting figure is still caught");
+    }
+
+    /// <summary>
+    /// "this is the message i received when i opened up my ninjatrader this
+    /// morning...havent placed a trade or even been on ninjatrader yet"
+    ///
+    /// Sim103 finished on the tenth down $1,357.44. On the eleventh its realised
+    /// figure still read -1,357.44 - NinjaTrader's own Sim accounts accumulate
+    /// realised P&L rather than zeroing it each session. With "trust the
+    /// account's own figure" on, Ballast started the day from zero and read
+    /// yesterday's loss as today's, so it threw the daily-loss wall at a man who
+    /// had not opened the platform yet. Every figure under it - left to lose,
+    /// the floor, the day card - was yesterday's too.
+    /// </summary>
+    static void YesterdaysLossIsNotThisMornings()
+    {
+        T.S("yesterday's loss is not this morning's");
+
+        DateTime aug10 = new DateTime(2026, 8, 10, 9, 30, 0);
+        DateTime aug11 = new DateTime(2026, 8, 11, 8, 0, 0);
+
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 150000;
+        t.Config.TrailingDrawdown = 5000;
+        t.Config.DailyLossLimit = 1200;
+        t.Config.MaxTrades = 12;
+        t.Config.MaxLossesBeforeStop = 6;
+        t.Config.TrustAccountRealised = true;      // his Sim103 setting
+
+        t.EnsureSession(aug10, 0, 150000);
+        t.OnEquity(150000, 0);
+
+        // Yesterday: one bad session, closing down 1,357.44.
+        t.OnPosition(2, 0, aug10.AddHours(1), "NQ SEP26", "Sim103");
+        t.OnPosition(0, -1357.44, aug10.AddHours(1).AddMinutes(6), "NQ SEP26", "Sim103");
+        t.OnEquity(150000 - 1357.44, -1357.44);
+
+        T.Near(t.DailyPnl, -1357.44, 0.01, "yesterday cost 1,357.44");
+        T.Ok(t.DailyLossLimitHit, "and it went past the 1,200 limit, correctly");
+
+        // Ballast is closed. The session file records where the day finished.
+        double closed = t.DailyPnl;
+
+        // This morning. The account has NOT reset its realised figure, and he
+        // has not traded.
+        BallastTracker fresh = new BallastTracker();
+        fresh.Config = t.Config;
+        fresh.LastClosingDailyPnl = closed;
+        fresh.EnsureSession(aug11, -1357.44, 150000 - 1357.44);
+        fresh.OnEquity(150000 - 1357.44, -1357.44);
+
+        T.Near(fresh.DailyPnl, 0, 0.01,
+               "today starts at nothing, because nothing has happened today");
+        T.Ok(!fresh.DailyLossLimitHit, "so no limit has been hit");
+        T.Ok(fresh.FeedCarriesRealised, "and the carrying feed is recognised for what it is");
+        T.Eq(fresh.TradesToday, 0, "no trades today");
+
+        // The guard that should have caught it regardless: a wall is an argument
+        // with somebody about to trade, and there is nobody there.
+        DisciplineInput i = fresh.BuildInput(aug11.AddMinutes(5));
+        List<TiltTrigger> walls = TiltLockout.EvaluateAll("Sim103", i,
+                                      DisciplineEngine.Evaluate(i), true);
+        T.Eq(walls.Count, 0, "and no wall on a morning he has not started");
+
+        // A feed that DOES reset is untouched - it reads zero here, which is
+        // what the old code used anyway.
+        BallastTracker rithmic = new BallastTracker();
+        rithmic.Config = t.Config;
+        rithmic.LastClosingDailyPnl = closed;
+        rithmic.EnsureSession(aug11, 0, 150000 - 1357.44);
+        rithmic.OnEquity(150000 - 1357.44, 0);
+        T.Near(rithmic.DailyPnl, 0, 0.01, "a resetting feed also starts at nothing");
+        T.Ok(!rithmic.FeedCarriesRealised, "and is not accused of carrying anything");
+
+        // And the case the trust setting exists for still works: Ballast opens
+        // mid-morning on a resetting feed after he has already traded, and the
+        // account's own figure is believed rather than missed.
+        BallastTracker late = new BallastTracker();
+        late.Config = t.Config;
+        late.LastClosingDailyPnl = closed;
+        late.EnsureSession(aug11, -900, 150000 - 900);
+        late.OnEquity(150000 - 900, -900);
+        T.Near(late.DailyPnl, -900, 0.01,
+               "a morning's trading done before Ballast opened is still counted");
     }
 
     static void ARealResetIsSpotted()

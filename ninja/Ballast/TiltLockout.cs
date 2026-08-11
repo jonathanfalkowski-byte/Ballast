@@ -699,6 +699,25 @@ namespace Ballast
             // to have it with.
             if (i.IsAutomated) return outp;
 
+            // Nothing has happened yet, so nothing can have gone wrong yet.
+            //
+            // "this is the message i received when i opened up my ninjatrader
+            // this morning...havent placed a trade or even been on ninjatrader
+            // yet"
+            //
+            // The cause was a feed carrying yesterday's realised P&L into the
+            // morning, and that is fixed where it belongs. This is the guard
+            // that should have caught it anyway: every wall in here is addressed
+            // to somebody about to take a trade to get even, and none of it can
+            // be true of a flat account that has not traded today. Whatever
+            // arithmetic produced a red screen on an untouched morning, it is
+            // wrong - the wall is the loudest thing Ballast owns and it must
+            // never be the first thing a man sees on a day he has not started.
+            //
+            // The row and the chart still say whatever they say. This only stops
+            // the argument, because there is nobody to have it with.
+            if (i.TradesToday <= 0 && i.OpenContracts == 0) return outp;
+
             string name = accountName ?? "";
 
             if (Has(d.Signals, TiltKind.PastFloor))

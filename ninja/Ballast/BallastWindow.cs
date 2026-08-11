@@ -6119,7 +6119,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                             : t.RestartedAt.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture),
                         // Cash minus realised. Written down so an account re-sized
                         // while Ballast was closed is caught when it reopens.
-                        t.DayOpenBalance.ToString(CultureInfo.InvariantCulture)
+                        t.DayOpenBalance.ToString(CultureInfo.InvariantCulture),
+                        // What the day finished at. A feed that carries its
+                        // realised figure into tomorrow is recognised by this
+                        // number turning up again at the next session's first
+                        // reading - see BallastTracker.LastClosingDailyPnl.
+                        t.DailyPnl.ToString(CultureInfo.InvariantCulture)
                     }));
                 }
 
@@ -6195,6 +6200,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                         if (double.TryParse(f[13], NumberStyles.Any, CultureInfo.InvariantCulture,
                                             out dayOpen))
                             t.SeedDayOpen(dayOpen);
+                    }
+
+                    // What the previous session closed at. Read for ANY saved
+                    // day, not only for today's - the whole point is to
+                    // recognise yesterday's figure turning up again this
+                    // morning, so it is precisely the not-current case that
+                    // needs it.
+                    if (f.Length > 14)
+                    {
+                        double closed;
+                        if (double.TryParse(f[14], NumberStyles.Any, CultureInfo.InvariantCulture,
+                                            out closed))
+                            t.LastClosingDailyPnl = closed;
                     }
 
                     int hhmm;

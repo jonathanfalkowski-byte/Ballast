@@ -544,6 +544,12 @@ public static class TargetTests
         i.MaxLossesBeforeStop = 2; i.LossStreak = 6;
         i.MaxTrades = 5; i.MaxContracts = 2; i.NowMinuteEt = 600; i.MinutesSinceLastLoss = -1;
 
+        // Six losses did not happen without trades. The fixture left this at
+        // zero, which no real account can be while down $4,000 - and a wall now
+        // refuses to appear on an account that has not traded today, after one
+        // turned up on a morning he had not opened the platform.
+        i.TradesToday = 6;
+
         DisciplineDecision d = DisciplineEngine.Evaluate(i);
 
         // By hand, this is about as bad as it gets and the wall belongs there.
