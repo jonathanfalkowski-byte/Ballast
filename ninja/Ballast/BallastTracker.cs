@@ -972,6 +972,16 @@ namespace Ballast
             DateTime tradingDay = TradingDay(now);
             if (sessionDate != tradingDay)
             {
+                // What the session that is ENDING finished at, taken before a
+                // single figure is cleared - including sessionDate itself.
+                //
+                // The first version of this sat forty lines lower, after
+                // DailyPnl had already been zeroed and sessionDate had already
+                // been moved on. It faithfully recorded that every day closed at
+                // nothing, and wiped the figure the session file had just
+                // restored on its way past. Both tests caught it.
+                if (sessionDate != DateTime.MinValue.Date) LastClosingDailyPnl = DailyPnl;
+
                 // An EOD threshold advances from the completed session's closing
                 // balance, not from the account's fluctuating intraday balance.
                 // Do this before replacing any of yesterday's state.

@@ -36,6 +36,7 @@ public static class ResetTests
         AnOrdinaryTradeIsNotAReset();
         YesterdaysLossIsNotThisMornings();
         ADayWithNoTradesHealsItself();
+        ARestartMidSessionKeepsTheDay();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -261,6 +262,87 @@ public static class ResetTests
         T.Eq(t.TradesToday, 1, "one trade taken");
         T.Near(after.WorstDailyPnl, -1300, 0.01, "and today's own loss is recorded");
         T.Ok(after.DailyLossLimitHit, "and today's own limit is hit, correctly");
+    }
+
+    /// <summary>
+    /// "well it reset all the outcomes for the day...i recognizes the trades i
+    /// took but not what happened....i should be down in Apex 105 and 106 and
+    /// sim 101 account"
+    ///
+    /// My own bug, an hour old. The carry check compares the realised figure at
+    /// the start of a session against what the previous one closed at - but the
+    /// field holding that is rewritten on every save, so on TODAY's row it holds
+    /// today's running P&L. On a mid-session restart Ballast therefore compared
+    /// the account against itself, concluded the feed was carrying yesterday's
+    /// number, and baselined the day from it.
+    ///
+    /// Every account he had traded went to zero while its trade count stayed
+    /// exactly right - which is the signature, and is precisely what he saw.
+    /// </summary>
+    static void ARestartMidSessionKeepsTheDay()
+    {
+        T.S("a restart mid-session keeps the day");
+
+        DateTime day = new DateTime(2026, 8, 11, 9, 30, 0);
+
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 250000;
+        t.Config.TrailingDrawdown = 6500;
+        t.Config.DailyLossLimit = 2000;
+        t.Config.MaxTrades = 5;
+        t.Config.TrustAccountRealised = true;
+
+        t.EnsureSession(day, 0, 250000);
+        t.OnEquity(250000, 0);
+
+        // A morning that has cost him.
+        t.OnPosition(1, 0, day.AddMinutes(4), "MNQ SEP26", "APEX-11325-105");
+        t.OnPosition(0, -464.36, day.AddMinutes(9), "MNQ SEP26", "APEX-11325-105");
+        t.OnEquity(250000 - 464.36, -464.36);
+
+        T.Near(t.DailyPnl, -464.36, 0.01, "the day is down 464.36");
+
+        // He recompiles. A fresh tracker, restored from the session file, whose
+        // closing-P&L field for TODAY holds today's running figure - which is
+        // the same number the account is reporting.
+        BallastTracker after = new BallastTracker();
+        after.Config = t.Config;
+
+        // The load only hands over a closing figure from ANOTHER day. Today's
+        // row cannot be used to recognise a carry, because it is not a close.
+        after.SeedSession(day.Date, 0, 250000, 0, -464.36, false,
+                          250000, 250000 - 464.36, 0, false);
+        after.EnsureSession(day, -464.36, 250000 - 464.36);
+        after.OnEquity(250000 - 464.36, -464.36);
+
+        T.Near(after.DailyPnl, -464.36, 0.01,
+               "and the morning survives the restart instead of being zeroed");
+        T.Ok(!after.FeedCarriesRealised,
+             "the account is not accused of carrying its own morning");
+
+        // The real carry case still works: a figure from a PREVIOUS day.
+        BallastTracker tomorrow = new BallastTracker();
+        tomorrow.Config = t.Config;
+        tomorrow.LastClosingDailyPnl = -464.36;          // yesterday's close
+        tomorrow.EnsureSession(day.AddDays(1), -464.36, 250000 - 464.36);
+        tomorrow.OnEquity(250000 - 464.36, -464.36);
+
+        T.Near(tomorrow.DailyPnl, 0, 0.01, "a genuinely carried figure still starts the day at nothing");
+        T.Ok(tomorrow.FeedCarriesRealised, "and is still recognised");
+
+        // And a running Ballast that crosses the boundary itself keeps the close
+        // without needing the file at all.
+        BallastTracker running = new BallastTracker();
+        running.Config = t.Config;
+        running.EnsureSession(day, 0, 250000);
+        running.OnEquity(250000, 0);
+        running.OnPosition(1, 0, day.AddMinutes(4), "MNQ SEP26", "APEX-11325-105");
+        running.OnPosition(0, -900, day.AddMinutes(9), "MNQ SEP26", "APEX-11325-105");
+        running.OnEquity(250000 - 900, -900);
+        running.EnsureSession(day.AddDays(1), -900, 250000 - 900);
+        T.Near(running.LastClosingDailyPnl, -900, 0.01,
+               "the close is remembered as the day turns");
     }
 
     static void ARealResetIsSpotted()

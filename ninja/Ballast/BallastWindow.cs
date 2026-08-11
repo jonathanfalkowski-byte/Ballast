@@ -6204,12 +6204,25 @@ namespace NinjaTrader.NinjaScript.AddOns
                             t.SeedDayOpen(dayOpen);
                     }
 
-                    // What the previous session closed at. Read for ANY saved
-                    // day, not only for today's - the whole point is to
-                    // recognise yesterday's figure turning up again this
-                    // morning, so it is precisely the not-current case that
-                    // needs it.
-                    if (f.Length > 14)
+                    // What a PREVIOUS session closed at - and only a previous
+                    // one.
+                    //
+                    // "well it reset all the outcomes for the day...i recognizes
+                    // the trades i took but not what happened"
+                    //
+                    // This field is rewritten on every save, so on today's own
+                    // row it holds today's running P&L, not any session's close.
+                    // Reading it back for the current day meant that on a
+                    // mid-session restart - a recompile, say - Ballast compared
+                    // the account's realised figure against ITSELF, decided the
+                    // feed was carrying yesterday's number, and baselined the
+                    // day from it. Every account he had traded went to zero
+                    // while its trade count stayed right, which is exactly what
+                    // he saw.
+                    //
+                    // A carried figure can only be recognised across a boundary,
+                    // so only a row from another day can be used to spot one.
+                    if (!current && f.Length > 14)
                     {
                         double closed;
                         if (double.TryParse(f[14], NumberStyles.Any, CultureInfo.InvariantCulture,
