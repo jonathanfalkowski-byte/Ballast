@@ -1387,6 +1387,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             // click is not "discard", it is just a tab click, so it saves.
             if (setupsDirty) { try { SaveSetups(); } catch { } }
 
+            // Reading the folder is a disk walk, so it happens when the page
+            // that shows it is opened rather than on every tick.
+            if (index == 2) { try { RefreshDiskNote(); } catch { } }
+
             activeTab = index;
 
             pageNow.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1858,7 +1862,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// A plain paragraph of explanation. Same shape as Label but wraps and
         /// sits under a heading rather than over a field.
         /// </summary>
-        private TextBlock periodHeadline, notYet;
+        private TextBlock periodHeadline, notYet, diskNote;
         private StackPanel entriesSection, changeSection, pressureSection;
 
         /// <summary>
@@ -2192,6 +2196,49 @@ namespace NinjaTrader.NinjaScript.AddOns
             typeNote.TextWrapping = TextWrapping.Wrap;
             typeNote.Margin = new Thickness(0, 0, 0, 8);
             acct.Children.Add(typeNote);
+
+            // What it is costing him in disk, said out loud.
+            //
+            // "did we think about the amount of space the journal and the chart
+            // pictures will eat up?" There was a sweep, and it worked, but the
+            // number it was managing was invisible - so the only way to find out
+            // was to go looking in the folder, which is exactly what nobody does
+            // until something is full.
+            list.Children.Add(SectionHeader("DISK"));
+            diskNote = new TextBlock();
+            diskNote.Foreground = ColMuted;
+            diskNote.FontSize = 11;
+            diskNote.TextWrapping = TextWrapping.Wrap;
+            diskNote.Margin = new Thickness(0, 0, 0, 6);
+            list.Children.Add(diskNote);
+
+            StackPanel diskRow = new StackPanel();
+            diskRow.Orientation = Orientation.Horizontal;
+            diskRow.Margin = new Thickness(0, 0, 0, 6);
+            diskRow.Children.Add(QuietButton("Recheck", delegate { RefreshDiskNote(); }));
+            diskRow.Children.Add(QuietButton("Tidy up now", delegate
+            {
+                try
+                {
+                    DateTime n;
+                    try { n = Core.Globals.Now; } catch { n = DateTime.Now; }
+                    ChartSnapshot.Prune(ImageRoot(), n);
+                }
+                catch { }
+                RefreshDiskNote();
+            }));
+            list.Children.Add(diskRow);
+
+            list.Children.Add(Why("What gets deleted, and when",
+                "Chart pictures only - two per trade, an entry and an exit. They are kept for "
+              + ChartSnapshot.RetentionDays + " days, and the whole folder is held under "
+              + ChartSnapshot.MaxTotalMb + " MB by deleting the oldest DAYS first. Both limits "
+              + "apply, because they answer different questions: a picture from March is worth "
+              + "nothing even when there is room for it, and a fortnight of heavy trading can fill "
+              + "a disk while every day in it is recent. The most recent day is never deleted, "
+              + "whatever the limit says.  Your journal is not touched by any of this and never "
+              + "will be - it is about 500 bytes a trade, so a decade of it is a few megabytes. "
+              + "The trades are the record; the pictures are a convenience."));
 
             list.Children.Add(SectionHeader("MY SETUPS"));
 
@@ -5957,6 +6004,42 @@ namespace NinjaTrader.NinjaScript.AddOns
         // ── Journal ──────────────────────────────────────────────────────────
 
         /// <summary>Where chart photographs live, beside the journal CSV.</summary>
+        /// <summary>How much disk the pictures are using, in his terms.</summary>
+        private void RefreshDiskNote()
+        {
+            if (diskNote == null) return;
+            try
+            {
+                string root = ImageRoot();
+                long bytes = ChartSnapshot.TotalBytes(root);
+
+                int days = 0;
+                try { days = System.IO.Directory.Exists(root)
+                            ? System.IO.Directory.GetDirectories(root).Length : 0; }
+                catch { }
+
+                double mb = bytes / (1024.0 * 1024.0);
+
+                diskNote.Text = days == 0
+                    ? "No chart pictures saved yet."
+                    : "Chart pictures: " + mb.ToString("0.#", CultureInfo.InvariantCulture)
+                      + " MB across " + days + (days == 1 ? " day" : " days")
+                      + ", kept for " + ChartSnapshot.RetentionDays + " days and under "
+                      + ChartSnapshot.MaxTotalMb + " MB.  Your journal is "
+                      + (JournalBytes() / 1024.0).ToString("0", CultureInfo.InvariantCulture)
+                      + " KB and is never deleted.";
+
+                diskNote.Foreground = mb > ChartSnapshot.MaxTotalMb * 0.9 ? ColAmber : ColMuted;
+            }
+            catch { }
+        }
+
+        private long JournalBytes()
+        {
+            try { return new System.IO.FileInfo(JournalPath()).Length; }
+            catch { return 0; }
+        }
+
         private string ImageRoot()
         {
             try { return Path.Combine(Core.Globals.UserDataDir, "ballast-charts"); }

@@ -1,4 +1,4 @@
-﻿// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Ballast — ChartSnapshot.cs
 //
 // Photographs the chart at the moment a trade opens, and again when it closes.
@@ -60,8 +60,33 @@ namespace Ballast
         /// <summary>Keep this many days of images, then delete. 0 = keep everything.</summary>
         public static int RetentionDays = 60;
 
+        /// <summary>
+        /// Hard ceiling on the whole image folder, in megabytes. 0 = no ceiling.
+        ///
+        /// A cap counted in DAYS cannot give a predictable answer here. One
+        /// trader's day is 24 KB and the next is 21 MB - a nine-hundred-fold
+        /// spread on the same screen, from the same person, inside one week - so
+        /// "sixty days" is somewhere between forty megabytes and one and a half
+        /// gigabytes depending on how busy the month was. Nobody can budget
+        /// against that.
+        ///
+        /// Megabytes are the thing he actually cares about, so megabytes are the
+        /// thing to cap. Days stay as a second limit: old pictures are worth
+        /// little even when there is room for them.
+        /// </summary>
+        public static int MaxTotalMb = 500;
+
         /// <summary>Downscale wide charts to keep files small. 0 = full size.</summary>
-        public static int MaxWidth = 1400;
+        /// <summary>
+        /// Widest a saved screenshot gets.
+        ///
+        /// Was 1400, which produced a median file of 272 KB. A chart is mostly
+        /// flat colour, straight lines and a little text; narrowing it costs
+        /// very little of what he is looking at and roughly halves the file.
+        /// The picture exists to answer "would you take this again", not to be
+        /// zoomed into.
+        /// </summary>
+        public static int MaxWidth = 1000;
 
         /// <summary>Last problem encountered, surfaced in the window rather than hidden.</summary>
         public static string LastProblem = "";
@@ -141,21 +166,116 @@ namespace Ballast
             return doomed;
         }
 
+        /// <summary>
+        /// Folders to delete, oldest first, until the total fits the budget.
+        /// Pure, so the arithmetic can be tested without a disk.
+        ///
+        /// Oldest first because that is the order they stop being worth
+        /// anything. The most recent day is never deleted whatever the budget
+        /// says - a cap set too low should degrade to "keep today" rather than
+        /// to "keep nothing", and an empty folder on a day he traded would look
+        /// exactly like a broken feature.
+        /// </summary>
+        public static List<string> FoldersOverBudget(List<string> folderNames,
+                                                     List<long> bytes, int maxTotalMb)
+        {
+            List<string> doomed = new List<string>();
+            if (maxTotalMb <= 0 || folderNames == null || bytes == null) return doomed;
+            if (folderNames.Count != bytes.Count) return doomed;
+
+            // Sort a copy, oldest first. The names are yyyy-MM-dd, so ordinal
+            // order is date order.
+            List<string> names = new List<string>(folderNames);
+            List<long> size = new List<long>(bytes);
+            for (int a = 0; a < names.Count; a++)
+                for (int b = a + 1; b < names.Count; b++)
+                    if (string.CompareOrdinal(names[b], names[a]) < 0)
+                    {
+                        string n = names[a]; names[a] = names[b]; names[b] = n;
+                        long z = size[a]; size[a] = size[b]; size[b] = z;
+                    }
+
+            long total = 0;
+            for (int i = 0; i < size.Count; i++) total += size[i];
+
+            long budget = (long)maxTotalMb * 1024L * 1024L;
+
+            for (int i = 0; i < names.Count - 1 && total > budget; i++)
+            {
+                doomed.Add(names[i]);
+                total -= size[i];
+            }
+
+            return doomed;
+        }
+
+        /// <summary>Bytes held by one folder. 0 if it cannot be read.</summary>
+        public static long FolderBytes(string path)
+        {
+            long n = 0;
+            try
+            {
+                string[] files = Directory.GetFiles(path);
+                for (int i = 0; i < files.Length; i++)
+                {
+                    try { n += new FileInfo(files[i]).Length; }
+                    catch { }
+                }
+            }
+            catch { }
+            return n;
+        }
+
+        /// <summary>Everything the image folder is using, in bytes.</summary>
+        public static long TotalBytes(string root)
+        {
+            long n = 0;
+            try
+            {
+                if (!Directory.Exists(root)) return 0;
+                string[] dirs = Directory.GetDirectories(root);
+                for (int i = 0; i < dirs.Length; i++) n += FolderBytes(dirs[i]);
+            }
+            catch { }
+            return n;
+        }
+
         public static void Prune(string root, DateTime today)
         {
             try
             {
-                if (RetentionDays <= 0 || !Directory.Exists(root)) return;
+                if (!Directory.Exists(root)) return;
 
                 string[] dirs = Directory.GetDirectories(root);
                 List<string> names = new List<string>();
                 for (int i = 0; i < dirs.Length; i++) names.Add(Path.GetFileName(dirs[i]));
 
-                List<string> doomed = FoldersToDelete(names, today, RetentionDays);
-                for (int i = 0; i < doomed.Count; i++)
+                // Age first: a picture from March is worth nothing whatever the
+                // budget says.
+                if (RetentionDays > 0)
                 {
-                    try { Directory.Delete(Path.Combine(root, doomed[i]), true); }
-                    catch { }
+                    List<string> old = FoldersToDelete(names, today, RetentionDays);
+                    for (int i = 0; i < old.Count; i++)
+                    {
+                        try { Directory.Delete(Path.Combine(root, old[i]), true); }
+                        catch { }
+                        names.Remove(old[i]);
+                    }
+                }
+
+                // Then size, on whatever is left.
+                if (MaxTotalMb > 0 && names.Count > 1)
+                {
+                    List<long> sizes = new List<long>();
+                    for (int i = 0; i < names.Count; i++)
+                        sizes.Add(FolderBytes(Path.Combine(root, names[i])));
+
+                    List<string> over = FoldersOverBudget(names, sizes, MaxTotalMb);
+                    for (int i = 0; i < over.Count; i++)
+                    {
+                        try { Directory.Delete(Path.Combine(root, over[i]), true); }
+                        catch { }
+                    }
                 }
             }
             catch { }
