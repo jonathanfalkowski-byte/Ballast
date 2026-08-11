@@ -1484,6 +1484,31 @@ namespace Ballast
             i.ProfitTarget = Config.ProfitTarget;
             i.StartingBalance = Config.StartingBalance;
             i.TrailingDrawdown = Config.TrailingDrawdown;
+            // A day with no trades in it cannot have been down.
+            //
+            // "sim103 is still telling me it spent earlier, when i have not
+            // touched the account yet"
+            //
+            // The carried-over figure was fixed at the session boundary, but by
+            // then it had already been written into TODAY'S session file - so
+            // the worst the day had been, and the latch that went with it, were
+            // restored from disk on every start and stuck for the rest of the
+            // day. A fix that only stops a bad number being created leaves
+            // every trader who already has one holding it.
+            //
+            // So it is checked against something that cannot be carried: the
+            // trades. If none have been taken and nothing is open, the worst
+            // this day has been is nothing, whatever any saved figure says. The
+            // count itself is rebuilt from the journal every thirty seconds, so
+            // this heals on its own rather than needing the file edited.
+            if (TradesToday <= 0 && OpenContracts == 0)
+            {
+                if (WorstDailyPnl < 0) WorstDailyPnl = 0;
+                if (PeakDailyPnl < 0) PeakDailyPnl = 0;
+                DailyLossLimitHit = false;
+                DailyLossLimitHitAt = null;
+            }
+
             i.DailyPnl = DailyPnl;
             i.PeakDailyPnl = PeakDailyPnl;
             i.WorstDailyPnl = WorstDailyPnl;

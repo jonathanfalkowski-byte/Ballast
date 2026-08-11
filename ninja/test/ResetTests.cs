@@ -35,6 +35,7 @@ public static class ResetTests
         AnEvalThatComesBackADifferentSizeIsNotTrusted();
         AnOrdinaryTradeIsNotAReset();
         YesterdaysLossIsNotThisMornings();
+        ADayWithNoTradesHealsItself();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -203,6 +204,63 @@ public static class ResetTests
         late.OnEquity(150000 - 900, -900);
         T.Near(late.DailyPnl, -900, 0.01,
                "a morning's trading done before Ballast opened is still counted");
+    }
+
+    /// <summary>
+    /// "sim103 is still telling me it spent earlier, when i have not touched the
+    /// account yet"
+    ///
+    /// The carried-over figure was fixed at the session boundary - but by then
+    /// it had already been written into TODAY'S session file, so the worst the
+    /// day had been, and the latch that went with it, came back off disk on
+    /// every start and stuck for the rest of the day. A fix that only stops a
+    /// bad number being created leaves everyone who already has one holding it.
+    ///
+    /// So it is checked against the one thing that cannot be carried: the
+    /// trades.
+    /// </summary>
+    static void ADayWithNoTradesHealsItself()
+    {
+        T.S("a day with no trades heals a figure it should never have had");
+
+        DateTime morning = new DateTime(2026, 8, 11, 8, 0, 0);
+
+        BallastTracker t = new BallastTracker();
+        t.Config = new TrackerConfig();
+        t.Config.StartingBalance = 150000;
+        t.Config.TrailingDrawdown = 5000;
+        t.Config.DailyLossLimit = 1200;
+        t.Config.MaxTrades = 12;
+        t.Config.MaxLossesBeforeStop = 6;
+
+        // Exactly what his session file held for the eleventh: today's date,
+        // yesterday's damage, and the latch set.
+        t.SeedSession(morning.Date, 0, 151646.12, 0, -1357.44, true,
+                      150000, 150018.68, 0, false);
+        t.EnsureSession(morning, 0, 150018.68);
+        t.OnEquity(150018.68, 0);
+
+        DisciplineInput i = t.BuildInput(morning.AddMinutes(5));
+
+        T.Eq(t.TradesToday, 0, "he has not traded today");
+        T.Near(i.WorstDailyPnl, 0, 0.01,
+               "so the worst today has been is nothing, whatever the file said");
+        T.Ok(!i.DailyLossLimitHit, "and no limit has been hit");
+        T.Ok(DisciplineEngine.RowWarning(i, DisciplineEngine.Evaluate(i))
+                .IndexOf("spent earlier") < 0,
+             "the row stops saying it was spent earlier");
+
+        // The moment he actually trades, everything works normally again - this
+        // is a repair for a day with nothing in it, not a way to wipe a real
+        // loss by closing Ballast.
+        t.OnPosition(2, 0, morning.AddHours(2), "NQ SEP26", "Sim103");
+        t.OnPosition(0, -1300, morning.AddHours(2).AddMinutes(5), "NQ SEP26", "Sim103");
+        t.OnEquity(150018.68 - 1300, -1300);
+
+        DisciplineInput after = t.BuildInput(morning.AddHours(3));
+        T.Eq(t.TradesToday, 1, "one trade taken");
+        T.Near(after.WorstDailyPnl, -1300, 0.01, "and today's own loss is recorded");
+        T.Ok(after.DailyLossLimitHit, "and today's own limit is hit, correctly");
     }
 
     static void ARealResetIsSpotted()

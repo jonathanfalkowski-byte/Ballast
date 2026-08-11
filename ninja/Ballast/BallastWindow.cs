@@ -254,6 +254,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private StackPanel doneRow;
         private TextBlock doneNote;
         private Image reviewShot;
+        private TextBlock reviewShotHint, reviewReveal;
+        private string reviewShotPath = "";
         private Button reviewRevealBtn;
         private LookBackPick lookBack;
         private readonly List<string> lookBackShown = new List<string>();
@@ -6859,12 +6861,40 @@ namespace NinjaTrader.NinjaScript.AddOns
             // picture he was looking at when he decided. Ballast already saves
             // it on every trade.
             reviewShot = new Image();
-            reviewShot.MaxHeight = 260;
-            reviewShot.HorizontalAlignment = HorizontalAlignment.Left;
-            reviewShot.Margin = new Thickness(0, 0, 0, 10);
+
+            // "i tried clicking on the chart and it didnt popout ....i cant
+            // really read what is going on"
+            //
+            // 260 pixels of a thousand-pixel chart is a thumbnail, and a
+            // thumbnail cannot answer "would you take it again" - which is the
+            // only question the card asks. It fills the card now, and clicking
+            // it opens the actual file at full size in whatever views images on
+            // this machine, because no panel inside this window will ever beat
+            // a real image viewer for reading a chart.
+            reviewShot.MaxHeight = 560;
+            reviewShot.HorizontalAlignment = HorizontalAlignment.Stretch;
+            reviewShot.Margin = new Thickness(0, 0, 0, 4);
             reviewShot.Stretch = Stretch.Uniform;
+            reviewShot.Cursor = System.Windows.Input.Cursors.Hand;
             reviewShot.Visibility = Visibility.Collapsed;
+            reviewShot.MouseLeftButtonUp += delegate { OpenShot(); };
             s.Children.Add(reviewShot);
+
+            reviewShotHint = new TextBlock();
+            reviewShotHint.Text = "Click the chart to open it full size.";
+            reviewShotHint.Foreground = ColFaint;
+            reviewShotHint.FontSize = 10;
+            reviewShotHint.Margin = new Thickness(0, 0, 0, 10);
+            reviewShotHint.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewShotHint);
+
+            reviewReveal = new TextBlock();
+            reviewReveal.Foreground = ColInk;
+            reviewReveal.FontSize = 14;
+            reviewReveal.TextWrapping = TextWrapping.Wrap;
+            reviewReveal.Margin = new Thickness(0, 0, 0, 10);
+            reviewReveal.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewReveal);
 
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
@@ -6887,6 +6917,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void OnOpenReview()
         {
+            // "i clicked on see the day and it went to the journal and when i
+            // came back to the now page it disappeared."
+            //
+            // Two different things were sharing one "seen" mark. Opening the
+            // journal is not answering the trade, and it took the trade away
+            // before he had looked at it. The card comes back with the same
+            // trade still on it; only "Show me what happened" or "Not now"
+            // spends it.
+            if (lookBack != null) { KeepLookBackForNextTime(); return; }
+
             // Open the journal ON the period the card was talking about.
             //
             // It used to land on whatever was last selected - so an end-of-day
@@ -7077,14 +7117,39 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch { HideLookBack(); }
         }
 
+        /// <summary>
+        /// Open the journal without spending the look-back, so it is still there
+        /// when he comes back to the Now page.
+        /// </summary>
+        private void KeepLookBackForNextTime()
+        {
+            SetPeriod(reviewLast == "closing" ? JournalPeriod.Today
+                    : reviewLast == "month"   ? JournalPeriod.Month
+                                              : JournalPeriod.LastSession);
+            ShowTab(1);
+        }
+
         private void OnRevealLookBack()
         {
             try
             {
                 if (lookBack == null) return;
 
-                reviewBody.Text += "\n\n" + LookBack.Reveal(lookBack);
+                // Said in its own line, in its own colour, rather than appended
+                // to a paragraph above a picture that just changed. "i clicked
+                // on show me what happened and it just went to a different
+                // chart" - the answer WAS there, three lines up, where he was
+                // not looking.
+                if (reviewReveal != null)
+                {
+                    reviewReveal.Text = LookBack.Reveal(lookBack);
+                    reviewReveal.Foreground = lookBack.RewardedAMistake ? ColAmber : ColInk;
+                    reviewReveal.Visibility = Visibility.Visible;
+                }
+
                 ShowShot(lookBack.Trade.ExitImage);
+                if (reviewShotHint != null)
+                    reviewShotHint.Text = "This is the exit. Click the chart to open it full size.";
 
                 // Once seen it is not offered again - there are only so many
                 // trades, and repeating one is how this becomes wallpaper.
@@ -7104,7 +7169,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 if (reviewShot == null) return;
                 if (string.IsNullOrEmpty(path) || !File.Exists(path))
-                { reviewShot.Visibility = Visibility.Collapsed; return; }
+                {
+                    reviewShot.Visibility = Visibility.Collapsed;
+                    if (reviewShotHint != null) reviewShotHint.Visibility = Visibility.Collapsed;
+                    reviewShotPath = "";
+                    return;
+                }
 
                 // Loaded on load rather than held open, or the file stays locked
                 // and the retention sweep cannot delete the day.
@@ -7117,14 +7187,38 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 reviewShot.Source = bmp;
                 reviewShot.Visibility = Visibility.Visible;
+                reviewShotPath = path;
+                if (reviewShotHint != null) reviewShotHint.Visibility = Visibility.Visible;
             }
             catch { if (reviewShot != null) reviewShot.Visibility = Visibility.Collapsed; }
+        }
+
+        /// <summary>
+        /// Hand the picture to whatever shows images on this machine. A chart is
+        /// meant to be read at the size it was drawn, and no panel bolted into
+        /// this window is going to beat the tool built for it.
+        /// </summary>
+        private void OpenShot()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(reviewShotPath) || !File.Exists(reviewShotPath)) return;
+                System.Diagnostics.Process.Start(reviewShotPath);
+            }
+            catch { }
         }
 
         private void HideLookBack()
         {
             lookBack = null;
             if (reviewShot != null) { reviewShot.Source = null; reviewShot.Visibility = Visibility.Collapsed; }
+            if (reviewShotHint != null)
+            {
+                reviewShotHint.Visibility = Visibility.Collapsed;
+                reviewShotHint.Text = "Click the chart to open it full size.";
+            }
+            if (reviewReveal != null) reviewReveal.Visibility = Visibility.Collapsed;
+            reviewShotPath = "";
             if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
         }
 
