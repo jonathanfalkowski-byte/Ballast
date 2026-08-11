@@ -1864,7 +1864,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// A plain paragraph of explanation. Same shape as Label but wraps and
         /// sits under a heading rather than over a field.
         /// </summary>
-        private TextBlock periodHeadline, notYet, diskNote;
+        private TextBlock periodHeadline, notYet, diskNote, startOverNote;
+        private Button startOverBtn;
         private StackPanel entriesSection, changeSection, pressureSection;
 
         /// <summary>
@@ -2493,7 +2494,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             acct.Children.Add(Label("Your other limits"));
 
             Grid g2 = TwoCol();
-            tbMaxLosses = FieldIn(g2, 0, 0, "Stop after N losses", "2");
+            tbMaxLosses = FieldIn(g2, 0, 0, "Stop after N losses IN A ROW", "2");
             tbTarget = FieldIn(g2, 0, 1, "Daily target ($) - one good day", "500");
             acct.Children.Add(g2);
 
@@ -2782,8 +2783,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "already hit, and re-anchors its floor to what the account holds now. No "
                 + "other account is touched."));
 
-            acct.Children.Add(QuietButton("Start this account's day over",
-                delegate { OnStartOverCurrent(); }));
+            startOverBtn = QuietButton("Start this account's day over",
+                                       delegate { OnStartOverCurrent(); });
+            acct.Children.Add(startOverBtn);
+
+            // Why it is not there on a live account.
+            startOverNote = new TextBlock();
+            startOverNote.Foreground = ColMuted;
+            startOverNote.FontSize = 11;
+            startOverNote.TextWrapping = TextWrapping.Wrap;
+            startOverNote.Margin = new Thickness(0, 0, 0, 6);
+            startOverNote.Visibility = Visibility.Collapsed;
+            acct.Children.Add(startOverNote);
 
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
@@ -3341,7 +3352,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string yours = "YOURS: " + daily
                          + "  -  " + c.MaxTrades + (c.MaxTrades == 1 ? " trade" : " trades") + " max"
                          + "  -  stop after " + c.MaxLossesBeforeStop
-                         + (c.MaxLossesBeforeStop == 1 ? " loss" : " losses in a row")
+                         + (c.MaxLossesBeforeStop == 1 ? " loss in a row" : " losses in a row")
                          + "  -  " + target
                          + "  -  " + size
                          + "  -  " + window
@@ -3824,6 +3835,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             RefreshCoherence();
             RefreshWindowClock();
 
+            RefreshStartOver(next);
+
             TrackerConfig c = ConfigForKey(next);
             if (c == null) return;
             LoadConfigIntoFields(c);
@@ -3831,6 +3844,51 @@ namespace NinjaTrader.NinjaScript.AddOns
             // The profile preview quotes dollar figures for whichever account is
             // being edited, so it has to follow the selection.
             if (profileDetail != null) ShowProfileDetail();
+        }
+
+        /// <summary>
+        /// "definitely not say that for any evaluation or eval account....
+        /// 'start this accounts day over'"
+        ///
+        /// He is right, and the danger is one-directional. On a sim account
+        /// starting the day over is true - the account really was reset and the
+        /// day really is gone. On an evaluation or a funded account it is a
+        /// button that erases a real loss from Ballast's view while the FIRM
+        /// still has it. Ballast would then report a cushion nobody has, and the
+        /// moment it is most tempting to press is the moment after a bad morning
+        /// - which is exactly when a wrong cushion kills the account.
+        ///
+        /// The safe direction in this codebase has always been to under-report
+        /// room rather than over-report it. If a firm genuinely resets an
+        /// evaluation, the balance moves with no fill behind it and the reset
+        /// detector asks about it, which is the honest route in.
+        /// </summary>
+        private void RefreshStartOver(string accountName)
+        {
+            if (startOverBtn == null) return;
+
+            try
+            {
+                // Three cases, not two. The defaults page describes no account
+                // at all, so it gets neither the button nor a sentence about a
+                // live account it is not.
+                bool isDefault = string.IsNullOrEmpty(accountName);
+                bool sim = !isDefault && RuleBook.IsBuiltInSimName(accountName);
+                bool live = !isDefault && !sim;
+
+                startOverBtn.Visibility = sim ? Visibility.Visible : Visibility.Collapsed;
+
+                if (startOverNote == null) return;
+                startOverNote.Visibility = live ? Visibility.Visible : Visibility.Collapsed;
+                startOverNote.Text = live
+                    ? "This is a live account, so there is no button here to start its day over. "
+                    + "Its drawdown does not reset because you would like it to, and a day cleared "
+                    + "here would still be on the firm's books - leaving Ballast reporting room "
+                    + "you do not have. If the firm HAS reset it, the balance will move with no "
+                    + "trade behind it and Ballast will ask you about it on the Now page."
+                    : "";
+            }
+            catch { }
         }
 
         private double SafeGet(Account a, AccountItem item)
@@ -5846,7 +5904,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             return daily + ", " + c.MaxTrades + (c.MaxTrades == 1 ? " trade" : " trades")
                  + ", stop after " + c.MaxLossesBeforeStop
-                 + (c.MaxLossesBeforeStop == 1 ? " loss" : " losses in a row")
+                 + (c.MaxLossesBeforeStop == 1 ? " loss in a row" : " losses in a row")
                  + ", " + target
                  + ", trading " + DisciplineEngine.WindowLabel(c.SessionStartMinute, c.SessionEndMinute);
         }
@@ -5897,7 +5955,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     + Money(perTrade) + " per trade, stop for the day at " + Money(daily)
                     + ", target " + Money(RiskProfiles.Round25(daily * p.TargetMultiple))
                     + ", stop after " + p.MaxLossesBeforeStop
-                    + (p.MaxLossesBeforeStop == 1 ? " loss" : " losses")
+                    + (p.MaxLossesBeforeStop == 1 ? " loss in a row" : " losses in a row")
                     + ", max " + p.MaxTrades + " trades.";
 
                 if (p.HasThrottle)
