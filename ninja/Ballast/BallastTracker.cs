@@ -68,6 +68,26 @@ namespace Ballast
         /// </summary>
         public double StopPerContract = 0;
 
+        /// <summary>
+        /// The date of the last approved payout on this account, or MinValue if
+        /// there has never been one.
+        ///
+        /// Consistency is measured from here, because the firm measures from
+        /// here: "future payout eligibility is based only on profits earned
+        /// after the last approved payout". Ballast cannot see a withdrawal, so
+        /// this is typed in, and everything derived from it says plainly that
+        /// the firm's own dashboard is what counts.
+        /// </summary>
+        public DateTime LastPayoutOn = DateTime.MinValue.Date;
+
+        /// <summary>
+        /// How many payouts have been approved on this account. Apex's ladder
+        /// runs to six and the consistency rule stops applying with it, so an
+        /// account past the end of its ladder is not held to a ceiling it is no
+        /// longer under.
+        /// </summary>
+        public int PayoutsTaken = 0;
+
         /// <summary>Percentage of the trailing drawdown intended per trade.</summary>
         public double RiskPctOfDrawdown = 0;
 

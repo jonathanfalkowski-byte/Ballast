@@ -14,6 +14,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Ballast
 {
@@ -101,6 +102,21 @@ namespace Ballast
         /// entries, unplanned trades) show up across all of them at once.
         /// </summary>
         public BallastJournal Journal = new BallastJournal();
+
+        /// <summary>
+        /// The rule book, so payout terms can be looked up per account.
+        /// Optional - a monitor with no rule book shows no consistency ceiling,
+        /// which is the same answer as a firm that publishes none.
+        /// </summary>
+        public RuleBook Rules;
+
+        // The per-day grouping is the only expensive part of the consistency
+        // arithmetic and it changes only when the journal does, so it is worked
+        // out once per journal change per account rather than on every tick.
+        private readonly Dictionary<string, List<PayoutDay>> payoutDays =
+            new Dictionary<string, List<PayoutDay>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> payoutDaysKey =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Monitored account names, always in the same order the trader sees them
@@ -331,8 +347,63 @@ namespace Ballast
             AccountSnapshot s = new AccountSnapshot();
             s.AccountName = accountName;
             s.Input = t.BuildInput(now);
+            ApplyPayoutStanding(accountName, t, s.Input, now);
             s.Decision = DisciplineEngine.Evaluate(s.Input);
             return s;
+        }
+
+        /// <summary>
+        /// Put the consistency ceiling on the input, when there is one.
+        ///
+        /// Deliberately silent in four cases, and in each of them a number
+        /// would be worse than no number:
+        ///
+        ///   - a practice or replay account. There is no payout to protect.
+        ///   - a firm with no PAYOUT line in the rule book. Borrowing another
+        ///     firm's percentage would tell him to stop on a day his own firm
+        ///     was perfectly happy with.
+        ///   - an account past the end of its payout ladder, where the firm
+        ///     itself stops applying the rule.
+        ///   - a day with nothing banked underneath it, where the arithmetic
+        ///     says "stop at zero" and stopping achieves nothing. What he needs
+        ///     there is more days, not a smaller day.
+        /// </summary>
+        private void ApplyPayoutStanding(string accountName, BallastTracker t,
+                                         DisciplineInput i, DateTime now)
+        {
+            if (i == null || t == null || Rules == null) return;
+            if (RuleBook.IsPracticeAccountName(accountName)) return;
+
+            PayoutRules pr = Rules.PayoutForAccount(accountName, t.Config);
+            if (pr == null || !pr.HasConsistencyRule) return;
+
+            if (pr.MaxPayouts > 0 && t.Config != null && t.Config.PayoutsTaken >= pr.MaxPayouts)
+                return;
+
+            DateTime since = t.Config != null ? t.Config.LastPayoutOn : DateTime.MinValue.Date;
+            int reset = t.Config != null ? t.Config.TradingDayResetMinute : 0;
+
+            string key = Journal.Count.ToString(CultureInfo.InvariantCulture) + "|"
+                       + since.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + "|"
+                       + reset.ToString(CultureInfo.InvariantCulture);
+
+            List<PayoutDay> days;
+            string had;
+            if (!payoutDaysKey.TryGetValue(accountName, out had) || had != key
+                || !payoutDays.TryGetValue(accountName, out days) || days == null)
+            {
+                days = PayoutBook.Days(Journal.All, accountName, since, reset);
+                payoutDays[accountName] = days;
+                payoutDaysKey[accountName] = key;
+            }
+
+            PayoutStanding st = PayoutBook.Stand(days, t.TradingDay(now), i.DailyPnl, pr);
+            if (!st.Known || !st.CeilingWorthShowing) return;
+
+            i.ConsistencyPct = pr.ConsistencyPct;
+            i.WindfallCeiling = st.CeilingToday;
+            i.PastWindfallCeiling = st.PastCeiling;
+            i.ProfitToUnblockPayout = st.ProfitToUnblock;
         }
 
         public List<AccountSnapshot> EvaluateAll(DateTime now)

@@ -50,6 +50,7 @@ public static class Program
         LookBackTests.Run();
         DiskTests.Run();
         RestartTests.Run();
+        PayoutTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

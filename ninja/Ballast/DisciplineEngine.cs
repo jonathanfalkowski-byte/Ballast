@@ -65,6 +65,28 @@ namespace Ballast
         public int MaxContracts;
         public int OpenContracts;
 
+        /// <summary>
+        /// The most today may still earn before today itself becomes the
+        /// account's windfall day and defers the next payout. 0 means no
+        /// ceiling is in play - either the firm publishes no consistency rule,
+        /// or there is not yet enough banked underneath today for stopping
+        /// early to achieve anything.
+        /// </summary>
+        public double WindfallCeiling;
+
+        /// <summary>True once today has gone past that ceiling.</summary>
+        public bool PastWindfallCeiling;
+
+        /// <summary>
+        /// Total profit still needed before the biggest day stops blocking a
+        /// payout. This is the cost of carrying on, and it is a delay rather
+        /// than a loss - which is why the wall this raises is a soft one.
+        /// </summary>
+        public double ProfitToUnblockPayout;
+
+        /// <summary>The firm's consistency percentage, for saying it out loud.</summary>
+        public double ConsistencyPct;
+
         public double CushionToFloor;
         public double FloorLevel;        // the actual dollar level the account dies at
         public double CurrentEquity;
@@ -221,6 +243,10 @@ namespace Ballast
                     ? i.TradesToday + " trades - PAST your limit of " + i.MaxTrades
                     : i.TradesToday + " trades - that is your limit, the day is done";
 
+            if (Has(d.Signals, "windfall"))
+                return "up " + Money(i.DailyPnl) + " - past the " + Money(i.WindfallCeiling)
+                     + " that keeps your payout, needs " + Money(i.ProfitToUnblockPayout) + " more";
+
             if (Has(d.Signals, "give_back"))
                 return "was up " + Money(i.PeakDailyPnl) + ", handed back "
                      + Money(i.PeakDailyPnl - i.DailyPnl) + " - do not trade back your profits";
@@ -243,7 +269,16 @@ namespace Ballast
             if (Has(d.Signals, "out_of_window"))
                 return "outside your trading window (" + WindowLabel(i.SessionStartMinute, i.SessionEndMinute) + ")";
 
-            if (i.DailyPnl > 0) return "green " + Money(i.DailyPnl) + " - protect it";
+            if (i.DailyPnl > 0)
+            {
+                // The live version of the ceiling, on a day that is still
+                // inside it. This is the number he can act on - the other one
+                // only arrives after it is too late to act.
+                if (i.WindfallCeiling > 0 && i.DailyPnl < i.WindfallCeiling)
+                    return "green " + Money(i.DailyPnl) + " - "
+                         + Money(i.WindfallCeiling - i.DailyPnl) + " more before it holds up a payout";
+                return "green " + Money(i.DailyPnl) + " - protect it";
+            }
             return "clear";
         }
 
@@ -448,6 +483,26 @@ namespace Ballast
                     ". This account has spent enough of its drawdown that full size is no longer safe."));
             }
 
+            // The only rule in here that fires because the day went WELL.
+            //
+            // Nothing is lost when it trips - a payout is postponed, not
+            // forfeited - so it never becomes a hard breaker and never locks an
+            // account out of a live trade. It says the number and gets out of
+            // the way.
+            if (i.PastWindfallCeiling && i.WindfallCeiling > 0 && i.DailyPnl > 0)
+            {
+                signals.Add(new RiskSignal("windfall", Severity.Medium,
+                    "Today is up " + Money(i.DailyPnl) + " and past the " + Money(i.WindfallCeiling)
+                  + " that keeps your next payout available. Past that line today is more than "
+                  + (i.ConsistencyPct > 0
+                        ? i.ConsistencyPct.ToString("0", CultureInfo.InvariantCulture) + "%"
+                        : "the share the firm allows")
+                  + " of your total profit since your last payout, and the firm holds the "
+                  + "withdrawal until total profit reaches " + Money(i.ProfitToUnblockPayout)
+                  + " more. Nothing is lost by carrying on - the payout is postponed, not "
+                  + "forfeited - but stopping here is what makes it available now."));
+            }
+
             if (i.MaxTrades > 0 && i.TradesToday >= i.MaxTrades)
             {
                 signals.Add(new RiskSignal("over_trading", Severity.Medium,
@@ -559,6 +614,15 @@ namespace Ballast
             {
                 action = DisciplineAction.ProtectGreen; urgency = Urgency.Alert;
                 reason = "you're handing back a green day";
+            }
+            else if (Has(d.Signals, "windfall"))
+            {
+                // Below the give-back, which is about money already handed
+                // back, and above the cooldown, which cannot apply on a day
+                // going this well. Caution rather than Alert on purpose: the
+                // Alert states in here are all states where money is leaving.
+                action = DisciplineAction.ProtectGreen; urgency = Urgency.Caution;
+                reason = "today is big enough to hold up your next payout";
             }
             else if (Has(d.Signals, "revenge_window"))
             {

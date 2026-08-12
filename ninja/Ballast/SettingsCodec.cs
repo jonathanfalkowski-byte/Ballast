@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 27;
+        public const int CurrentFieldCount = 29;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -66,7 +66,11 @@ namespace Ballast
                 c.TrustAccountRealised ? "1" : "0",                                // 23
                 I(c.TradingDayResetMinute),                                         // 24
                 ((int)c.Purpose).ToString(CultureInfo.InvariantCulture),            // 25
-                D(c.StopPerContract)                                                // 26
+                D(c.StopPerContract),                                               // 26
+                c.LastPayoutOn == DateTime.MinValue.Date                            // 27
+                    ? ""
+                    : c.LastPayoutOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+                I(c.PayoutsTaken)                                                   // 28
             });
         }
 
@@ -174,6 +178,24 @@ namespace Ballast
             if (f.Length >= 27 && double.TryParse(f[26], NumberStyles.Any, CultureInfo.InvariantCulture, out d)
                 && d >= 0)
                 c.StopPerContract = d;
+
+            // Fields 28 and 29 are where the payout clock starts on this
+            // account: the last approved payout, and how many have been taken.
+            //
+            // Consistency is measured from the last approved payout because the
+            // firm measures it from there, and Ballast has no way to see a
+            // withdrawal happen. Absent means "never paid out", which counts
+            // the whole journal - the right reading for a file written before
+            // this existed, and for an account that has genuinely never paid.
+            if (f.Length >= 28 && !string.IsNullOrEmpty(f[27]) && f[27].Length == 8)
+            {
+                DateTime paid;
+                if (DateTime.TryParseExact(f[27], "yyyyMMdd", CultureInfo.InvariantCulture,
+                                           DateTimeStyles.None, out paid))
+                    c.LastPayoutOn = paid.Date;
+            }
+            if (f.Length >= 29 && int.TryParse(f[28], out n) && n >= 0)
+                c.PayoutsTaken = n;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.

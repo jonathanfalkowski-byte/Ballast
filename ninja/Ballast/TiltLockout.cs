@@ -52,6 +52,13 @@ namespace Ballast
         public const string MaxTrades      = "over_trading";
         public const string GiveBack       = "give_back";
 
+        /// <summary>
+        /// The consistency ceiling. The only wall in here raised by a day going
+        /// WELL, and the only one where carrying on costs a delay rather than
+        /// money - so it is deliberately not a hard breaker.
+        /// </summary>
+        public const string Windfall       = "windfall";
+
         public static string Label(string kind)
         {
             if (kind == PastFloor)      return "past the floor";
@@ -59,6 +66,7 @@ namespace Ballast
             if (kind == LossStreak)     return "max losses for the day";
             if (kind == MaxTrades)      return "max trades for the day";
             if (kind == GiveBack)       return "handing back a green day";
+            if (kind == Windfall)       return "big enough to hold up a payout";
             return kind;
         }
     }
@@ -810,6 +818,25 @@ namespace Ballast
                        + ". You are still up " + Money(i.DailyPnl) + ".";
                 t.Ask = "That money is still on the table. You can still walk away with it, "
                       + "and you will not get a second chance to do that today.";
+                outp.Add(t);
+            }
+
+            // The consistency ceiling. Last, because everything above it is a
+            // day going wrong and this is a day going right - and a trader who
+            // is also past his loss limit does not need to hear about payout
+            // paperwork first.
+            if (Has(d.Signals, TiltKind.Windfall) && i.DailyPnl > 0 && i.WindfallCeiling > 0)
+            {
+                TiltTrigger t = New(name, TiltKind.Windfall, i);
+                t.Title = "This day is big enough to hold up your payout.";
+                t.Line = name + " is up " + Money(i.DailyPnl) + " against a ceiling of "
+                       + Money(i.WindfallCeiling) + ". Your firm will not release a payout while "
+                       + "one day is that large a share of your total profit, and clearing it now "
+                       + "needs " + Money(i.ProfitToUnblockPayout) + " more profit on other days.";
+                t.Ask = "Nothing is lost here - the payout is postponed, not forfeited, and more "
+                      + "trading days dilute it. But this is the one rule where the good day is "
+                      + "the problem, and stopping now is what turns it into money you can "
+                      + "actually withdraw.";
                 outp.Add(t);
             }
 

@@ -16,6 +16,18 @@ using System.IO;
 
 namespace Ballast
 {
+    /// <summary>One firm-and-plan's payout terms, as read from the rule book.</summary>
+    public class PayoutSpec
+    {
+        public string Firm;
+        public string Plan;
+
+        /// <summary>0 means every size on this plan.</summary>
+        public double Size;
+
+        public PayoutRules Rules = new PayoutRules();
+    }
+
     public class FirmAccountSpec
     {
         public string Firm;
@@ -71,6 +83,13 @@ namespace Ballast
     public class RuleBook
     {
         private readonly List<FirmAccountSpec> specs = new List<FirmAccountSpec>();
+
+        // Payout terms, keyed loosely by firm and plan. Separate from specs
+        // because most firms publish them separately, because they change on a
+        // different schedule, and because a firm can perfectly well be in the
+        // book with its drawdowns and without its payout terms - which must
+        // read as "not published here", never as "no rule".
+        private readonly List<PayoutSpec> payouts = new List<PayoutSpec>();
 
         public string VerifiedDate = "unknown";
         public string LoadError = null;
@@ -150,6 +169,41 @@ namespace Ballast
         }
 
         /// <summary>All account types for a firm, in file order.</summary>
+        /// <summary>
+        /// The payout terms for one plan, or an empty set meaning "this firm's
+        /// payout terms are not in the book".
+        ///
+        /// A row with SIZE 0 covers every size on that plan; a row naming a
+        /// size beats it, because Apex's qualifying-day minimum is per size and
+        /// differs again between intraday and end-of-day.
+        /// </summary>
+        public PayoutRules PayoutFor(string firm, string plan, double size)
+        {
+            PayoutRules exact = null, any = null;
+            for (int i = 0; i < payouts.Count; i++)
+            {
+                PayoutSpec p = payouts[i];
+                if (p == null) continue;
+                if (!string.Equals(p.Firm, firm, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(p.Plan, plan, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (p.Size <= 0) any = p.Rules;
+                else if (Math.Abs(p.Size - size) < 1) exact = p.Rules;
+            }
+            return exact != null ? exact : (any != null ? any : new PayoutRules());
+        }
+
+        /// <summary>
+        /// The payout terms for a configured account, found the same way its
+        /// drawdown figures are.
+        /// </summary>
+        public PayoutRules PayoutForAccount(string accountName, TrackerConfig c)
+        {
+            FirmAccountSpec s = MatchSpecForAccount(accountName, c);
+            if (s == null) return new PayoutRules();
+            return PayoutFor(s.Firm, s.Plan, s.Size);
+        }
+
         public List<FirmAccountSpec> ForFirm(string firm)
         {
             List<FirmAccountSpec> list = new List<FirmAccountSpec>();
@@ -772,6 +826,7 @@ namespace Ballast
         public bool Load(string path)
         {
             specs.Clear();
+            payouts.Clear();
             LoadError = null;
             SourcePath = path;
 
@@ -805,6 +860,30 @@ namespace Ballast
                         {
                             VerifiedDate = f[1].Trim();
                         }
+                        continue;
+                    }
+
+                    // PAYOUT|firm|plan|size|consistency%|day minimum|days|
+                    //        minimum payout|payouts before the terms change
+                    if (f.Length >= 9 && f[0].Trim().ToUpperInvariant() == "PAYOUT")
+                    {
+                        PayoutSpec ps = new PayoutSpec();
+                        ps.Firm = f[1].Trim();
+                        ps.Plan = f[2].Trim();
+
+                        double pv; int pi;
+                        double.TryParse(f[3].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out pv);
+                        ps.Size = pv;
+                        double.TryParse(f[4].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out pv);
+                        ps.Rules.ConsistencyPct = pv;
+                        double.TryParse(f[5].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out pv);
+                        ps.Rules.QualifyingDayMinimum = pv;
+                        if (int.TryParse(f[6].Trim(), out pi)) ps.Rules.QualifyingDaysRequired = pi;
+                        double.TryParse(f[7].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out pv);
+                        ps.Rules.MinimumPayout = pv;
+                        if (int.TryParse(f[8].Trim(), out pi)) ps.Rules.MaxPayouts = pi;
+
+                        if (!string.IsNullOrEmpty(ps.Firm) && ps.Rules.Known) payouts.Add(ps);
                         continue;
                     }
 

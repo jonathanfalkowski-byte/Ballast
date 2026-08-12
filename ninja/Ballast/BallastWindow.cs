@@ -294,6 +294,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         private ComboBox profileBox;
         private TextBlock profileDetail;
         private TextBox tbRiskPerTrade;
+        private TextBox tbLastPayout;
+        private TextBox tbPayoutsTaken;
+        private TextBlock payoutTerms;
         private TextBlock stopCostHint;
 
         /// <summary>
@@ -2538,6 +2541,47 @@ namespace NinjaTrader.NinjaScript.AddOns
             windowClock.Margin = new Thickness(0, -6, 0, 8);
             acct.Children.Add(windowClock);
 
+            // ── Getting paid ─────────────────────────────────────────────────
+            //
+            // Two things Ballast cannot see and will never guess. A withdrawal
+            // does not show up in NinjaTrader, and the consistency rule is
+            // measured from the last approved one - so without these the whole
+            // calculation is counting from the wrong place, silently.
+            //
+            // Left blank they mean "never paid out", which counts the whole
+            // journal. That is the right answer for an account nobody has
+            // withdrawn from, and it is the answer that errs towards showing a
+            // TIGHTER ceiling rather than a looser one.
+            acct.Children.Add(Label("Last approved payout on this account (YYYY-MM-DD, blank = never)"));
+
+            Grid gPay = TwoCol();
+            tbLastPayout = FieldIn(gPay, 0, 0, "Last payout", "");
+            tbPayoutsTaken = FieldIn(gPay, 0, 1, "Payouts taken", "0");
+            acct.Children.Add(gPay);
+
+            payoutTerms = new TextBlock();
+            payoutTerms.Foreground = ColMuted;
+            payoutTerms.FontSize = 11;
+            payoutTerms.TextWrapping = TextWrapping.Wrap;
+            payoutTerms.Margin = new Thickness(0, -6, 0, 8);
+            acct.Children.Add(payoutTerms);
+
+            acct.Children.Add(Why("Why does Ballast need to know when I was last paid?",
+                "Because the consistency rule is measured from there. Your firm asks whether any "
+              + "single day is too large a share of the profit you have made SINCE your last "
+              + "approved payout - and once a payout is approved, that calculation starts again "
+              + "from nothing. Ballast cannot see a withdrawal happen, so this is the one figure "
+              + "it has to be told.\n\n"
+              + "Leave it blank if you have never been paid out on this account and it will count "
+              + "everything in the journal, which is the same thing.\n\n"
+              + "This is the only prop rule that punishes a GOOD day, and it is the one that turns "
+              + "\"I passed\" into \"I still cannot get paid\". If your best single day is too "
+              + "large a share of your total profit, the payout is not lost - it waits until more "
+              + "days are underneath it. So on a day that is running away from you, stopping early "
+              + "and banking it small is what makes the money withdrawable.\n\n"
+              + "Your firm's dashboard is what counts. These figures come from the rule book, they "
+              + "are a convenience, and a payout page that disagrees with Ballast is right."));
+
             windowAnyTimeBox = new CheckBox();
             windowAnyTimeBox.Content = "I trade whenever I like - never mention the clock";
             windowAnyTimeBox.Foreground = ColInk;
@@ -4167,6 +4211,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             bool ok = ruleBook.Load(RuleBookPath());
 
+            // Hand it to the monitor as well, so the payout terms are looked up
+            // from the same book every other figure comes from - and so
+            // reloading the book after correcting it corrects the ceiling too.
+            monitor.Rules = ruleBook;
+
             firmBox.Items.Clear();
             if (ok)
             {
@@ -5291,6 +5340,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tbRiskPerTrade != null)
                 tbRiskPerTrade.Text = c.StopPerContract.ToString(CultureInfo.InvariantCulture);
 
+            if (tbLastPayout != null)
+                tbLastPayout.Text = c.LastPayoutOn == DateTime.MinValue.Date
+                    ? ""
+                    : c.LastPayoutOn.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (tbPayoutsTaken != null)
+                tbPayoutsTaken.Text = c.PayoutsTaken.ToString(CultureInfo.InvariantCulture);
+            RefreshPayoutTerms(c);
+
             // And the two dropdowns at the top have to say what this account
             // actually is, rather than whatever happens to be first in the list.
             ShowAccountTypeFor(CurrentEditKey(), c);
@@ -5356,6 +5413,39 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch { }
         }
 
+        /// <summary>
+        /// Say what the rule book knows about getting paid on THIS account, in
+        /// the account's own numbers - or say plainly that it knows nothing,
+        /// which for most firms in the book is the truth.
+        /// </summary>
+        private void RefreshPayoutTerms(TrackerConfig c)
+        {
+            if (payoutTerms == null) return;
+
+            string key = CurrentEditKey();
+            PayoutRules r = ruleBook.PayoutForAccount(key, c);
+
+            if (r == null || !r.Known)
+            {
+                payoutTerms.Text = "This firm's payout terms are not in the rule book, so Ballast "
+                                 + "shows no consistency ceiling on this account. It will not "
+                                 + "borrow another firm's percentage.";
+                return;
+            }
+
+            payoutTerms.Text = "Rule book: no single day may be "
+                             + r.ConsistencyPct.ToString("0", CultureInfo.InvariantCulture)
+                             + "% or more of profit since your last payout; "
+                             + r.QualifyingDaysRequired.ToString(CultureInfo.InvariantCulture)
+                             + " days of at least " + Money(r.QualifyingDayMinimum)
+                             + "; " + Money(r.MinimumPayout) + " minimum request"
+                             + (r.MaxPayouts > 0
+                                ? "; the rule stops after payout "
+                                  + r.MaxPayouts.ToString(CultureInfo.InvariantCulture)
+                                : "")
+                             + ". Check it against your own dashboard.";
+        }
+
         private void ReadFieldsInto(TrackerConfig c)
         {
             c.StartingBalance     = ParseD(tbBalance, c.StartingBalance);
@@ -5370,6 +5460,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             c.BaseMaxContracts    = c.MaxContracts;
             c.LockFloorAt         = ParseD(tbLockAt, c.LockFloorAt);
             c.StopPerContract     = ParseD(tbRiskPerTrade, c.StopPerContract);
+
+            // A date that cannot be read is left alone rather than defaulted.
+            // Silently becoming 1 January would move the whole consistency
+            // calculation without saying so.
+            if (tbLastPayout != null)
+            {
+                string typed = (tbLastPayout.Text ?? "").Trim();
+                if (typed.Length == 0) c.LastPayoutOn = DateTime.MinValue.Date;
+                else
+                {
+                    DateTime paid;
+                    if (DateTime.TryParse(typed, CultureInfo.InvariantCulture,
+                                          DateTimeStyles.None, out paid))
+                        c.LastPayoutOn = paid.Date;
+                }
+            }
+            if (tbPayoutsTaken != null) c.PayoutsTaken = ParseI(tbPayoutsTaken, c.PayoutsTaken);
             if (automatedBox != null) c.IsAutomated = automatedBox.IsChecked == true;
             if (trustRealisedBox != null) c.TrustAccountRealised = trustRealisedBox.IsChecked == true;
             if (acctGenBox != null && acctGenBox.SelectedIndex >= 0)

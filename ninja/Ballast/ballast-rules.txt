@@ -16,10 +16,28 @@
 #   DAILYLOSS  = 0 means the firm publishes no separate daily loss limit
 #   NOTE       = free text, shown in the window
 #
+# Getting paid is a separate line, because it is a separate set of rules and
+# most firms publish it separately:
+#
+#   PAYOUT | FIRM | PLAN | SIZE | CONSISTENCY% | DAYMIN | DAYS | MINPAYOUT | MAXPAYOUTS
+#
+#   SIZE         = 0 means every size on that plan
+#   CONSISTENCY% = the share of total profit one day may not exceed. 0 = the
+#                  firm publishes no consistency rule, and Ballast then shows
+#                  no ceiling rather than borrowing another firm's number
+#   DAYMIN       = profit a day must make to count towards the day count
+#   DAYS         = qualifying days before a payout can be requested
+#   MAXPAYOUTS   = payouts before the terms change (Apex's ladder ends at six,
+#                  and the consistency rule stops applying with it)
+#
+# A firm with no PAYOUT line gets no consistency ceiling at all. That is the
+# honest answer and it is the safe one - a borrowed percentage would tell a
+# trader to stop on a day his own firm was perfectly happy with.
+#
 # Lines starting with # are ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION|15
+VERSION|16
 VERIFIED|2026-08-06
 
 # ── Which firms have actually been checked, and against what ─────────────────
@@ -39,6 +57,38 @@ VERIFIED|2026-08-06
 VERIFIED|Apex Trader Funding|2026-08-04|Apex's own help centre
 VERIFIED|MyFundedFutures|2026-08-04|MyFundedFutures' own rules pages
 VERIFIED|Topstep|2026-08-06|help.topstep.com and topstep.com/topstep-prop
+
+# ── Getting paid ─────────────────────────────────────────────────────────────
+#
+# Apex payout terms read 2026-08-12 from Apex's own help centre:
+#   Intraday: /help-center/intraday-trailing-drawdown-accounts/
+#             intraday-trailing-drawdown-payouts/
+#   EOD:      /help-center/eod-trailing-drawdown-accounts/eod-payouts/
+#   50%:      /help-center/additional-helpful-items/50-consistency-requirement/
+#   Legacy:   /help-center/legacy-helpful-items/
+#             what-are-the-consistency-rules-for-legacy-pa-and-funded-accounts/
+#
+# THE TWO PERCENTAGES ARE NOT INTERCHANGEABLE. Apex runs 50% on 4.0 Performance
+# accounts and 30% on Legacy ones, and 4.0 stops at 150K - so a 75K, 250K or
+# 300K funded Apex account is legacy and runs the tighter rule. On $2,000
+# banked that is the difference between a $2,000 day and an $857 day.
+#
+# The qualifying-day minimums differ between intraday and EOD as well. They are
+# not a typo:
+#   intraday   25K $100   50K $200   100K $250   150K $300
+#   end-of-day 25K $100   50K $250   100K $300   150K $350
+
+PAYOUT|Apex Trader Funding|Legacy PA / funded|0|30|50|5|500|6
+
+PAYOUT|Apex Trader Funding|PA / funded (intraday)|25000|50|100|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (intraday)|50000|50|200|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (intraday)|100000|50|250|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (intraday)|150000|50|300|5|500|6
+
+PAYOUT|Apex Trader Funding|PA / funded (end-of-day)|25000|50|100|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (end-of-day)|50000|50|250|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (end-of-day)|100000|50|300|5|500|6
+PAYOUT|Apex Trader Funding|PA / funded (end-of-day)|150000|50|350|5|500|6
 
 # -- Apex Trader Funding (4.0, effective 1 March 2026) ------------------------
 # EVALUATIONS AND FUNDED (PA) ACCOUNTS DIFFER, AND SO DO PLATFORMS.
