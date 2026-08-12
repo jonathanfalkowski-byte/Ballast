@@ -30,6 +30,7 @@ public static class PayoutTests
         TerminalStatesStillOutrankIt();
         AnAccountWithNoTermsIsNeverToldToStop();
         TheCeilingReachesTheAccountRow();
+        AnEvaluationHasNoPayoutToProtect();
     }
 
     static PayoutRules Legacy()
@@ -521,6 +522,78 @@ public static class PayoutTests
         AccountSnapshot simSnap = m.Evaluate("Sim101", today.AddHours(11));
         T.Near(simSnap.Input.WindfallCeiling, 0, 0.01, "a practice account has no payout to protect");
         T.Ok(!simSnap.Input.PastWindfallCeiling, "and is never told it has crossed one");
+    }
+
+    /// <summary>
+    /// "just so you know none of those accounts are PA all are evals"
+    ///
+    /// An evaluation cannot be withdrawn from, so it has no consistency rule to
+    /// break, and a ceiling on one would be advice to stop trading for no
+    /// reason at all.
+    ///
+    /// Two locks, because the first one has failed before. The rule book gets
+    /// there on its own - a 250K Apex account with a floor that fixes at
+    /// 265,000 is a Legacy EVALUATION, not the Legacy PA that shares its size
+    /// and drawdown, and evaluation plans have no PAYOUT line. The second is
+    /// the account's stated purpose, for the day an account is set up as the
+    /// wrong type. 109 and 110 have worn a 250K's drawdown on a 100K body.
+    /// </summary>
+    static void AnEvaluationHasNoPayoutToProtect()
+    {
+        T.S("an evaluation has no payout to protect");
+
+        RuleBook rb = new RuleBook();
+        T.Ok(rb.Load("Ballast/ballast-rules.txt"), "the shipped rule book loads");
+
+        // His own settings line for 105, exactly as it sits on disk.
+        string key;
+        TrackerConfig c = SettingsCodec.Deserialise(
+            "APEX-11325-105|250000|6500|0|3|250|250|5|4|265000||0|0|0|4|0|0|570|750|5|27|15000|0|1|0|0|0",
+            out key);
+
+        FirmAccountSpec spec = rb.MatchSpecForAccount(key, c);
+        T.Ok(spec != null, "the rule book recognises it");
+        T.Ok(spec.Plan.IndexOf("valuation", StringComparison.Ordinal) >= 0,
+             "as an evaluation, not a funded account - got: " + spec.Plan);
+        T.Ok(!rb.PayoutForAccount(key, c).Known,
+             "so it has no payout terms and can never be given a ceiling");
+
+        // The second lock: the same account wearing the wrong type.
+        BallastMonitor m = new BallastMonitor();
+        m.Rules = rb;
+        BallastTracker t = m.GetOrCreate("APEX-11325-105");
+        t.Config = c;
+        t.Config.Purpose = AccountPurpose.Evaluation;
+        t.Config.LockFloorAt = 250100;              // now matching the Legacy PA row
+        t.Config.ProfitTarget = 0;
+        t.Config.DailyTarget = 0;
+        t.Config.DailyLossLimit = 0;
+        t.Config.MaxTrades = 0;
+        t.Config.MaxLossesBeforeStop = 0;
+        t.Config.SessionStartMinute = 0;
+        t.Config.SessionEndMinute = 0;
+        t.Config.TrustAccountRealised = false;
+
+        T.Ok(rb.PayoutForAccount("APEX-11325-105", t.Config).Known,
+             "the rule book would now hand it the funded account's terms");
+
+        DateTime today = new DateTime(2026, 8, 12);
+        for (int d = 0; d < 4; d++)
+            m.Journal.Add(Trade("APEX-11325-105", today.AddDays(-(4 - d)).AddHours(10), 500, 0));
+        t.EnsureSession(today.AddHours(9).AddMinutes(30), 0, 252000);
+        t.OnEquity(253000, 1000, 253000);
+
+        AccountSnapshot s = m.Evaluate("APEX-11325-105", today.AddHours(11));
+        T.Near(s.Input.WindfallCeiling, 0, 0.01,
+               "but an account he has said is an evaluation is never given one");
+        T.Ok(!s.Input.PastWindfallCeiling, "and is never told it has crossed one");
+
+        // And when it does become a PA, the same account gets the ceiling.
+        t.Config.Purpose = AccountPurpose.Funded;
+        AccountSnapshot funded = m.Evaluate("APEX-11325-105", today.AddHours(11));
+        T.Near(funded.Input.ConsistencyPct, 30, 0.01,
+               "a 250K PA is legacy, so 30% - the day the eval passes, this wakes up");
+        T.Near(funded.Input.WindfallCeiling, 857.14, 0.01, "with the ceiling its four days earn it");
     }
 
     static BallastTrade Trade(string account, DateTime exit, double pnl, double commission)

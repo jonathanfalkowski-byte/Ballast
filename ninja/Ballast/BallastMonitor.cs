@@ -359,6 +359,14 @@ namespace Ballast
         /// would be worse than no number:
         ///
         ///   - a practice or replay account. There is no payout to protect.
+        ///   - an EVALUATION. "just so you know none of those accounts are PA
+        ///     all are evals" - and an evaluation cannot be withdrawn from, so
+        ///     it has no consistency rule to break. The rule book already
+        ///     reaches this answer on its own, because an evaluation plan has
+        ///     no PAYOUT line; this is the second lock, for the day an account
+        ///     is set up as the wrong type. That has happened here before, and
+        ///     a ceiling on an account that cannot pay out would be advice to
+        ///     stop trading for no reason at all.
         ///   - a firm with no PAYOUT line in the rule book. Borrowing another
         ///     firm's percentage would tell him to stop on a day his own firm
         ///     was perfectly happy with.
@@ -373,6 +381,8 @@ namespace Ballast
         {
             if (i == null || t == null || Rules == null) return;
             if (RuleBook.IsPracticeAccountName(accountName)) return;
+            if (t.Config != null && (t.Config.Purpose == AccountPurpose.Practice
+                                  || t.Config.Purpose == AccountPurpose.Evaluation)) return;
 
             PayoutRules pr = Rules.PayoutForAccount(accountName, t.Config);
             if (pr == null || !pr.HasConsistencyRule) return;

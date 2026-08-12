@@ -5423,13 +5423,34 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (payoutTerms == null) return;
 
             string key = CurrentEditKey();
+
+            // An evaluation cannot be withdrawn from, so it has no consistency
+            // rule - and saying "not in the rule book" here would be a
+            // different and wrong statement. Apex publishes payout terms; they
+            // simply do not apply until the account is funded.
+            if (c != null && c.Purpose == AccountPurpose.Evaluation)
+            {
+                payoutTerms.Text = "This is an evaluation, so there is nothing to withdraw and no "
+                                 + "consistency rule to break. Ballast shows no ceiling here. It "
+                                 + "starts the day this account becomes funded.";
+                return;
+            }
+            if (c != null && c.Purpose == AccountPurpose.Practice)
+            {
+                payoutTerms.Text = "A practice account has no payout to protect, so no ceiling is "
+                                 + "shown here.";
+                return;
+            }
+
             PayoutRules r = ruleBook.PayoutForAccount(key, c);
 
             if (r == null || !r.Known)
             {
-                payoutTerms.Text = "This firm's payout terms are not in the rule book, so Ballast "
-                                 + "shows no consistency ceiling on this account. It will not "
-                                 + "borrow another firm's percentage.";
+                payoutTerms.Text = "No payout terms for this account type are in the rule book, so "
+                                 + "Ballast shows no consistency ceiling on it. It will not borrow "
+                                 + "another firm's percentage. If this account is funded and your "
+                                 + "firm publishes a consistency rule, add a PAYOUT line to "
+                                 + "ballast-rules.txt and press Reload.";
                 return;
             }
 
