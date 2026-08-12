@@ -49,6 +49,7 @@ public static class Program
         MonthTests.Run();
         LookBackTests.Run();
         DiskTests.Run();
+        RestartTests.Run();
         Console.WriteLine("\n" + T.Pass + " passed, " + T.Fail + " failed");
         return T.Fail == 0 ? 0 : 1;
     }

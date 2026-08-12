@@ -393,6 +393,23 @@ namespace Ballast
         private bool sessionRestored;
         private DateTime sessionSeedDay = DateTime.MinValue.Date;
 
+        // Has a fill actually been seen since this session opened?
+        //
+        // Deliberately not TradesToday, which is also seeded from the journal.
+        // A seeded count - including a reconstructed row that should never have
+        // been written - must not stop Ballast recognising an account that has
+        // not been traded today.
+        private bool fillThisSession;
+
+        /// <summary>
+        /// True when the saved baseline was taken at the start of the trading
+        /// day rather than at whatever moment an older build happened to open.
+        /// Only a day-start baseline can be laid on top of the account's own
+        /// realised figure; a mid-day one would erase the morning. Set from the
+        /// session file's version before the seed is handed over.
+        /// </summary>
+        public bool SeedBaselineIsDayStart;
+
         /// <summary>
         /// What the previous session finished at. Written to the session file so
         /// a feed that carries its realised figure into the next day can be
@@ -441,6 +458,12 @@ namespace Ballast
         /// because the figure is the account's own. Only then is a difference
         /// between the day's P&L and the journal evidence of a missing trade
         /// rather than evidence of a missing baseline.
+        ///
+        /// This is deliberately NOT gated on a session row existing for today.
+        /// A trader who traded the morning with Ballast shut and opens it at
+        /// lunchtime has a real gap and wants it written down. What must not
+        /// happen is a day's P&L that is not today's arriving here in the first
+        /// place - which is what the carry tests in EnsureSession are for.
         /// </summary>
         public bool BaselineAuthoritative { get { return sessionRestored; } }
 
@@ -579,7 +602,19 @@ namespace Ballast
             // This bit hard on the very first run of the new build: the file on
             // disk had been written minutes earlier by the old one, so the
             // account said the day had cost $2,126 and Ballast still said $754.
-            if (Config == null || !Config.TrustAccountRealised)
+            // The exception, and it is the whole reason this restores at all
+            // now: a baseline written by THIS build was taken at the start of
+            // the trading day, and on a feed that carries its realised figure
+            // into tomorrow it is the only record of where the day began. The
+            // carried figure is recognised by comparing against the previous
+            // session's close, and after the first save of the day there is no
+            // previous session's close left on disk to compare against - the
+            // file keeps one row per account and today has overwritten it.
+            //
+            // So a restart re-derived a baseline of zero, read the residue as
+            // this morning's trading, and the window booked it as a trade on
+            // an account he had not touched.
+            if (Config == null || !Config.TrustAccountRealised || SeedBaselineIsDayStart)
                 sessionStartRealised = sessionSeedStartRealised;
 
             haveBaseline = true;
@@ -871,6 +906,10 @@ namespace Ballast
             if (!string.IsNullOrEmpty(executionId) && seenExecutionIds.Contains(executionId)) return null;
             RememberExecution(executionId);
 
+            // The live add-on drives this path, not OnPosition. Both have to
+            // say "something has actually been traded today".
+            fillThisSession = true;
+
             ExecutionTradeState s;
             if (!executionTrades.TryGetValue(instrument, out s))
             {
@@ -980,7 +1019,11 @@ namespace Ballast
                 // been moved on. It faithfully recorded that every day closed at
                 // nothing, and wiped the figure the session file had just
                 // restored on its way past. Both tests caught it.
-                if (sessionDate != DateTime.MinValue.Date) LastClosingDailyPnl = DailyPnl;
+                // Was Ballast open when this boundary went past? A cold start
+                // knows nothing about the day before it.
+                bool watchedTheRoll = sessionDate != DateTime.MinValue.Date;
+
+                if (watchedTheRoll) LastClosingDailyPnl = DailyPnl;
 
                 // An EOD threshold advances from the completed session's closing
                 // balance, not from the account's fluctuating intraday balance.
@@ -1051,10 +1094,56 @@ namespace Ballast
                             && Math.Abs(LastClosingDailyPnl) > 1.0
                             && Math.Abs(realisedNow - LastClosingDailyPnl) < 1.0;
 
-                sessionStartRealised = (trust && !carried) ? 0 : realisedNow;
-                if (carried) FeedCarriesRealised = true;
+                // A day that has not started cannot have made money.
+                //
+                // The exact-match test above only recognises a carried figure
+                // when it equals Ballast's own record of the last close to the
+                // cent, which needs Ballast to have watched the whole of the
+                // previous day. When Ballast watched THIS boundary go past
+                // there is a stronger fact available and it needs no history at
+                // all: no trade has happened yet today, so whatever the feed
+                // reports at this instant belongs to yesterday. A feed that
+                // resets reads zero here and nothing changes; a feed that
+                // carries reads its residue and the day starts from it.
+                bool residue = watchedTheRoll && Math.Abs(realisedNow) > 1.0;
+
+                // And the cold-start case, where neither of the above can help:
+                // Ballast was not running at the boundary, and if it was not
+                // run yesterday either there is no previous close on disk to
+                // match against.
+                //
+                // The cash tells it anyway. A morning traded without Ballast
+                // watching moves the balance by what it made or lost. A figure
+                // the feed is merely carrying does not - the platform settled
+                // that into the balance when the session it belonged to closed.
+                // So an account sitting on exactly the cash Ballast last wrote
+                // down, reporting a realised figure that is not zero, is
+                // reporting yesterday, and the day starts from it.
+                //
+                // The tolerance is a dollar on purpose. Any real trading moves
+                // cash by more, and a morning that happens to end exactly flat
+                // has nothing to record either way.
+                //
+                // And it only means anything if the cash Ballast is comparing
+                // against was written down on an EARLIER day. On a mid-session
+                // restart that figure was written minutes ago, by this morning,
+                // so of course it has not moved since - and reading that as
+                // "nothing has happened today" is precisely the bug that zeroed
+                // three live accounts the day before this one was written.
+                bool unmoved = trust
+                            && Math.Abs(realisedNow) > 1.0
+                            && riskStateAsOf != DateTime.MinValue.Date
+                            && riskStateAsOf < tradingDay
+                            && IsPlausibleEquity(LastKnownBalance)
+                            && IsPlausibleEquity(equityNow)
+                            && Math.Abs(equityNow - LastKnownBalance) < 1.0;
+
+                sessionStartRealised =
+                    (trust && !carried && !residue && !unmoved) ? 0 : realisedNow;
+                if (carried || residue || unmoved) FeedCarriesRealised = true;
                 haveBaseline = true;
                 sessionRestored = trust;
+                fillThisSession = false;
                 seedBaselineApplied = false;
                 inPosition = false;
                 bool ok = IsPlausibleEquity(equityNow);
@@ -1156,6 +1245,20 @@ namespace Ballast
             if (!IsPlausibleEquity(PeakEquity)) PeakEquity = equityNow;
 
             if (equityNow > PeakEquity) PeakEquity = equityNow;
+
+            // A feed that zeroes its realised figure a beat AFTER the session
+            // boundary, rather than on it. The baseline was taken from the
+            // residue that was still showing, and the moment the platform
+            // clears it the day would read minus that residue for the rest of
+            // the session.
+            //
+            // Exactly zero, nothing traded since this session opened, and flat.
+            // A real trading day arrives at 0.00 only through a fill, and a
+            // fill is the one thing this cannot have behind it.
+            if (haveBaseline && sessionStartRealised != 0 && realisedNow == 0
+                && !fillThisSession && OpenContracts == 0
+                && Config != null && Config.TrustAccountRealised)
+                sessionStartRealised = 0;
 
             if (haveBaseline)
             {
@@ -1307,6 +1410,7 @@ namespace Ballast
             sessionStartRealised = Config != null && Config.TrustAccountRealised ? 0 : realisedNow;
             haveBaseline = true;
             sessionRestored = false;
+            fillThisSession = false;
             seedBaselineApplied = true;      // the seed describes the erased day
 
             if (IsPlausibleEquity(equityNow))
@@ -1352,6 +1456,7 @@ namespace Ballast
         {
             OpenContracts = Math.Abs(signedQuantity);
             fillSinceEquity = true;
+            fillThisSession = true;
 
             bool flat = signedQuantity == 0;
 

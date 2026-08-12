@@ -6151,7 +6151,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
 
                 List<string> lines = new List<string>();
-                lines.Add("*SESSION*|4");
+                // Version 5. The only difference from 4 is a promise about
+                // field 3: it is the baseline as at the START of the trading
+                // day, not wherever the window happened to open. A version-4
+                // file cannot make that promise, so its baseline is still
+                // ignored on an account whose realised figure is trusted.
+                lines.Add("*SESSION*|5");
 
                 foreach (string name in monitor.MonitoredNames)
                 {
@@ -6203,6 +6208,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 DateTime now;
                 try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
                 string[] lines = File.ReadAllLines(p);
+
+                // What this file promises about the baseline in field 3. See
+                // the writer above.
+                int version = 0;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (lines[i] == null || !lines[i].StartsWith("*SESSION*|")) continue;
+                    int.TryParse(lines[i].Substring(10), NumberStyles.Integer,
+                                 CultureInfo.InvariantCulture, out version);
+                    break;
+                }
+
                 for (int i = 0; i < lines.Length; i++)
                 {
                     if (lines[i] == null || lines[i].StartsWith("*")) continue;
@@ -6245,6 +6262,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     DateTime currentTradingDay = t.TradingDay(now);
                     bool current = savedDay == currentTradingDay;
+
+                    // Only a version-5 row can say where the DAY started, and
+                    // only a day-start baseline may be laid on top of the
+                    // account's own realised figure.
+                    t.SeedBaselineIsDayStart = version >= 5;
+
                     if (current)
                         t.SeedSession(savedDay, start, peakEq, peak, worst, f[6] == "1",
                                       eodHigh, lastBalance, authoritativeFloor, providerConfirmed);
