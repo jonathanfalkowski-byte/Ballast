@@ -73,6 +73,30 @@ namespace Ballast
         /// </summary>
         public double Commission;
 
+        /// <summary>
+        /// What this trade actually put into the account: the round trip, less
+        /// what it cost to take.
+        ///
+        /// "doesnt seem correct...89 all acounts but it says 92 net"
+        ///
+        /// Pnl is the GROSS round trip and Commission sits beside it, so every
+        /// figure built by adding Pnl up overstates the day by what he paid to
+        /// trade it. The end-of-day card said "$92 net of commission" about a
+        /// day his accounts put at $89 - two trades on APEX-11325-105, $70.50
+        /// and $21.00, $1.30 a side.
+        ///
+        /// The tracker never had this problem, because it measures the day as
+        /// the change in the account's own realised P&L and that is already net.
+        /// The journal is the half that had to be told.
+        ///
+        /// One definition, here, so a total shown to the trader cannot drift
+        /// from the total his broker shows him again.
+        /// </summary>
+        public double Net
+        {
+            get { return Pnl - (Commission > 0 ? Commission : 0); }
+        }
+
         // ── Context at the moment of entry. This is the interesting half.
         public int TradeNumberToday;
         public double DailyPnlBefore;
@@ -364,9 +388,15 @@ namespace Ballast
         public void Add(BallastTrade e)
         {
             Count++;
-            Net += e.Pnl;
-            if (e.Pnl > 0) { Wins++; GrossWin += e.Pnl; }
-            else GrossLoss += -e.Pnl;
+            // Net throughout, including which side of the line a trade fell.
+            // A round trip that made a dollar and cost four was not a winner,
+            // and the tracker has always counted it as a loss - it works from
+            // the account's realised figure, which is net. This is the journal
+            // agreeing with it.
+            double n = e.Net;
+            Net += n;
+            if (n > 0) { Wins++; GrossWin += n; }
+            else GrossLoss += -n;
         }
     }
 
@@ -933,7 +963,7 @@ namespace Ballast
             for (int i = 0; i < book.Count; i++)
             {
                 if (book[i].Pnl > 0) green++;
-                net += book[i].Pnl;
+                net += book[i].Net;
             }
 
             string when = PeriodName(period);
@@ -951,9 +981,9 @@ namespace Ballast
             for (int i = 0; i < book.Count; i++)
             {
                 string v = book[i].Planned;
-                if (v == Verdict_ByTheBook) { kept++; keptNet += book[i].Pnl; }
+                if (v == Verdict_ByTheBook) { kept++; keptNet += book[i].Net; }
                 else if (v == Verdict_Chased || v == Verdict_OffPlan || v == Verdict_Sloppy)
-                { broke++; brokeNet += book[i].Pnl; }
+                { broke++; brokeNet += book[i].Net; }
             }
 
             if (kept >= 2 && broke >= 2 && brokeNet < keptNet)
@@ -987,9 +1017,9 @@ namespace Ballast
             for (int i = 0; i < day.Count; i++)
             {
                 string v = day[i].Planned;
-                if (v == Verdict_ByTheBook) { kept++; keptNet += day[i].Pnl; }
+                if (v == Verdict_ByTheBook) { kept++; keptNet += day[i].Net; }
                 else if (v == Verdict_Chased || v == Verdict_OffPlan || v == Verdict_Sloppy)
-                { broke++; brokeNet += day[i].Pnl; }
+                { broke++; brokeNet += day[i].Net; }
             }
 
             if (kept >= 2 && broke >= 2 && brokeNet < 0 && keptNet > brokeNet)
@@ -1010,7 +1040,7 @@ namespace Ballast
             {
                 string k = day[i].Setup;
                 if (string.IsNullOrEmpty(k)) continue;
-                double n; byNet.TryGetValue(k, out n); byNet[k] = n + day[i].Pnl;
+                double n; byNet.TryGetValue(k, out n); byNet[k] = n + day[i].Net;
                 int c; byCount.TryGetValue(k, out c); byCount[k] = c + 1;
             }
             foreach (KeyValuePair<string, double> kv in byNet)
@@ -1038,7 +1068,7 @@ namespace Ballast
             {
                 string k = day[i].Feeling;
                 if (string.IsNullOrEmpty(k)) continue;
-                double n; byFeel.TryGetValue(k, out n); byFeel[k] = n + day[i].Pnl;
+                double n; byFeel.TryGetValue(k, out n); byFeel[k] = n + day[i].Net;
                 int c; feelN.TryGetValue(k, out c); feelN[k] = c + 1;
             }
             foreach (KeyValuePair<string, double> kv in byFeel)
@@ -1054,7 +1084,8 @@ namespace Ballast
 
             // -- 4. Nothing to compare. Say what happened, and no more. --------
             double net = 0; int wins = 0;
-            for (int i = 0; i < day.Count; i++) { net += day[i].Pnl; if (day[i].Pnl > 0) wins++; }
+            for (int i = 0; i < day.Count; i++)
+            { double n = day[i].Net; net += n; if (n > 0) wins++; }
 
             return Plural(day.Count) + ", " + wins + " green, "
                  + BallastTrade.Money(net) + " net of commission.";
@@ -1416,7 +1447,7 @@ namespace Ballast
             double sum = 0, sumSq = 0;
             for (int i = 0; i < n; i++)
             {
-                double net = trades[i].Pnl - (trades[i].Commission > 0 ? trades[i].Commission : 0);
+                double net = trades[i].Net;
                 sum += net;
                 sumSq += net * net;
                 if (net > 0) r.Wins++;
@@ -1712,8 +1743,8 @@ namespace Ballast
                     bool after = e.PreviousTradeWasLoss
                               && e.MinutesSincePreviousLoss >= 0
                               && e.MinutesSincePreviousLoss < win;
-                    if (after) { inside += e.Pnl; nIn++; }
-                    else { outside += e.Pnl; nOut++; }
+                    if (after) { inside += e.Net; nIn++; }
+                    else { outside += e.Net; nOut++; }
                 }
 
                 if (nIn < minSample || nOut < minSample) continue;

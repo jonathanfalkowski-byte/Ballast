@@ -29,6 +29,7 @@ public static class LessonTests
         SimulatedMoneyIsNeverAddedToRealMoney();
         TheHeadlineIsFactsBeforeAnyExplanation();
         LastSessionIsTheLastDayHeTraded();
+        TheDayAgreesWithTheAccountsToTheCent();
     }
 
     /// <summary>
@@ -161,6 +162,67 @@ public static class LessonTests
         // Today still means today.
         T.Eq(BallastJournal.InPeriod(book, monday, JournalPeriod.Today).Count, 1,
              "and Today is untouched by any of this");
+    }
+
+    /// <summary>
+    /// "doesnt seem correct...89 all acounts but it says 92 net"
+    ///
+    /// DAY P&L, ALL ACCOUNTS read $89 and the end-of-day card read "2 trades,
+    /// 2 green, $92 net of commission" - about the same two trades on the same
+    /// afternoon. His actual numbers: $70.50 and $21.00 on APEX-11325-105,
+    /// $1.30 a side.
+    ///
+    /// The card was adding up the Pnl column, which is the GROSS round trip,
+    /// and then calling the total net. The tracker never had the problem - it
+    /// measures the day as the change in the account's own realised P&L, and
+    /// that is already net of commission - so the two halves of Ballast were
+    /// describing the same day with different arithmetic.
+    ///
+    /// Every one of the 1,419 tests passed through this, because every fixture
+    /// in them left Commission at zero. That is the actual finding.
+    /// </summary>
+    static void TheDayAgreesWithTheAccountsToTheCent()
+    {
+        T.S("the day agrees with the accounts to the cent");
+
+        // One trade knows what it made.
+        BallastTrade one = Tr(70.5, BallastJournal.Verdict_ByTheBook, "A", "");
+        one.Commission = 1.3;
+        T.Near(one.Net, 69.2, 0.005, "a trade's net is the round trip less what it cost");
+
+        // His two, and the card.
+        List<BallastTrade> day = new List<BallastTrade>();
+        BallastTrade a = Tr(70.5, BallastJournal.Verdict_ByTheBook, "A", "");
+        a.Commission = 1.3; day.Add(a);
+        BallastTrade b = Tr(21, BallastJournal.Verdict_ByTheBook, "A", "");
+        b.Commission = 1.3; day.Add(b);
+
+        string card = BallastJournal.DayLesson(day);
+        T.Ok(card.IndexOf("$89", StringComparison.Ordinal) >= 0,
+             "the card says what the accounts say - got: " + card);
+        T.Ok(card.IndexOf("$92", StringComparison.Ordinal) < 0,
+             "and never the gross figure it used to call net");
+        T.Ok(card.IndexOf("2 green", StringComparison.Ordinal) >= 0, "both trades cleared their costs");
+
+        // A trade that did not cover its own commission is not green. The
+        // tracker has always counted it as a loss, because realised P&L is net.
+        List<BallastTrade> marginal = new List<BallastTrade>();
+        BallastTrade thin = Tr(1, BallastJournal.Verdict_ByTheBook, "A", "");
+        thin.Commission = 4.36; marginal.Add(thin);
+        BallastTrade good = Tr(400, BallastJournal.Verdict_ByTheBook, "A", "");
+        good.Commission = 4.36; marginal.Add(good);
+
+        string thinCard = BallastJournal.DayLesson(marginal);
+        T.Ok(thinCard.IndexOf("1 green", StringComparison.Ordinal) >= 0,
+             "a dollar that cost four is not a winner - got: " + thinCard);
+
+        // And the split tables underneath it are net too, or the card and the
+        // table it links to disagree about the same trades.
+        BallastJournal j = new BallastJournal();
+        List<JournalBucket> split = j.PlannedSplit(day);
+        double total = 0;
+        for (int i = 0; i < split.Count; i++) total += split[i].Net;
+        T.Near(total, 88.9, 0.005, "the planned split adds up to the same 88.90");
     }
 
     static BallastTrade At(BallastTrade e, DateTime when)
