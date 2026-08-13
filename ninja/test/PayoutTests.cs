@@ -365,7 +365,7 @@ public static class PayoutTests
         plain.DailyTarget = 0;
         plain.WindfallCeiling = 0; plain.ConsistencyPct = 0;
         T.Eq(DisciplineEngine.RowWarning(plain, DisciplineEngine.Evaluate(plain)),
-             "green $600 - protect it", "and an account with no published terms is unchanged");
+             "green $600", "and an account with no published terms says only the number");
     }
 
     /// <summary>

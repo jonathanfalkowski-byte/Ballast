@@ -32,6 +32,7 @@ public static class LimitTests
         ALossStreakIsActuallyAStreak();
         TheRowAndTheChartNeverDisagree();
         TypingPastTheWallGivesTheButtonsBack();
+        ProtectItWaitsUntilThereIsSomethingToProtect();
     }
 
     /// <summary>
@@ -353,6 +354,81 @@ public static class LimitTests
     }
 
     /// <summary>His Sim101 row, four minutes past a loss, with the count varied.</summary>
+    /// <summary>
+    /// "it says im up 69 and 84 in 2 accounts and you mention protect it,
+    /// meaning trade cautiously or not at all..that is no where near my goal
+    /// for the day...i think that should only come out when you have reached
+    /// half or 2/3rd your target"
+    ///
+    /// It was saying it the moment the day went a cent green. $69 against a
+    /// $250 target is 28% of the way there, and telling a trader to protect
+    /// 28% of his goal is telling him to stop before he has started.
+    ///
+    /// Below the line the row says the number and stops. Advice on every line
+    /// teaches a trader to read past all of it, and then the lines that matter
+    /// get read past too.
+    /// </summary>
+    static void ProtectItWaitsUntilThereIsSomethingToProtect()
+    {
+        T.S("protect it waits until there is something to protect");
+
+        // His own row: $69 on APEX-11325-105, whose target is $250.
+        DisciplineInput early = Green(69, 250);
+        string row = DisciplineEngine.RowWarning(early, DisciplineEngine.Evaluate(early));
+        T.Eq(row, "green $69", "at 28% of target it states the number and says nothing else");
+
+        // And the other one, $84 against Sim103's $1,500.
+        DisciplineInput other = Green(84, 1500);
+        T.Eq(DisciplineEngine.RowWarning(other, DisciplineEngine.Evaluate(other)),
+             "green $84", "6% of a target is not a day worth protecting");
+
+        // Just under two-thirds - still nothing.
+        DisciplineInput under = Green(166, 250);
+        T.Eq(DisciplineEngine.RowWarning(under, DisciplineEngine.Evaluate(under)),
+             "green $166", "a dollar short of the line is still short of it");
+
+        // At two-thirds it speaks.
+        DisciplineInput at = Green(167, 250);
+        T.Eq(DisciplineEngine.RowWarning(at, DisciplineEngine.Evaluate(at)),
+             "green $167 - protect it", "two-thirds of the way there is worth protecting");
+
+        // At the target the existing line takes over and says more than this one.
+        DisciplineInput hit = Green(250, 250);
+        T.Eq(DisciplineEngine.RowWarning(hit, DisciplineEngine.Evaluate(hit)),
+             "target hit - bank it or free-roll, do not give it back",
+             "and the target itself still has its own words");
+
+        // No target set, no judgement to make. "Protect it" is a statement
+        // about how much of the day's goal is on the table, and without a goal
+        // there is nothing to measure it against.
+        DisciplineInput noTarget = Green(900, 0);
+        T.Eq(DisciplineEngine.RowWarning(noTarget, DisciplineEngine.Evaluate(noTarget)),
+             "green $900", "an account with no target is never told to protect anything");
+
+        // A red day is untouched by any of this.
+        DisciplineInput red = Green(-120, 250);
+        T.Eq(DisciplineEngine.RowWarning(red, DisciplineEngine.Evaluate(red)),
+             "clear", "and a day that is down reads as it always did");
+    }
+
+    /// <summary>A clean green day on an account with nothing else to say about it.</summary>
+    static DisciplineInput Green(double dayPnl, double target)
+    {
+        DisciplineInput i = new DisciplineInput();
+        i.StartingBalance = 250000; i.TrailingDrawdown = 6500;
+        i.CurrentEquity = 247683; i.HasValidEquity = true;
+        i.FloorLevel = 243500; i.CushionToFloor = 4183;
+        i.MaxTrades = 5; i.TradesToday = 1;
+        i.MaxLossesBeforeStop = 3; i.LossStreak = 0;
+        i.DailyLossLimit = 250; i.DailyTarget = target;
+        i.MaxContracts = 4; i.BaseMaxContracts = 4;
+        i.NowMinuteEt = 690; i.SessionStartMinute = 570; i.SessionEndMinute = 750;
+        i.MinutesSinceLastLoss = 120; i.CooldownMinutes = 15;
+        i.DailyPnl = dayPnl;
+        i.PeakDailyPnl = dayPnl > 0 ? dayPnl : 0;
+        return i;
+    }
+
     static DisciplineInput Sim101(int tradesToday, int streak)
     {
         DisciplineInput i = new DisciplineInput();

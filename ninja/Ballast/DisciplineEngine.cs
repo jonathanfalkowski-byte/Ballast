@@ -216,6 +216,17 @@ namespace Ballast
         /// and the account quietly handing back a green day is exactly the one
         /// that does not shout.
         /// </summary>
+        /// <summary>
+        /// How far into a day's target a green day has to be before Ballast
+        /// starts telling him to protect it.
+        ///
+        /// Below this it says the number and nothing else. An account with no
+        /// target set never reaches it, which is correct: "protect it" is a
+        /// judgement about how much of the day's goal is on the table, and
+        /// without a goal there is no such judgement to make.
+        /// </summary>
+        public const double ProtectGreenAt = 2.0 / 3.0;
+
         public static string RowWarning(DisciplineInput i, DisciplineDecision d)
         {
             if (i == null || d == null) return "";
@@ -277,7 +288,29 @@ namespace Ballast
                 if (i.WindfallCeiling > 0 && i.DailyPnl < i.WindfallCeiling)
                     return "green " + Money(i.DailyPnl) + " - "
                          + Money(i.WindfallCeiling - i.DailyPnl) + " more before it holds up a payout";
-                return "green " + Money(i.DailyPnl) + " - protect it";
+
+                // "it says im up 69 and 84 in 2 accounts and you mention
+                // protect it, meaning trade cautiously or not at all..that is
+                // no where near my goal for the day"
+                //
+                // It was saying it the moment the day went a cent green. $69 on
+                // a $250 target is 28% of the way there, and "protect it" is
+                // the wrong instruction at 28% - the day has barely started and
+                // the only thing that could come of banking it is a trader who
+                // never reaches his own target.
+                //
+                // Ballast has one job in that gap and it is to say NOTHING. A
+                // tool that offers advice on every line teaches a trader to
+                // read past all of it, and the lines that matter get read past
+                // with them.
+                //
+                // Two-thirds, because that is where giving it back starts to
+                // cost something worth naming. Below it the row states the
+                // number and stops.
+                if (i.DailyTarget > 0 && i.DailyPnl >= i.DailyTarget * ProtectGreenAt)
+                    return "green " + Money(i.DailyPnl) + " - protect it";
+
+                return "green " + Money(i.DailyPnl);
             }
             return "clear";
         }
