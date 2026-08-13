@@ -370,10 +370,54 @@ namespace Ballast
             return found;
         }
 
-        /// <summary>Same question, starting from the account's own name.</summary>
+        /// <summary>
+        /// The same question with no firm to narrow it down: which row in the
+        /// WHOLE book do these figures describe?
+        ///
+        /// Same rule as MatchSpec - two rows fitting means no answer, because a
+        /// confident wrong type is worse than an empty one.
+        /// </summary>
+        public FirmAccountSpec MatchSpecAnyFirm(TrackerConfig c)
+        {
+            if (c == null) return null;
+            if (c.StartingBalance <= 0 || c.TrailingDrawdown <= 0) return null;
+
+            FirmAccountSpec found = null;
+            for (int i = 0; i < specs.Count; i++)
+            {
+                FirmAccountSpec s = specs[i];
+                if (Math.Abs(s.Size - c.StartingBalance) > 1) continue;
+                if (Math.Abs(s.Drawdown - c.TrailingDrawdown) > 1) continue;
+                if (s.DrawdownType != c.DrawdownType) continue;
+                if (Math.Abs(s.LockFloorAt - c.LockFloorAt) > 1) continue;
+
+                if (found != null) return null;
+                found = s;
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// Same question, starting from the account's own name - and falling
+        /// back to the figures alone when the name says nothing.
+        ///
+        /// "i was going to reset my trades, loss and target on my sim account
+        /// forgetting i had already set the account to eval 150k account and so
+        /// i thought i had not done it yet and reset it to 250"
+        ///
+        /// FirmFromAccountName returns nothing for anything called Sim,
+        /// Playback or Backtest - correctly, because a sim account's NAME does
+        /// not belong to a firm. But its FIGURES can, and usually do: a sim
+        /// account set up to mirror a 150K evaluation is a 150K evaluation in
+        /// every respect that matters here. Refusing to identify it meant the
+        /// account-type dropdown sat on the first row in the list, which reads
+        /// exactly like an account nobody has configured yet.
+        /// </summary>
         public FirmAccountSpec MatchSpecForAccount(string accountName, TrackerConfig c)
         {
-            return MatchSpec(FirmFromAccountName(accountName), c);
+            string firm = FirmFromAccountName(accountName);
+            if (!string.IsNullOrEmpty(firm)) return MatchSpec(firm, c);
+            return MatchSpecAnyFirm(c);
         }
 
         /// <summary>

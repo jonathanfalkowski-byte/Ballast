@@ -415,9 +415,33 @@ public static class TargetTests
         T.Ok(rb.MatchSpecForAccount("APEX-11325-106", odd) == null,
              "a size the firm does not publish gets no answer rather than a wrong one");
 
-        // And a name that says nothing about a firm is left alone.
-        T.Ok(rb.MatchSpecForAccount("Sim103", His106()) == null,
-             "a sim account belongs to no firm and is never guessed at");
+        // And a name that says nothing about a firm is answered from the
+        // figures instead.
+        //
+        // "i was going to reset my trades, loss and target on my sim account
+        // forgetting i had already set the account to eval 150k account and so
+        // i thought i had not done it yet and reset it to 250"
+        //
+        // This used to return null, on the reasoning that a sim account belongs
+        // to no firm. True of its NAME and false of everything else about it: a
+        // sim set up to mirror a 150K evaluation has that evaluation's size,
+        // drawdown, floor and target, and refusing to name it left the Setup
+        // dropdown resting on the first row in the list - which reads exactly
+        // like an account nobody has configured. He re-applied a 250K over a
+        // 150K he had already set up correctly.
+        FirmAccountSpec sim = rb.MatchSpecForAccount("Sim103", His106());
+        T.Ok(sim != null, "a sim account is identified by the figures it was given");
+        T.Near(sim.Size, 250000, 1, "the same row its figures came from");
+        T.Ok(sim.Firm.IndexOf("Apex", StringComparison.OrdinalIgnoreCase) >= 0,
+             "including which firm's row it is");
+
+        // The safety property is unchanged and it is the one that matters:
+        // figures no firm publishes still get no answer rather than the
+        // nearest one.
+        TrackerConfig oddSim = His106();
+        oddSim.StartingBalance = 187000;
+        T.Ok(rb.MatchSpecForAccount("Sim103", oddSim) == null,
+             "and figures no firm publishes are still never guessed at");
 
         T.Ok(rb.MatchSpecForAccount("APEX-11325-106", null) == null, "and no settings, no answer");
     }

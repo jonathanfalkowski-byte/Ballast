@@ -29,6 +29,7 @@ public static class SetupTests
         EdgeReadSeesAProbableEdge();
         EdgeReadSeesARealEdge();
         ASetupNameWithADashSurvives();
+        ASimAccountKnowsWhatItWasSetUpAs();
 
         SetupBookAddsTrimsAndDedupes();
         SetupBookRefusesToSprawl();
@@ -106,6 +107,78 @@ public static class SetupTests
         for (int i = 0; i < count; i++) l.Add(Tr(pnl));
         for (int i = 0; i < count2; i++) l.Add(Tr(pnl2));
         return l;
+    }
+
+    /// <summary>
+    /// "when you go into setup it defaults to the top of the list of what type
+    /// of account this is and i was going to reset my trades, loss and target
+    /// on my sim account forgetting i had already set the account to eval 150k
+    /// account and so i thought i had not done it yet and reset it to 250"
+    ///
+    /// The dropdown was resting on the first row in the rule book, because
+    /// nothing could tell it what a Sim account was. That reads exactly like an
+    /// account nobody has configured, and the button beside it writes whatever
+    /// is showing over an account that was already right. It cost him a 150K
+    /// evaluation's settings.
+    ///
+    /// A sim account's NAME belongs to no firm. Its FIGURES do.
+    /// </summary>
+    static void ASimAccountKnowsWhatItWasSetUpAs()
+    {
+        T.S("a sim account knows what it was set up as");
+
+        RuleBook rb = new RuleBook();
+        T.Ok(rb.Load("Ballast/ballast-rules.txt"), "the shipped rule book loads");
+
+        // A sim set up to mirror a 150K legacy evaluation - the one he lost.
+        TrackerConfig c = new TrackerConfig();
+        c.StartingBalance = 150000;
+        c.TrailingDrawdown = 5000;
+        c.DrawdownType = DrawdownType.Intraday;
+        c.LockFloorAt = 159000;
+
+        FirmAccountSpec s = rb.MatchSpecForAccount("Sim103", c);
+        T.Ok(s != null, "the figures name the type even though the account is called Sim103");
+        T.Near(s.Size, 150000, 1, "150K");
+        T.Ok(s.Label.IndexOf("150K", StringComparison.Ordinal) >= 0,
+             "with a label he would recognise: " + s.Label);
+        T.Ok(s.Plan.IndexOf("valuation", StringComparison.Ordinal) >= 0,
+             "and it is the evaluation row, not the funded one");
+
+        // Playback and Backtest accounts get the same treatment - they are the
+        // other two names FirmFromAccountName deliberately refuses.
+        T.Ok(rb.MatchSpecForAccount("Playback101", c) != null, "so does a playback account");
+        T.Ok(rb.MatchSpecForAccount("Backtest", c) != null, "and a backtest account");
+
+        // A named account still goes through its own firm, unchanged. Widening
+        // the search must not let another firm's identical row answer for an
+        // account whose name already said who it belongs to.
+        FirmAccountSpec named = rb.MatchSpecForAccount("APEX-11325-105", c);
+        T.Ok(named != null && named.Firm.IndexOf("Apex", StringComparison.OrdinalIgnoreCase) >= 0,
+             "a named Apex account is still answered by Apex's rows");
+
+        // And the safety rule survives the widening: an unconfigured account
+        // has no figures to match, so it gets no type rather than the first one.
+        T.Ok(rb.MatchSpecForAccount("Sim103", new TrackerConfig()) == null,
+             "an account with no figures is still not guessed at");
+
+        TrackerConfig odd = new TrackerConfig();
+        odd.StartingBalance = 187000; odd.TrailingDrawdown = 5000;
+        odd.DrawdownType = DrawdownType.Intraday; odd.LockFloorAt = 159000;
+        T.Ok(rb.MatchSpecForAccount("Sim103", odd) == null,
+             "and a size no firm publishes still gets silence rather than the nearest row");
+
+        // Two rows fitting is still no answer, across the whole book as well as
+        // within one firm. A confident wrong type is worse than an empty one.
+        RuleBook twins = new RuleBook();
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ballast-twins.txt");
+        System.IO.File.WriteAllText(path,
+            "VERSION|1\n"
+          + "Firm One|Evaluation|150000|5000|INTRADAY|0|9000|note|159000|17\n"
+          + "Firm Two|Evaluation|150000|5000|INTRADAY|0|9000|note|159000|17\n");
+        T.Ok(twins.Load(path), "a book with two identical rows loads");
+        T.Ok(twins.MatchSpecForAccount("Sim103", c) == null,
+             "and two firms describing the same account is not an answer");
     }
 
     static void SetupSurvivesCsvRoundTrip()

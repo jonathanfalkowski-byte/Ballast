@@ -102,6 +102,27 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Border card;
         private TextBlock statCushion, statPnl, statAccounts, statCushionWho, statCushionCap;
         private ComboBox editTargetBox, ddTypeBox, firmBox, accountTypeBox;
+
+        /// <summary>
+        /// The first entry in the account-type list, and the one that is showing
+        /// whenever Ballast cannot say what this account is.
+        ///
+        /// "when you go into setup it defaults to the top of the list of what
+        /// type of account this is and i was going to reset my trades, loss and
+        /// target on my sim account forgetting i had already set the account to
+        /// eval 150k account and so i thought i had not done it yet and reset it
+        /// to 250"
+        ///
+        /// A dropdown resting on a REAL account type is a loaded gun on this
+        /// page. It reads as "nothing has been set here yet", and one press of
+        /// the button beside it writes that type's size, drawdown, floor and
+        /// target over an account that was already correct. He lost a 150K
+        /// evaluation's settings to it.
+        ///
+        /// So the list opens on something that cannot do anything, and the line
+        /// underneath says what the account already is.
+        /// </summary>
+        private const string NoTypeChosen = "Leave these figures as they are...";
         private readonly RuleBook ruleBook = new RuleBook();
         private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt;
         private TextBox tbWindowStart, tbWindowEnd, tbTradingDayReset;
@@ -3760,8 +3781,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             string dd = c.DrawdownType == DrawdownType.Intraday
                 ? "trailing intraday" : "trailing end-of-day";
 
-            string text = "Ballast has this as " + Money(c.StartingBalance)
-                        + " with " + Money(c.TrailingDrawdown) + " " + dd;
+            // What this account already IS, by name, before any of the figures.
+            // The figures alone were never enough: a man who has set up a 150K
+            // evaluation does not read "$150,000 with $5,000 trailing intraday"
+            // and think "ah, that is the 150K evaluation I set up" - he reads
+            // the dropdown above it, and the dropdown was lying.
+            FirmAccountSpec known = ruleBook.MatchSpecForAccount(CurrentEditKey(), c);
+
+            string text = known != null
+                ? "Already set to " + known.Firm + ", " + known.Label + " - "
+                  + Money(c.StartingBalance) + " with " + Money(c.TrailingDrawdown) + " " + dd
+                : "No account type in the rule book matches these figures. Ballast has this as "
+                  + Money(c.StartingBalance) + " with " + Money(c.TrailingDrawdown) + " " + dd;
 
             if (c.LockFloorAt > 0)
                 text += ", floor fixed at " + Money(c.LockFloorAt)
@@ -4302,11 +4333,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // the right answer to shorten a dropdown is the worst trade this
                 // page could make, and the generation is stated in each label
                 // anyway - "Legacy evaluation - 250K" says which it is.
-                List<FirmAccountSpec> list = ruleBook.ForFirm(firm);
-                for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
-                if (accountTypeBox.Items.Count > 0) accountTypeBox.SelectedIndex = 0;
+                FillTypeList(firm);
+                accountTypeBox.SelectedIndex = 0;      // the do-nothing entry
             }
             finally { suppressTypeApply = false; }
+        }
+
+        /// <summary>
+        /// Load one firm's account types, with the do-nothing entry first.
+        /// Callers set the selection; this only ever fills the list.
+        /// </summary>
+        private void FillTypeList(string firm)
+        {
+            accountTypeBox.Items.Clear();
+            accountTypeBox.Items.Add(NoTypeChosen);
+            if (string.IsNullOrEmpty(firm)) return;
+
+            List<FirmAccountSpec> list = ruleBook.ForFirm(firm);
+            for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
         }
 
         private FirmAccountSpec SelectedSpec()
@@ -4327,7 +4371,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             FirmAccountSpec s = SelectedSpec();
             if (s == null)
             {
-                detectionNote.Text = "Pick a firm and account type first.";
+                // Includes the do-nothing entry the list opens on, which is a
+                // real answer rather than a mistake: this account keeps the
+                // figures it already has.
+                detectionNote.Text = accountTypeBox != null
+                        && NoTypeChosen.Equals(accountTypeBox.SelectedItem as string)
+                    ? "Nothing changed - this account keeps the figures it already has. "
+                      + "Pick a type from the list if you want to replace them."
+                    : "Pick a firm and account type first.";
                 detectionNote.Foreground = ColAmber;
                 return;
             }
@@ -5379,34 +5430,42 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void ShowAccountTypeFor(string accountName, TrackerConfig c)
         {
             if (firmBox == null || accountTypeBox == null) return;
-            if (c == null || string.IsNullOrEmpty(accountName)) return;
+            if (c == null) return;
 
             try
             {
-                string firm = ruleBook.FirmFromAccountName(accountName);
-                if (string.IsNullOrEmpty(firm)) return;
-
-                FirmAccountSpec s = ruleBook.MatchSpec(firm, c);
-                if (s == null) return;
+                // From the name where the name says a firm, from the figures
+                // where it does not - which is every Sim, Playback and Backtest
+                // account, and those are exactly the ones this page was leaving
+                // pointed at the wrong row.
+                FirmAccountSpec s = ruleBook.MatchSpecForAccount(accountName, c);
 
                 suppressTypeApply = true;
                 try
                 {
-                    if (!firm.Equals(firmBox.SelectedItem as string, StringComparison.OrdinalIgnoreCase))
+                    if (s == null)
                     {
-                        firmBox.SelectedItem = firm;
+                        // Nothing in the book fits. Say nothing rather than
+                        // resting on whatever happens to be first - that is the
+                        // whole failure this exists to stop.
+                        if (accountTypeBox.Items.Count > 0) accountTypeBox.SelectedIndex = 0;
+                        accountLabels.Remove(accountName ?? "");
+                        return;
+                    }
+
+                    if (!s.Firm.Equals(firmBox.SelectedItem as string, StringComparison.OrdinalIgnoreCase))
+                    {
+                        firmBox.SelectedItem = s.Firm;
 
                         // Changing the firm normally repopulates the type list on
                         // the SelectionChanged event, which is suppressed here -
                         // so do it explicitly, or the labels below belong to the
                         // firm we just left.
-                        accountTypeBox.Items.Clear();
-                        List<FirmAccountSpec> list = ruleBook.ForFirm(firm);
-                        for (int i = 0; i < list.Count; i++) accountTypeBox.Items.Add(list[i].Label);
+                        FillTypeList(s.Firm);
                     }
 
                     accountTypeBox.SelectedItem = s.Label;
-                    accountLabels[accountName] = s.Firm + " " + s.Label;
+                    accountLabels[accountName ?? ""] = s.Firm + " " + s.Label;
                 }
                 finally { suppressTypeApply = false; }
             }
