@@ -1215,6 +1215,54 @@ namespace Ballast
                 && equity <= Config.StartingBalance * 1.5;
         }
 
+        /// <summary>
+        /// How many impossible readings in a row, agreeing with each other,
+        /// before Ballast believes the account rather than the configuration.
+        ///
+        /// One is a bad tick, and throwing bad ticks away is the whole point of
+        /// IsPlausibleEquity - a single spurious high reading once poisoned a
+        /// peak permanently and produced a -$97,500 cushion. Three that agree
+        /// is not noise; it is an account wearing the wrong size.
+        /// </summary>
+        public const int RejectedRunBeforeBelieved = 3;
+
+        private double lastRejectedEquity;
+        private int rejectedRun;
+
+        /// <summary>
+        /// A balance this account keeps reporting that cannot be true for the
+        /// size it is set up as. Zero until it has been said enough times to be
+        /// the account rather than the feed.
+        /// </summary>
+        public double RejectedEquity;
+
+        private void NoteRejectedEquity(double equityNow)
+        {
+            // Zero is a disconnected or still-loading account, not a wrong one.
+            // "No balance yet" is the honest answer there and stays.
+            if (equityNow <= 0)
+            {
+                rejectedRun = 0;
+                RejectedEquity = 0;
+                return;
+            }
+
+            double band = Config != null && Config.StartingBalance > 0
+                        ? Math.Max(500.0, Config.StartingBalance * 0.05)
+                        : 500.0;
+
+            // They have to agree with each other. Two wild readings in
+            // completely different places are two bad ticks; two in the same
+            // place are an account.
+            if (rejectedRun > 0 && Math.Abs(equityNow - lastRejectedEquity) <= band)
+                rejectedRun++;
+            else
+                rejectedRun = 1;
+
+            lastRejectedEquity = equityNow;
+            RejectedEquity = rejectedRun >= RejectedRunBeforeBelieved ? equityNow : 0;
+        }
+
         /// <summary>Call whenever account equity/balance changes.</summary>
         public void OnEquity(double equityNow, double realisedNow)
         {
@@ -1231,8 +1279,13 @@ namespace Ballast
             {
                 HasValidEquity = false;
                 fillSinceEquity = false;
+                NoteRejectedEquity(equityNow);
                 return;
             }
+
+            // A believable reading ends any run of unbelievable ones.
+            rejectedRun = 0;
+            RejectedEquity = 0;
 
             if (!ResetSuspected)
             {
@@ -1616,6 +1669,7 @@ namespace Ballast
             i.LossStreak = LossStreak;
             i.TradesToday = TradesToday;
             i.IsAutomated = Config.IsAutomated;
+            i.RejectedEquity = RejectedEquity;
             i.ProfitTarget = Config.ProfitTarget;
             i.StartingBalance = Config.StartingBalance;
             i.TrailingDrawdown = Config.TrailingDrawdown;

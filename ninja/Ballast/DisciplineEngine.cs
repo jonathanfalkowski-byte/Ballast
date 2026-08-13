@@ -122,14 +122,43 @@ namespace Ballast
         /// profit, and if the size is wrong in that direction the floor comes out
         /// tighter than reality, which reports less room than there is.
         /// </summary>
+        /// <summary>
+        /// The balance this account is actually reporting, whether or not it was
+        /// believable for the size it has been set up as.
+        ///
+        /// "i was going to test out a bot on that sim account and that is the
+        /// result...i did checkmark that in settings, so it says that because i
+        /// checked it"
+        ///
+        /// It was not the checkbox. Sim110 had been set up as a 250,000 account
+        /// and holds about 96,000, so every reading was thrown away as
+        /// impossible - and the warning written for exactly that case could
+        /// never fire, because it only looked at readings that had survived.
+        /// The row said "no balance yet", which is the one message that means
+        /// "wait, data is coming", and it was never coming.
+        /// </summary>
+        public double ObservedEquity
+        {
+            get { return HasValidEquity ? CurrentEquity : RejectedEquity; }
+        }
+
+        /// <summary>
+        /// A balance the account keeps reporting that cannot be true for the
+        /// size it is configured as. Zero unless it has been said repeatedly -
+        /// one impossible tick is a bad tick, and this must not turn the guard
+        /// against spurious readings back off.
+        /// </summary>
+        public double RejectedEquity;
+
         public bool ConfigMismatch
         {
             get
             {
-                if (!HasValidEquity) return false;
+                double equity = ObservedEquity;
+                if (equity <= 0) return false;
                 if (StartingBalance <= 0 || TrailingDrawdown <= 0) return false;
 
-                double shortfall = StartingBalance - CurrentEquity;
+                double shortfall = StartingBalance - equity;
                 if (shortfall <= 0) return false;
 
                 return shortfall > TrailingDrawdown * 2.0
@@ -231,11 +260,16 @@ namespace Ballast
         {
             if (i == null || d == null) return "";
 
-            if (!i.HasValidEquity) return "no balance yet";
-            if (!i.ExecutionTelemetryHealthy) return "execution feed mismatch - verify in Accounts";
+            // Before "no balance yet", because an account whose balance is
+            // impossible for its configured size HAS a balance - that is the
+            // whole problem - and "no balance yet" sends the trader off to look
+            // at his connection instead of his setup.
             if (i.ConfigMismatch)
                 return "set up as a " + Money(i.StartingBalance) + " account but it holds "
-                     + Money(i.CurrentEquity) + " - check its rules";
+                     + Money(i.ObservedEquity) + " - check its rules";
+
+            if (!i.HasValidEquity) return "no balance yet";
+            if (!i.ExecutionTelemetryHealthy) return "execution feed mismatch - verify in Accounts";
             if (i.PastFloor) return "at or below its floor";
 
             if (Has(d.Signals, "daily_loss_limit"))
@@ -467,7 +501,7 @@ namespace Ballast
                 // stop - a true one - gets waved away.
                 signals.Add(new RiskSignal("config_mismatch", Severity.High,
                     "This account is set up as a " + Money(i.StartingBalance) + " account with a "
-                  + Money(i.TrailingDrawdown) + " drawdown, but it holds " + Money(i.CurrentEquity)
+                  + Money(i.TrailingDrawdown) + " drawdown, but it holds " + Money(i.ObservedEquity)
                   + ". Those cannot both be true - a firm closes an account the moment it touches "
                   + "its floor, so a live account is never this far below one. Until the size in "
                   + "Setup matches the account, every figure worked out from it is wrong, and "

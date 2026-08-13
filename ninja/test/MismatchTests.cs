@@ -33,6 +33,106 @@ public static class MismatchTests
         AnUnconfiguredAccountIsNeverAMismatch();
         TheHeadlineCardIgnoresAMismatchedAccount();
         TheWallDoesNotGoUpForASettingsProblem();
+        AnImpossibleBalanceIsNotAMissingOne();
+    }
+
+    /// <summary>
+    /// "i was going to test out a bot on that sim account and that is the
+    /// result...i did checkmark that in settings, so it says that because i
+    /// checked it"
+    ///
+    /// It was not the checkbox. Sim110 had been set up as a 250,000 Apex
+    /// evaluation to mirror the accounts the bot would eventually run on, and
+    /// the NinjaTrader sim account behind it holds about 96,000. Every reading
+    /// was outside the believable band for a 250K account, so every reading was
+    /// thrown away - and the row fell through to "no balance yet", which is the
+    /// one message that means "wait, data is coming".
+    ///
+    /// The warning written for exactly this could never fire, because it only
+    /// ever looked at readings that had survived the guard. The account had a
+    /// balance. That balance WAS the evidence.
+    /// </summary>
+    static void AnImpossibleBalanceIsNotAMissingOne()
+    {
+        T.S("an impossible balance is not a missing one");
+
+        // His own settings line for Sim110, exactly as it sits on disk.
+        string key;
+        TrackerConfig c = SettingsCodec.Deserialise(
+            "Sim110|250000|6500|0|3|250|250|3|4|265000||0|0|0|4|1|0|570|690|5|27|15000|0|1|0|2|0||0",
+            out key);
+        T.Near(c.StartingBalance, 250000, 0.01, "set up as a 250K account");
+        T.Ok(c.IsAutomated, "and ticked as a bot account");
+
+        BallastTracker t = new BallastTracker();
+        t.Config = c;
+        DateTime day = new DateTime(2026, 8, 13, 9, 30, 0);
+        t.EnsureSession(day, 0, 96581.88);
+
+        // One impossible reading is a bad tick and is still treated as one.
+        // This guard exists because a single spurious high tick once poisoned a
+        // peak permanently and reported a -$97,500 cushion.
+        t.OnEquity(96581.88, 0, 96581.88);
+        DisciplineInput one = t.BuildInput(day.AddHours(1));
+        T.Ok(!one.HasValidEquity, "the reading is still not believed");
+        T.Ok(!one.ConfigMismatch, "and one of them is not yet evidence of anything");
+        T.Eq(DisciplineEngine.RowWarning(one, DisciplineEngine.Evaluate(one)),
+             "no balance yet", "so the row waits");
+
+        // Three that agree are the account, not the feed.
+        t.OnEquity(96581.88, 0, 96581.88);
+        t.OnEquity(96590.00, 0, 96590.00);
+        DisciplineInput settled = t.BuildInput(day.AddHours(1));
+
+        T.Ok(!settled.HasValidEquity, "the reading is still not used for any cushion");
+        T.Ok(settled.ConfigMismatch, "but it is now believed enough to explain itself");
+        T.Near(settled.ObservedEquity, 96590, 0.01, "and the row has a number to show");
+
+        string row = DisciplineEngine.RowWarning(settled, DisciplineEngine.Evaluate(settled));
+        T.Ok(row.IndexOf("250,000", StringComparison.Ordinal) >= 0, "the row names the size: " + row);
+        T.Ok(row.IndexOf("96,590", StringComparison.Ordinal) >= 0, "and what it actually holds");
+        T.Ok(row.IndexOf("no balance yet", StringComparison.Ordinal) < 0,
+             "and never says the data is still coming");
+
+        T.Eq(DisciplineEngine.Evaluate(settled).Action, DisciplineAction.CheckSetup,
+             "and sends him to Setup rather than to his connection");
+
+        // Wild readings in different places stay bad ticks, however many.
+        BallastTracker noisy = new BallastTracker();
+        noisy.Config = c;
+        noisy.EnsureSession(day, 0, 250000);
+        noisy.OnEquity(250000, 0, 250000);
+        noisy.OnEquity(3, 0, 3);
+        noisy.OnEquity(1200000, 0, 1200000);
+        noisy.OnEquity(17, 0, 17);
+        DisciplineInput junk = noisy.BuildInput(day.AddHours(1));
+        T.Ok(!junk.ConfigMismatch, "three readings that disagree with each other are three bad ticks");
+
+        // And a believable reading ends the run outright.
+        BallastTracker back = new BallastTracker();
+        back.Config = c;
+        back.EnsureSession(day, 0, 250000);
+        back.OnEquity(96581.88, 0, 96581.88);
+        back.OnEquity(96581.88, 0, 96581.88);
+        back.OnEquity(96581.88, 0, 96581.88);
+        T.Ok(back.BuildInput(day.AddHours(1)).ConfigMismatch, "believed after three");
+        back.OnEquity(247683, 0, 247683);
+        DisciplineInput fixedUp = back.BuildInput(day.AddHours(1));
+        T.Ok(fixedUp.HasValidEquity, "one good reading and the account is back");
+        T.Ok(!fixedUp.ConfigMismatch, "with nothing left to complain about");
+        T.Near(fixedUp.RejectedEquity, 0, 0.01, "and the rejected figure cleared");
+
+        // Zero is a disconnected account, not a misconfigured one.
+        BallastTracker off = new BallastTracker();
+        off.Config = c;
+        off.EnsureSession(day, 0, 250000);
+        off.OnEquity(0, 0, 0);
+        off.OnEquity(0, 0, 0);
+        off.OnEquity(0, 0, 0);
+        DisciplineInput dark = off.BuildInput(day.AddHours(1));
+        T.Ok(!dark.ConfigMismatch, "a silent account is not accused of being set up wrong");
+        T.Eq(DisciplineEngine.RowWarning(dark, DisciplineEngine.Evaluate(dark)),
+             "no balance yet", "it just has no balance yet");
     }
 
     static DisciplineInput In(double start, double drawdown, double equity)
