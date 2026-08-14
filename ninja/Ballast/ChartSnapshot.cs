@@ -76,15 +76,25 @@ namespace Ballast
         /// </summary>
         public static int MaxTotalMb = 500;
 
-        /// <summary>Downscale wide charts to keep files small. 0 = full size.</summary>
         /// <summary>
-        /// Widest a saved screenshot gets.
+        /// Widest a saved screenshot gets - ON THE FALLBACK RENDER PATH ONLY.
         ///
-        /// Was 1400, which produced a median file of 272 KB. A chart is mostly
-        /// flat colour, straight lines and a little text; narrowing it costs
-        /// very little of what he is looking at and roughly halves the file.
-        /// The picture exists to answer "would you take this again", not to be
-        /// zoomed into.
+        /// This does NOT bound a real screenshot, and the comment that used to
+        /// sit here said it did. Only the RenderTargetBitmap fallback below is
+        /// scaled by it; the screen capture that produces every actual picture
+        /// takes the region at the resolution it is on screen and saves it
+        /// whole. His are 2213 x 892 and about 780 KB each, not the 1000-wide,
+        /// 130 KB files this constant implies.
+        ///
+        /// Left alone deliberately after finding it. "if i cant read the chart
+        /// what is the point of having it" - the full resolution IS the point,
+        /// and it is what makes the picture worth opening. The disk budget in
+        /// Prune() is the right place to control the cost, and it does: about
+        /// 1.5 MB a trade, so the 500 MB cap begins retiring the oldest days
+        /// after roughly six weeks of his volume.
+        ///
+        /// Anyone who wants smaller files should scale the screen capture
+        /// explicitly rather than assume this figure is doing it.
         /// </summary>
         public static int MaxWidth = 1000;
 

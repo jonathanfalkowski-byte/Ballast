@@ -274,9 +274,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock reviewHead, reviewBody;
         private StackPanel doneRow;
         private TextBlock doneNote;
-        private Image reviewShot;
+        private Image reviewShot, reviewExitShot;
         private TextBlock reviewShotHint, reviewReveal;
-        private string reviewShotPath = "";
+        private TextBlock reviewShotLabel, reviewExitLabel;
+        private Button reviewShotBtn, reviewExitBtn;
+        private string reviewShotPath = "", reviewExitPath = "";
         private Button reviewRevealBtn;
         private LookBackPick lookBack;
         private readonly List<string> lookBackShown = new List<string>();
@@ -7159,13 +7161,31 @@ namespace NinjaTrader.NinjaScript.AddOns
             reviewShot.Cursor = System.Windows.Input.Cursors.Hand;
             reviewShot.Visibility = Visibility.Collapsed;
             reviewShot.MouseLeftButtonUp += delegate { OpenShot(); };
+
+            reviewShotLabel = SectionHeader("THE ENTRY");
+            reviewShotLabel.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewShotLabel);
             s.Children.Add(reviewShot);
 
+            // "i unfortunately cant read the charts becase they are too
+            // small....so i dont know exactly what i did wrong besides the
+            // explanation but if i cant read the chart what is the point of
+            // having it"
+            //
+            // The pictures are 2213 pixels wide. The card is about 920. No
+            // amount of layout fixes a 2.4x downscale of a chart - the way to
+            // read one is to open it - so the way to open it stopped being a
+            // ten-pixel grey sentence about clicking and became a button.
+            reviewShotBtn = QuietButton("Open the entry chart full size", delegate { OpenShot(); });
+            reviewShotBtn.Margin = new Thickness(0, 0, 0, 10);
+            reviewShotBtn.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewShotBtn);
+
             reviewShotHint = new TextBlock();
-            reviewShotHint.Text = "Click the chart to open it full size.";
+            reviewShotHint.Text = "The picture is far bigger than this card - open it to read the bars.";
             reviewShotHint.Foreground = ColFaint;
             reviewShotHint.FontSize = 10;
-            reviewShotHint.Margin = new Thickness(0, 0, 0, 10);
+            reviewShotHint.Margin = new Thickness(0, -6, 0, 10);
             reviewShotHint.Visibility = Visibility.Collapsed;
             s.Children.Add(reviewShotHint);
 
@@ -7176,6 +7196,37 @@ namespace NinjaTrader.NinjaScript.AddOns
             reviewReveal.Margin = new Thickness(0, 0, 0, 10);
             reviewReveal.Visibility = Visibility.Collapsed;
             s.Children.Add(reviewReveal);
+
+            // The exit goes UNDERNEATH the entry, and the entry stays where it
+            // is.
+            //
+            // "i clicked on show me what happened, it tells me what happened
+            // but the chart almost right away disappears and goes to another
+            // chart"
+            //
+            // It was the same Image control being handed a different file, so
+            // the picture he was studying vanished at the exact moment he was
+            // told the answer. Two pictures, both on screen, is the only
+            // arrangement that lets him compare the decision with the outcome -
+            // which is the entire point of the card.
+            reviewExitLabel = SectionHeader("WHAT HAPPENED NEXT");
+            reviewExitLabel.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewExitLabel);
+
+            reviewExitShot = new Image();
+            reviewExitShot.MaxHeight = 560;
+            reviewExitShot.HorizontalAlignment = HorizontalAlignment.Stretch;
+            reviewExitShot.Margin = new Thickness(0, 0, 0, 4);
+            reviewExitShot.Stretch = Stretch.Uniform;
+            reviewExitShot.Cursor = System.Windows.Input.Cursors.Hand;
+            reviewExitShot.Visibility = Visibility.Collapsed;
+            reviewExitShot.MouseLeftButtonUp += delegate { OpenExitShot(); };
+            s.Children.Add(reviewExitShot);
+
+            reviewExitBtn = QuietButton("Open the exit chart full size", delegate { OpenExitShot(); });
+            reviewExitBtn.Margin = new Thickness(0, 0, 0, 10);
+            reviewExitBtn.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewExitBtn);
 
             StackPanel btns = new StackPanel();
             btns.Orientation = Orientation.Horizontal;
@@ -7428,9 +7479,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     reviewReveal.Visibility = Visibility.Visible;
                 }
 
-                ShowShot(lookBack.Trade.ExitImage);
-                if (reviewShotHint != null)
-                    reviewShotHint.Text = "This is the exit. Click the chart to open it full size.";
+                // The entry stays. The exit arrives below it, and both are
+                // labelled so neither has to be guessed at.
+                ShowExitShot(lookBack.Trade.ExitImage);
+                if (reviewShotLabel != null && reviewShot != null
+                    && reviewShot.Visibility == Visibility.Visible)
+                    reviewShotLabel.Visibility = Visibility.Visible;
 
                 // Once seen it is not offered again - there are only so many
                 // trades, and repeating one is how this becomes wallpaper.
@@ -7470,8 +7524,43 @@ namespace NinjaTrader.NinjaScript.AddOns
                 reviewShot.Visibility = Visibility.Visible;
                 reviewShotPath = path;
                 if (reviewShotHint != null) reviewShotHint.Visibility = Visibility.Visible;
+                if (reviewShotBtn != null) reviewShotBtn.Visibility = Visibility.Visible;
             }
             catch { if (reviewShot != null) reviewShot.Visibility = Visibility.Collapsed; }
+        }
+
+        /// <summary>The exit picture, shown beside the entry rather than over it.</summary>
+        private void ShowExitShot(string path)
+        {
+            try
+            {
+                if (reviewExitShot == null) return;
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                {
+                    // No exit picture is a real state - Ballast may have been
+                    // closed when the trade came off - and it must not leave a
+                    // heading over an empty space.
+                    reviewExitShot.Visibility = Visibility.Collapsed;
+                    if (reviewExitLabel != null) reviewExitLabel.Visibility = Visibility.Collapsed;
+                    if (reviewExitBtn != null) reviewExitBtn.Visibility = Visibility.Collapsed;
+                    reviewExitPath = "";
+                    return;
+                }
+
+                BitmapImage bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(path, UriKind.Absolute);
+                bmp.EndInit();
+                bmp.Freeze();
+
+                reviewExitShot.Source = bmp;
+                reviewExitShot.Visibility = Visibility.Visible;
+                reviewExitPath = path;
+                if (reviewExitLabel != null) reviewExitLabel.Visibility = Visibility.Visible;
+                if (reviewExitBtn != null) reviewExitBtn.Visibility = Visibility.Visible;
+            }
+            catch { if (reviewExitShot != null) reviewExitShot.Visibility = Visibility.Collapsed; }
         }
 
         /// <summary>
@@ -7489,17 +7578,34 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch { }
         }
 
+        private void OpenExitShot()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(reviewExitPath) || !File.Exists(reviewExitPath)) return;
+                System.Diagnostics.Process.Start(reviewExitPath);
+            }
+            catch { }
+        }
+
         private void HideLookBack()
         {
             lookBack = null;
             if (reviewShot != null) { reviewShot.Source = null; reviewShot.Visibility = Visibility.Collapsed; }
+            if (reviewExitShot != null)
+            { reviewExitShot.Source = null; reviewExitShot.Visibility = Visibility.Collapsed; }
             if (reviewShotHint != null)
             {
                 reviewShotHint.Visibility = Visibility.Collapsed;
-                reviewShotHint.Text = "Click the chart to open it full size.";
+                reviewShotHint.Text = "The picture is far bigger than this card - open it to read the bars.";
             }
+            if (reviewShotLabel != null) reviewShotLabel.Visibility = Visibility.Collapsed;
+            if (reviewExitLabel != null) reviewExitLabel.Visibility = Visibility.Collapsed;
+            if (reviewShotBtn != null) reviewShotBtn.Visibility = Visibility.Collapsed;
+            if (reviewExitBtn != null) reviewExitBtn.Visibility = Visibility.Collapsed;
             if (reviewReveal != null) reviewReveal.Visibility = Visibility.Collapsed;
             reviewShotPath = "";
+            reviewExitPath = "";
             if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
         }
 
