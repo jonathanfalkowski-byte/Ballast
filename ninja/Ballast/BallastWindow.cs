@@ -281,6 +281,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         private string reviewShotPath = "", reviewExitPath = "";
         private Button reviewRevealBtn;
         private LookBackPick lookBack;
+
+        /// <summary>
+        /// True from the moment he presses "Show me what happened" until the
+        /// card is dismissed or replaced.
+        ///
+        /// "the chart almost right away disappears and goes to another chart"
+        ///
+        /// Revealing a trade sets lookBack to null, and the card is rebuilt on
+        /// every refresh tick - so the very next tick picked a DIFFERENT trade
+        /// and swapped the pictures out from under him seconds after he had
+        /// asked to see them. A revealed trade now stays on screen until he is
+        /// done with it, which is the whole point of showing it.
+        /// </summary>
+        private bool lookBackRevealed;
         private readonly List<string> lookBackShown = new List<string>();
 
         /// <summary>The setups box is holding text that is not on disk yet.</summary>
@@ -7276,6 +7290,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void OnDismissReview()
         {
             MarkReviewSeen();
+
+            // Let go of the trade as well as the card. Without this a revealed
+            // look-back holds the card shut for the rest of the session, since
+            // ShowLookBack refuses to rebuild while one is on screen.
+            HideLookBack();
             if (reviewBorder != null) reviewBorder.Visibility = Visibility.Collapsed;
         }
 
@@ -7429,7 +7448,23 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private void ShowLookBack(DateTime now)
         {
-            lookBack = null;
+            // A revealed trade holds the card. Rebuilding it here would throw
+            // away the answer he just asked for.
+            if (lookBackRevealed) return;
+
+            // And clear the whole region before filling it.
+            //
+            // "im confused by this chart....you mentioned this happened next
+            // but the chart before was not the same"
+            //
+            // It was two trades on one card. Revealing trade A left A's answer
+            // and A's exit picture on screen; the next refresh picked trade B,
+            // replaced the question and the entry picture, and left A's answer
+            // and A's exit sitting underneath them. The card read as one trade
+            // and was showing two - the entry from one, the outcome from
+            // another, and no way to tell.
+            HideLookBack();
+
             try
             {
                 TrackerConfig c = monitor.DefaultConfig;
@@ -7494,6 +7529,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
                 lookBack = null;
+                lookBackRevealed = true;
             }
             catch { }
         }
@@ -7591,6 +7627,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void HideLookBack()
         {
             lookBack = null;
+            lookBackRevealed = false;
             if (reviewShot != null) { reviewShot.Source = null; reviewShot.Visibility = Visibility.Collapsed; }
             if (reviewExitShot != null)
             { reviewExitShot.Source = null; reviewExitShot.Visibility = Visibility.Collapsed; }
