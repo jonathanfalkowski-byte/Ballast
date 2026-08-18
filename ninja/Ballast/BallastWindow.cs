@@ -1250,6 +1250,39 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (!tiltGate.IsReleased(triggers[k].AccountName, triggers[k].Kind, now))
                         block = true;
                 }
+
+                // The cooldown, held by the clock rather than by typing.
+                //
+                // "yea i break it when i see a trade" - twenty times in twelve
+                // sessions, and every one of them was also a trade taken
+                // against advice, so Ballast had already said so and it had
+                // already not worked. Words were never going to fix this; the
+                // trade count had the same shape and what fixed THAT was a
+                // wall.
+                //
+                // But not the same wall. A max-trades breach ends the day and
+                // is released by typing a sentence, because the trader has to
+                // be able to overrule it. This one runs out on its own in a
+                // couple of minutes, so the clock releases it and there is
+                // nothing to argue with - which is the point, since arguing is
+                // what he does inside those two minutes.
+                //
+                // Never while a position is open. The lock only ever takes the
+                // ENTRY buttons - Close, Reverse, Flatten and Cancel stay live
+                // whatever happens - but a man managing a live trade should not
+                // find half his panel greyed out on top of it.
+                //
+                // Never on a bot: it does not click the buttons.
+                if (!hard && !s.Input.IsAutomated && s.Input.OpenContracts == 0
+                    && s.Input.CooldownSecondsLeft > 0)
+                {
+                    hard = true;
+                    block = true;
+                    hardLine = "Too soon after a loss - "
+                             + DisciplineEngine.Countdown(s.Input.CooldownSecondsLeft)
+                             + " left of your " + s.Input.CooldownMinutes + "-minute cooldown.";
+                }
+
                 PublishLockSticky(s.AccountName, hard, hardLine, block, now);
 
                 if (!tiltEnabled) continue;

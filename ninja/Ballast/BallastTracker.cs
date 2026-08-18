@@ -1661,6 +1661,27 @@ namespace Ballast
             return (int)Math.Floor(mins);
         }
 
+        /// <summary>
+        /// The same clock in seconds, so a cooldown can be counted DOWN.
+        ///
+        /// "i just have to adhere to it....how do we make me adhere better to
+        /// the rule?"
+        ///
+        /// Minutes elapsed is the wrong number to put in front of someone who
+        /// is deciding whether to click. "only 2 min since a loss" is a fact
+        /// about the past that he has to do arithmetic on; "2:47 left" is a
+        /// finite thing running out. Thirteen of his twenty-one breaks happen
+        /// inside the first two minutes, which is exactly where the difference
+        /// between those two sentences lands.
+        /// </summary>
+        public int SecondsSinceLastLoss(DateTime now)
+        {
+            if (!LastLossAt.HasValue) return -1;
+            double secs = (now - LastLossAt.Value).TotalSeconds;
+            if (secs < 0) secs = 0;
+            return (int)Math.Floor(secs);
+        }
+
         /// <summary>Build the engine input from current tracked state.</summary>
         public DisciplineInput BuildInput(DateTime nowExchange)
         {
@@ -1770,6 +1791,7 @@ namespace Ballast
 
             i.LastTradeWasLoss = LastTradeWasLoss;
             i.MinutesSinceLastLoss = MinutesSinceLastLoss(nowExchange);
+            i.SecondsSinceLastLoss = SecondsSinceLastLoss(nowExchange);
             i.CooldownMinutes = Config.CooldownMinutes;
 
             i.NowMinuteEt = nowExchange.Hour * 60 + nowExchange.Minute;

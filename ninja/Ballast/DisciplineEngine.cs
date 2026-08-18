@@ -193,6 +193,30 @@ namespace Ballast
 
         public bool LastTradeWasLoss;
         public int MinutesSinceLastLoss = -1;   // -1 == no loss yet today
+
+        /// <summary>The same clock in seconds, for counting a cooldown down. -1 == no loss yet.</summary>
+        public int SecondsSinceLastLoss = -1;
+
+        /// <summary>
+        /// Seconds left of the cooldown, or 0 when there is none to serve.
+        /// Falls back to whole minutes for a caller that only set those.
+        /// </summary>
+        public int CooldownSecondsLeft
+        {
+            get
+            {
+                if (CooldownMinutes <= 0 || !LastTradeWasLoss) return 0;
+
+                int gone = SecondsSinceLastLoss >= 0
+                         ? SecondsSinceLastLoss
+                         : (MinutesSinceLastLoss >= 0 ? MinutesSinceLastLoss * 60 : -1);
+                if (gone < 0) return 0;
+
+                int left = (CooldownMinutes * 60) - gone;
+                return left > 0 ? left : 0;
+            }
+        }
+
         public int CooldownMinutes = 5;
 
         /// <summary>
@@ -297,7 +321,9 @@ namespace Ballast
                      + Money(i.PeakDailyPnl - i.DailyPnl) + " - do not trade back your profits";
 
             if (Has(d.Signals, "revenge_window"))
-                return "only " + i.MinutesSinceLastLoss + " min since a loss - wait it out";
+                return i.CooldownSecondsLeft > 0
+                    ? "wait " + Countdown(i.CooldownSecondsLeft) + " - too soon after a loss"
+                    : "only " + i.MinutesSinceLastLoss + " min since a loss - wait it out";
 
             if (Has(d.Signals, "thin_cushion"))
                 return "only " + Money(i.CushionToFloor) + " left - one stop could end it";
@@ -385,6 +411,15 @@ namespace Ballast
         {
             if (startMinute == endMinute) return "any time";
             return HourMinute(startMinute) + "-" + HourMinute(endMinute);
+        }
+
+        /// <summary>"2:47", the way a clock reads.</summary>
+        public static string Countdown(int seconds)
+        {
+            if (seconds < 0) seconds = 0;
+            int m = seconds / 60, sec = seconds % 60;
+            return m.ToString(CultureInfo.InvariantCulture) + ":"
+                 + (sec < 10 ? "0" : "") + sec.ToString(CultureInfo.InvariantCulture);
         }
 
         public static string HourMinute(int minuteOfDay)

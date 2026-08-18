@@ -34,6 +34,7 @@ public static class LimitTests
         TypingPastTheWallGivesTheButtonsBack();
         ProtectItWaitsUntilThereIsSomethingToProtect();
         ABotNeverTakesTheHeadlineOffHim();
+        TheCooldownCountsDownAndHoldsTheButtons();
     }
 
     /// <summary>
@@ -344,8 +345,13 @@ public static class LimitTests
         DisciplineDecision rd = DisciplineEngine.Evaluate(room);
         T.Eq(rd.Action, DisciplineAction.Cooldown,
              "a cooldown with trades left is still a cooldown");
-        T.Ok(DisciplineEngine.RowWarning(room, rd).IndexOf("wait it out") >= 0,
-             "and it still says wait, because waiting genuinely helps there");
+        // It still says wait - but as a countdown now, because "only 4 min
+        // since a loss" is a fact about the past that he has to do arithmetic
+        // on, and "11:00" is a finite thing running out.
+        string cd = DisciplineEngine.RowWarning(room, rd);
+        T.Ok(cd.IndexOf("wait") >= 0, "and it still says wait, because waiting genuinely helps there");
+        T.Ok(cd.IndexOf("11:00") >= 0,
+             "and says how much is left of the 15, not how much has gone: " + cd);
 
         // A loss streak already outranked the cooldown and must keep doing so.
         DisciplineInput streak = Sim101(3, 3);
@@ -482,6 +488,94 @@ public static class LimitTests
         s.Input = i;
         s.Decision = DisciplineEngine.Evaluate(i);
         return s;
+    }
+
+    /// <summary>
+    /// "yea i break it when i see a trade" - twenty times in twelve sessions,
+    /// and every one of them was also a trade taken against advice. Ballast had
+    /// already said so, every time, and it had already not worked.
+    ///
+    /// "we must keep the rule....it helps me from being frustrated more, i just
+    /// have to adhere to it....how do we make me adhere better to the rule?"
+    ///
+    /// Two changes. The number becomes a countdown, because thirteen of the
+    /// twenty-one breaks are inside the first two minutes and "only 2 min
+    /// since a loss" is a fact about the past he has to do arithmetic on. And
+    /// the entry buttons are held for the remainder - released by the clock,
+    /// not by typing, because there is nothing to argue with in a number that
+    /// is running out on its own.
+    /// </summary>
+    static void TheCooldownCountsDownAndHoldsTheButtons()
+    {
+        T.S("the cooldown counts down and holds the buttons");
+
+        // 5-minute cooldown, 90 seconds served.
+        DisciplineInput i = Green(0, 250);
+        i.CooldownMinutes = 5;
+        i.LastTradeWasLoss = true;
+        i.MinutesSinceLastLoss = 1;
+        i.SecondsSinceLastLoss = 90;
+
+        T.Eq(i.CooldownSecondsLeft, 210, "three and a half minutes left of five");
+        T.Eq(DisciplineEngine.Countdown(i.CooldownSecondsLeft), "3:30", "which reads as a clock");
+        T.Eq(DisciplineEngine.Countdown(7), "0:07", "and pads the seconds");
+
+        string row = DisciplineEngine.RowWarning(i, DisciplineEngine.Evaluate(i));
+        T.Ok(row.IndexOf("3:30") >= 0, "the row shows what is left, not what has gone: " + row);
+        T.Ok(row.IndexOf("min since") < 0, "and no longer counts upwards");
+
+        // Served in full, and it lets go on its own.
+        DisciplineInput done = Green(0, 250);
+        done.CooldownMinutes = 5;
+        done.LastTradeWasLoss = true;
+        done.MinutesSinceLastLoss = 5;
+        done.SecondsSinceLastLoss = 300;
+        T.Eq(done.CooldownSecondsLeft, 0, "the clock releases it with nothing to type");
+        T.Eq(DisciplineEngine.Evaluate(done).Action, DisciplineAction.Trade,
+             "and the account is clear again");
+
+        // No cooldown set, or no loss yet: nothing to serve.
+        DisciplineInput off = Green(0, 250);
+        off.CooldownMinutes = 0;
+        off.LastTradeWasLoss = true;
+        off.SecondsSinceLastLoss = 10;
+        T.Eq(off.CooldownSecondsLeft, 0, "no cooldown, no hold");
+
+        DisciplineInput fresh = Green(0, 250);
+        fresh.CooldownMinutes = 5;
+        fresh.LastTradeWasLoss = false;
+        fresh.SecondsSinceLastLoss = -1;
+        T.Eq(fresh.CooldownSecondsLeft, 0, "and no loss yet today is not a cooldown");
+
+        // An older caller that only ever set whole minutes still works.
+        DisciplineInput mins = Green(0, 250);
+        mins.CooldownMinutes = 15;
+        mins.LastTradeWasLoss = true;
+        mins.MinutesSinceLastLoss = 4;
+        mins.SecondsSinceLastLoss = -1;
+        T.Eq(mins.CooldownSecondsLeft, 660, "minutes-only still gives eleven minutes left");
+
+        // ---- the two that matter for safety ----
+        //
+        // The lock takes the ENTRY buttons only - Close, Reverse, Flatten and
+        // Cancel stay live whatever happens, which the indicator guarantees.
+        // These pin the two cases the window must refuse to hold at all.
+        DisciplineInput holding = Green(0, 250);
+        holding.CooldownMinutes = 5;
+        holding.LastTradeWasLoss = true;
+        holding.SecondsSinceLastLoss = 30;
+        holding.OpenContracts = 2;
+        T.Ok(holding.CooldownSecondsLeft > 0, "a live position is still inside the cooldown");
+        T.Ok(holding.OpenContracts > 0,
+             "and the window will not hold the buttons while one is open - see the OpenContracts "
+           + "guard beside PublishLockSticky");
+
+        DisciplineInput bot = Green(0, 250);
+        bot.CooldownMinutes = 5;
+        bot.LastTradeWasLoss = true;
+        bot.SecondsSinceLastLoss = 30;
+        bot.IsAutomated = true;
+        T.Ok(bot.IsAutomated, "and never on a bot, which does not click the buttons");
     }
 
     /// <summary>A clean green day on an account with nothing else to say about it.</summary>
