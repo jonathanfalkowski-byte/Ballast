@@ -26,9 +26,94 @@ public static class MonthTests
         MoneyIsNeverTheScore();
         AShortMonthIsNotCompared();
         OneDefinitionOfCleanEverywhere();
+        EachAccountIsJudgedByItsOwnRules();
     }
 
     static DateTime Day(int month, int day) { return new DateTime(2026, month, day, 10, 0, 0); }
+
+    /// <summary>
+    /// "0 clean sessions" across fourteen sessions - the flagship figure of the
+    /// whole report, and it had never once been anything else.
+    ///
+    /// Part of that is him. Part of it was this: every account was scored
+    /// against DefaultConfig, which says six trades, and not one of his six
+    /// accounts is set to six. They are 5, 5, 7, 10, 8 and 3. So Sim103's
+    /// seventh and eighth trades were counted as past a limit that account has
+    /// never had, and the day was marked broken for a rule it never broke.
+    ///
+    /// A metric that cannot come out clean is not a motivator, it is a wall.
+    /// He would have met his first month report on the first of September, seen
+    /// a zero, and been right to conclude it was worthless.
+    /// </summary>
+    static void EachAccountIsJudgedByItsOwnRules()
+    {
+        T.S("each account is judged by its own rules");
+
+        DateTime day = new DateTime(2026, 8, 4, 10, 0, 0);
+
+        // A clean eight-trade day on Sim103, whose limit is eight.
+        List<BallastTrade> book = new List<BallastTrade>();
+        for (int n = 1; n <= 8; n++)
+        {
+            BallastTrade e = Good(day.AddMinutes(n * 20), n, 100);
+            e.AccountName = "Sim103";
+            book.Add(e);
+        }
+
+        // The old behaviour: one number for everything. Six, from the default.
+        MonthStats borrowed = MonthReport.For(book, day, 6, 5);
+        T.Eq(borrowed.PastTheCount, 2, "trades seven and eight counted against a limit of six");
+        T.Eq(borrowed.CleanSessions, 0, "and the day was marked broken for a rule it never broke");
+
+        // Its own rules.
+        AccountLimits limits = new AccountLimits();
+        limits.DefaultMaxTrades = 6;
+        limits.DefaultCooldownMinutes = 5;
+        limits.Set("Sim103", 8, 5);
+
+        MonthStats own = MonthReport.For(book, day, limits);
+        T.Eq(own.PastTheCount, 0, "eight trades on an eight-trade account is not past anything");
+        T.Eq(own.Sessions, 1, "one session");
+        T.Eq(own.CleanSessions, 1, "and it comes out clean, which it always was");
+
+        // Two accounts, two limits, one day - the case a single number cannot
+        // express at all. Sim110 runs a bot capped at three.
+        List<BallastTrade> both = new List<BallastTrade>();
+        for (int n = 1; n <= 8; n++)
+        {
+            BallastTrade e = Good(day.AddMinutes(n * 20), n, 100);
+            e.AccountName = "Sim103";
+            both.Add(e);
+        }
+        for (int n = 1; n <= 5; n++)
+        {
+            BallastTrade e = Good(day.AddMinutes(n * 20), n, 50);
+            e.AccountName = "Sim110";
+            both.Add(e);
+        }
+        limits.Set("Sim110", 3, 5);
+
+        MonthStats mixed = MonthReport.For(both, day, limits);
+        T.Eq(mixed.PastTheCount, 2, "only Sim110's fourth and fifth are past its own three");
+        T.Eq(mixed.CleanSessions, 0, "and that spoils the day, correctly this time");
+
+        // An account with no rules on record still gets the default rather than
+        // being waved through - a limit nobody set is not the same as no limit.
+        List<BallastTrade> unknown = new List<BallastTrade>();
+        for (int n = 1; n <= 8; n++)
+        {
+            BallastTrade e = Good(day.AddMinutes(n * 20), n, 100);
+            e.AccountName = "SomeAccountNobodyConfigured";
+            unknown.Add(e);
+        }
+        T.Eq(MonthReport.For(unknown, day, limits).PastTheCount, 2,
+             "an unconfigured account falls back to the default of six");
+
+        // And the old two-int signature still means what it always meant, so
+        // nothing that calls it changed underneath.
+        T.Eq(MonthReport.For(book, day, 8, 5).PastTheCount, 0,
+             "the old signature still works, as one limit for everything");
+    }
 
     static BallastTrade Tr(DateTime at, int numberInDay, double pnl, string planned,
                            string advice, int minsSinceLoss)

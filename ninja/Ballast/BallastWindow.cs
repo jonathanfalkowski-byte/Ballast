@@ -6104,6 +6104,41 @@ namespace NinjaTrader.NinjaScript.AddOns
             return list;
         }
 
+        /// <summary>
+        /// Every account's own trade limit and cooldown, including accounts no
+        /// longer ticked - their trades are still in the journal, and judging
+        /// last month by this month's watch list would rewrite history.
+        /// </summary>
+        private AccountLimits MonthLimits()
+        {
+            AccountLimits limits = new AccountLimits();
+
+            TrackerConfig def = monitor.DefaultConfig;
+            limits.DefaultMaxTrades = def != null ? def.MaxTrades : 0;
+            limits.DefaultCooldownMinutes = def != null ? def.CooldownMinutes : 0;
+
+            try
+            {
+                List<BallastTrade> all = monitor.Journal.All;
+                for (int i = 0; i < all.Count; i++)
+                {
+                    BallastTrade e = all[i];
+                    if (e == null || string.IsNullOrEmpty(e.AccountName)) continue;
+
+                    TrackerConfig c = null;
+                    BallastTracker t = monitor.Get(e.AccountName);
+                    if (t != null) c = t.Config;
+                    if (c == null) c = monitor.RememberedConfig(e.AccountName);
+                    if (c == null) continue;
+
+                    limits.Set(e.AccountName, c.MaxTrades, c.CooldownMinutes);
+                }
+            }
+            catch { }
+
+            return limits;
+        }
+
         private bool IsAutomatedAccount(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
@@ -7724,24 +7759,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                 DateTime lastMonth = firstOfThis.AddMonths(-1);
                 DateTime before = firstOfThis.AddMonths(-2);
 
-                TrackerConfig c = monitor.DefaultConfig;
-                int maxTrades = c != null ? c.MaxTrades : 0;
-                int cooldown = c != null ? c.CooldownMinutes : 0;
+                // Each account against its own rules. One borrowed number
+                // marked days broken for limits those accounts never had, and
+                // took the clean-session count - the whole point of the report -
+                // to zero and kept it there.
+                AccountLimits limits = MonthLimits();
 
                 List<BallastTrade> all = monitor.Journal.All;
 
                 List<BallastTrade> real = BallastJournal.FromAccounts(all, sims, false);
                 string label = "";
 
-                MonthStats a = MonthReport.For(real, before, maxTrades, cooldown);
-                MonthStats b = MonthReport.For(real, lastMonth, maxTrades, cooldown);
+                MonthStats a = MonthReport.For(real, before, limits);
+                MonthStats b = MonthReport.For(real, lastMonth, limits);
                 string s = MonthReport.Compare(a, b);
 
                 if (s.Length == 0)
                 {
                     List<BallastTrade> sim = BallastJournal.FromAccounts(all, sims, true);
-                    a = MonthReport.For(sim, before, maxTrades, cooldown);
-                    b = MonthReport.For(sim, lastMonth, maxTrades, cooldown);
+                    a = MonthReport.For(sim, before, limits);
+                    b = MonthReport.For(sim, lastMonth, limits);
                     s = MonthReport.Compare(a, b);
                     if (s.Length > 0) label = "On your sim accounts.  ";
                 }

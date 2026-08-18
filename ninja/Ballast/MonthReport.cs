@@ -84,6 +84,55 @@ namespace Ballast
         }
     }
 
+    /// <summary>
+    /// What each account's own rules were, so a month can be scored against
+    /// them rather than against one number borrowed from the default.
+    ///
+    /// "0 clean sessions" across fourteen sessions, and the flagship figure of
+    /// the whole report had never once been anything else. Part of that is him
+    /// and part of it was this: every account was judged against
+    /// DefaultConfig, which said six trades, and not one of his six accounts is
+    /// set to six. They are 5, 5, 7, 10, 8 and 3. So Sim103's seventh and
+    /// eighth trades counted as past a limit that account has never had, and
+    /// the day was marked broken for a rule it never broke.
+    ///
+    /// A metric that cannot come out clean is not a motivator, it is a wall -
+    /// and he would have met it on the first of September, seen a zero, and
+    /// been right to conclude the report was worthless.
+    /// </summary>
+    public class AccountLimits
+    {
+        private readonly Dictionary<string, int> maxTrades =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, int> cooldown =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Used for an account with no rules of its own on record.</summary>
+        public int DefaultMaxTrades;
+        public int DefaultCooldownMinutes;
+
+        public void Set(string account, int max, int cooldownMinutes)
+        {
+            if (string.IsNullOrEmpty(account)) return;
+            maxTrades[account] = max;
+            cooldown[account] = cooldownMinutes;
+        }
+
+        public int MaxTradesFor(string account)
+        {
+            int v;
+            if (!string.IsNullOrEmpty(account) && maxTrades.TryGetValue(account, out v)) return v;
+            return DefaultMaxTrades;
+        }
+
+        public int CooldownFor(string account)
+        {
+            int v;
+            if (!string.IsNullOrEmpty(account) && cooldown.TryGetValue(account, out v)) return v;
+            return DefaultCooldownMinutes;
+        }
+    }
+
     public static class MonthReport
     {
         /// <summary>
@@ -96,6 +145,22 @@ namespace Ballast
         public static MonthStats For(List<BallastTrade> source, DateTime anyDayInMonth,
                                      int maxTrades, int cooldownMinutes)
         {
+            AccountLimits one = new AccountLimits();
+            one.DefaultMaxTrades = maxTrades;
+            one.DefaultCooldownMinutes = cooldownMinutes;
+            return For(source, anyDayInMonth, one);
+        }
+
+        /// <summary>
+        /// The same month, scored against each account's own trade limit and
+        /// cooldown. A trader running a 3-trade bot account beside a 10-trade
+        /// sim is not breaking a rule on the sim's fourth trade.
+        /// </summary>
+        public static MonthStats For(List<BallastTrade> source, DateTime anyDayInMonth,
+                                     AccountLimits limits)
+        {
+            if (limits == null) limits = new AccountLimits();
+
             MonthStats m = new MonthStats();
             m.Month = new DateTime(anyDayInMonth.Year, anyDayInMonth.Month, 1);
             if (source == null) return m;
@@ -116,6 +181,10 @@ namespace Ballast
                 if (e.ExitTime.Year != m.Month.Year || e.ExitTime.Month != m.Month.Month) continue;
 
                 m.Trades++;
+
+                // This account's rules, not the default's.
+                int maxTrades = limits.MaxTradesFor(e.AccountName);
+                int cooldownMinutes = limits.CooldownFor(e.AccountName);
 
                 bool broke = BallastJournal.BrokeARule(e, maxTrades, cooldownMinutes);
 
