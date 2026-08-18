@@ -33,6 +33,7 @@ public static class LimitTests
         TheRowAndTheChartNeverDisagree();
         TypingPastTheWallGivesTheButtonsBack();
         ProtectItWaitsUntilThereIsSomethingToProtect();
+        ABotNeverTakesTheHeadlineOffHim();
     }
 
     /// <summary>
@@ -409,6 +410,78 @@ public static class LimitTests
         DisciplineInput red = Green(-120, 250);
         T.Eq(DisciplineEngine.RowWarning(red, DisciplineEngine.Evaluate(red)),
              "clear", "and a day that is down reads as it always did");
+    }
+
+    /// <summary>
+    /// "oh it is a bot"
+    ///
+    /// Sim110 runs one, at three trades and three losses - which a bot reaches
+    /// in minutes. StopForDay at Alert scores 35, a hand-traded account sitting
+    /// clear scores 10, and one in a cooldown scores 33. So the loudest line in
+    /// Ballast would have spent the day telling him to stop trading an account
+    /// he was not trading, over the top of the two he was.
+    ///
+    /// Severity(d) could not tell the difference - it only ever saw the
+    /// decision. It does now.
+    /// </summary>
+    static void ABotNeverTakesTheHeadlineOffHim()
+    {
+        T.S("a bot never takes the headline off him");
+
+        BallastMonitor m = new BallastMonitor();
+        List<AccountSnapshot> snaps = new List<AccountSnapshot>();
+
+        // The bot, done for the day on its own count.
+        DisciplineInput bot = Green(0, 250);
+        bot.IsAutomated = true;
+        bot.MaxTrades = 3; bot.TradesToday = 3;
+        snaps.Add(Snap("Sim110", bot));
+
+        // Him, clear to trade on the account he is actually watching.
+        DisciplineInput his = Green(0, 250);
+        snaps.Add(Snap("APEX-11325-105", his));
+
+        T.Eq(m.MostUrgent(snaps).AccountName, "APEX-11325-105",
+             "the account with a person at it leads");
+
+        // Even against a cooldown, which used to lose to the bot's 35.
+        List<AccountSnapshot> two = new List<AccountSnapshot>();
+        two.Add(Snap("Sim110", bot));
+        DisciplineInput waiting = Green(0, 250);
+        waiting.MinutesSinceLastLoss = 2; waiting.CooldownMinutes = 15;
+        waiting.LossStreak = 1;
+        two.Add(Snap("APEX-11325-105", waiting));
+        T.Eq(m.MostUrgent(two).AccountName, "APEX-11325-105",
+             "and still leads when he is only waiting out a cooldown");
+
+        // But an account that has run into its floor is news, not advice, and
+        // it is still his money whoever placed the order.
+        DisciplineInput dead = Green(0, 250);
+        dead.IsAutomated = true;
+        dead.CurrentEquity = 243000; dead.CushionToFloor = -500;
+        List<AccountSnapshot> blown = new List<AccountSnapshot>();
+        blown.Add(Snap("Sim110", dead));
+        blown.Add(Snap("APEX-11325-105", Green(0, 250)));
+        T.Eq(m.MostUrgent(blown).AccountName, "Sim110",
+             "a bot account past its floor still gets said out loud");
+
+        // And with nothing but bots, the ladder among them is untouched.
+        DisciplineInput quietBot = Green(0, 250);
+        quietBot.IsAutomated = true;
+        List<AccountSnapshot> bots = new List<AccountSnapshot>();
+        bots.Add(Snap("Sim110", quietBot));
+        bots.Add(Snap("Sim102", bot));
+        T.Eq(m.MostUrgent(bots).AccountName, "Sim102",
+             "with no hand-traded account, the busiest bot still leads");
+    }
+
+    static AccountSnapshot Snap(string name, DisciplineInput i)
+    {
+        AccountSnapshot s = new AccountSnapshot();
+        s.AccountName = name;
+        s.Input = i;
+        s.Decision = DisciplineEngine.Evaluate(i);
+        return s;
     }
 
     /// <summary>A clean green day on an account with nothing else to say about it.</summary>

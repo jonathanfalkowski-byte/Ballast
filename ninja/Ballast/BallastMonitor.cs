@@ -458,17 +458,62 @@ namespace Ballast
             return urgency * 10 + action;
         }
 
+        /// <summary>
+        /// The states that mean the ACCOUNT is in trouble, as opposed to the
+        /// trader. A bot cannot be told to wait out a cooldown, but an account
+        /// it has run into its floor still needs saying out loud.
+        /// </summary>
+        private static bool IsTerminal(DisciplineAction a)
+        {
+            return a == DisciplineAction.Lockout       // past the floor, or the daily loss limit
+                || a == DisciplineAction.CheckSetup;   // the figures do not describe this account
+        }
+
+        /// <summary>
+        /// Enough to drop a bot below every hand-traded account without
+        /// disturbing the order among bots themselves. The scale above tops out
+        /// at 36.
+        /// </summary>
+        private const int BotDemotion = 100;
+
+        /// <summary>
+        /// Same ladder, but knowing whether a person is at the keyboard.
+        ///
+        /// "oh it is a bot"
+        ///
+        /// Severity(d) cannot tell - it only ever saw the decision - so the
+        /// headline was picked with no idea which accounts he was actually
+        /// trading. Sim110 runs a bot at three trades and three losses, which a
+        /// bot reaches in minutes, and StopForDay at Alert scores 35. That
+        /// outranks a hand-traded account sitting clear on 10, and a
+        /// hand-traded account in a cooldown on 33 - so the loudest line in
+        /// Ballast would have spent the day telling him to stop trading an
+        /// account he was not trading, over the top of the two he was.
+        ///
+        /// Discipline states on a bot rank below everything a person is doing.
+        /// Terminal ones do not: an account that has run into its floor is not
+        /// advice, it is news, and it is still his money whoever placed the
+        /// order.
+        /// </summary>
+        public static int Severity(DisciplineDecision d, DisciplineInput i)
+        {
+            int score = Severity(d);
+            if (d != null && i != null && i.IsAutomated && !IsTerminal(d.Action))
+                score -= BotDemotion;
+            return score;
+        }
+
         /// <summary>The account you most need to hear about right now.</summary>
         public AccountSnapshot MostUrgent(List<AccountSnapshot> snapshots)
         {
             if (snapshots == null || snapshots.Count == 0) return null;
 
             AccountSnapshot worst = snapshots[0];
-            int worstScore = Severity(worst.Decision);
+            int worstScore = Severity(worst.Decision, worst.Input);
 
             for (int i = 1; i < snapshots.Count; i++)
             {
-                int score = Severity(snapshots[i].Decision);
+                int score = Severity(snapshots[i].Decision, snapshots[i].Input);
                 if (score > worstScore)
                 {
                     worst = snapshots[i];
