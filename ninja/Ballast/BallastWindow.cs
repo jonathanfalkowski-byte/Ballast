@@ -5185,11 +5185,30 @@ namespace NinjaTrader.NinjaScript.AddOns
                         // walk into Setup to say so every time is friction on the
                         // one action that makes the row true again. Live accounts
                         // do not get this - see IsSimAccount.
+                        //
+                        // "why does it say reset on only 2 sim accounts, also it
+                        // keeps asking about different totals and ask me if it
+                        // was a reset but not on all sim accounts"
+                        //
+                        // Two different things were sitting in the same slot
+                        // looking alike. The amber block above IS a question -
+                        // Ballast saw a balance move with no trade behind it and
+                        // wants to know. This is not a question at all; it is a
+                        // shortcut for when HE resets a sim, and it was labelled
+                        // "reset? start it over", which reads exactly like the
+                        // other one. So the two were read as one detector firing
+                        // inconsistently across his accounts.
+                        //
+                        // It also only appears where there is a day to erase, so
+                        // a sim he has not traded today does not offer it -
+                        // nothing to start over. The label now says whose action
+                        // it is, which makes its absence read as "there is
+                        // nothing here" rather than "it failed to notice".
                         string simWho = s.AccountName;
                         StackPanel sb = new StackPanel();
                         sb.Orientation = Orientation.Horizontal;
                         sb.Margin = new Thickness(0, 2, 0, 0);
-                        sb.Children.Add(QuietButton("reset? start it over",
+                        sb.Children.Add(QuietButton("I reset this account - clear today",
                             delegate { OnStartAccountOver(simWho); }));
                         rowStack.Children.Add(sb);
                     }
