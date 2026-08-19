@@ -123,6 +123,50 @@ public static class CountTests
         T.Eq(ChartSnapshot.AccountChartIndex(accts, instrs, "", "NQ SEP26"), -1,
              "and so does not knowing the account");
 
+        // ── Two charts, same account, same instrument ───────────────────────
+        //
+        // "if you notice this states a daily trade but no trade and the funny
+        // part that chart should have 2 tabs which it doesnt so that is very
+        // weird"
+        //
+        // He runs a Daily NQ chart for context beside the 60-Range NQ chart he
+        // trades from. Both say NQ SEP26 and both have Chart Trader on the same
+        // account, so every test above ties - and the tie went to whichever
+        // window enumerated first. That is how a daily chart with one tab and
+        // no trade on it ended up in a card asking whether he would take the
+        // entry again.
+        List<string> twoSame = new List<string> { "Sim103", "Sim103" };
+        List<string> sameInstr = new List<string> { "NQ SEP26", "NQ SEP26" };
+
+        // Index 1 is the one he is looking at.
+        List<bool> secondFocused = new List<bool> { false, true };
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26", secondFocused), 1,
+             "the chart he is actually looking at wins the tie");
+
+        List<bool> firstFocused = new List<bool> { true, false };
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26", firstFocused), 0,
+             "and the other way round");
+
+        // Focus is a TIEBREAK, never a promotion. A focused chart on the wrong
+        // instrument still loses to an unfocused right one.
+        List<string> mixed = new List<string> { "Sim103", "Sim103" };
+        List<string> esFirst = new List<string> { "ES 09-26", "NQ SEP26" };
+        T.Eq(ChartSnapshot.AccountChartIndex(mixed, esFirst, "Sim103", "NQ SEP26", firstFocused), 1,
+             "a focused ES chart does not win an NQ trade");
+
+        // Nothing focused, or nothing known about focus: unchanged from before.
+        List<bool> noneFocused = new List<bool> { false, false };
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26", noneFocused), 0,
+             "with nothing focused it still answers rather than refusing");
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26", null), 0,
+             "and the old four-argument call behaves exactly as it did");
+
+        // Two charts on the account, neither showing the instrument - the
+        // focused one now settles what used to be silence.
+        List<string> neither = new List<string> { "ES 09-26", "CL 10-26" };
+        T.Eq(ChartSnapshot.AccountChartIndex(mixed, neither, "Sim103", "NQ SEP26", secondFocused), 1,
+             "and focus settles two of the account's other charts too");
+
         // ── Colour by how close, not by whether the day is red ──────────────
         //
         // "Down three dollars" and "two of three losses with $374 of a $3,000

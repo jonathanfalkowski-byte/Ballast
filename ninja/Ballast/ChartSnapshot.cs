@@ -947,29 +947,62 @@ namespace Ballast
         public static int AccountChartIndex(List<string> chartAccounts, List<string> instruments,
                                             string account, string instrument)
         {
+            return AccountChartIndex(chartAccounts, instruments, account, instrument, null);
+        }
+
+        /// <summary>
+        /// As above, but breaking a tie with the chart that is actually in
+        /// front of him.
+        ///
+        /// "if you notice this states a daily trade but no trade and the funny
+        /// part that chart should have 2 tabs which it doesnt so that is very
+        /// weird"
+        ///
+        /// He runs a Daily NQ chart for context beside the 60-Range NQ chart he
+        /// trades from. Both say NQ SEP26, and both have Chart Trader pointed at
+        /// the same account, so every test above them ties - and the tie was
+        /// broken by whichever window happened to enumerate first. That is how a
+        /// daily chart with no trade on it and one tab ended up in a card asking
+        /// him whether he would take the entry again.
+        ///
+        /// Focus is the tiebreak, because it is the only one available that
+        /// means anything: the chart he is looking at when the fill lands is the
+        /// chart he traded from, far more often than the first one Windows
+        /// happens to hand back. It is a tiebreak only - a focused chart on the
+        /// WRONG account or instrument still loses to an unfocused right one.
+        /// </summary>
+        public static int AccountChartIndex(List<string> chartAccounts, List<string> instruments,
+                                            string account, string instrument, List<bool> active)
+        {
             if (chartAccounts == null || string.IsNullOrEmpty(account)) return -1;
 
-            int withInstrument = -1, withInstrumentCount = 0;
-            int accountOnly = -1, accountOnlyCount = 0;
+            int withInstrument = -1, withInstrumentCount = 0, withInstrumentActive = -1;
+            int accountOnly = -1, accountOnlyCount = 0, accountOnlyActive = -1;
 
             for (int i = 0; i < chartAccounts.Count; i++)
             {
                 if (!string.Equals(chartAccounts[i], account, StringComparison.OrdinalIgnoreCase)) continue;
 
+                bool focused = active != null && i < active.Count && active[i];
+
                 accountOnlyCount++;
                 if (accountOnly < 0) accountOnly = i;
+                if (focused && accountOnlyActive < 0) accountOnlyActive = i;
 
                 if (instruments != null && i < instruments.Count
                     && MatchScore(instruments[i], instrument) > 0)
                 {
                     withInstrumentCount++;
                     if (withInstrument < 0) withInstrument = i;
+                    if (focused && withInstrumentActive < 0) withInstrumentActive = i;
                 }
             }
 
             if (withInstrumentCount == 1) return withInstrument;
-            if (withInstrumentCount > 1) return withInstrument;   // same account, same instrument
+            if (withInstrumentCount > 1)
+                return withInstrumentActive >= 0 ? withInstrumentActive : withInstrument;
             if (accountOnlyCount == 1) return accountOnly;
+            if (accountOnlyCount > 1 && accountOnlyActive >= 0) return accountOnlyActive;
 
             return -1;
         }
@@ -1009,7 +1042,7 @@ namespace Ballast
                 // chart's Chart Trader is pointed at. This outranks everything
                 // else, because it is the only signal that can tell three charts
                 // of the same instrument apart - and being focused is not it.
-                if (idx < 0) idx = AccountChartIndex(chartAccounts, names, account, instrument);
+                if (idx < 0) idx = AccountChartIndex(chartAccounts, names, account, instrument, active);
 
                 if (idx < 0) idx = BestChartIndex(names, instrument, active);
 

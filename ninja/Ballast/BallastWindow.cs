@@ -6172,6 +6172,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             return limits;
         }
 
+        /// <summary>
+        /// Accounts currently marked as bot-traded, by name.
+        ///
+        /// Asked of the SETTING rather than of the journal rows, because the
+        /// row's Automated flag is stamped when the trade is written and an
+        /// account that becomes a bot later leaves a trail of rows marked
+        /// hand-traded behind it.
+        /// </summary>
+        private List<string> BotAccounts()
+        {
+            List<string> names = new List<string>();
+            try
+            {
+                List<BallastTrade> all = monitor.Journal.All;
+                for (int i = 0; i < all.Count; i++)
+                {
+                    BallastTrade e = all[i];
+                    if (e == null || string.IsNullOrEmpty(e.AccountName)) continue;
+                    if (names.Contains(e.AccountName)) continue;
+                    if (IsAutomatedAccount(e.AccountName)) names.Add(e.AccountName);
+                }
+            }
+            catch { }
+            return names;
+        }
+
         private bool IsAutomatedAccount(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
@@ -7558,7 +7584,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 lookBack = LookBack.Pick(monitor.Journal.All, now,
                                          c != null ? c.MaxTrades : 0,
                                          c != null ? c.CooldownMinutes : 0,
-                                         lookBackShown);
+                                         lookBackShown,
+                                         BotAccounts());
                 if (lookBack == null) { HideLookBack(); return; }
 
                 reviewBody.Text += "\n\n" + LookBack.Question(lookBack,

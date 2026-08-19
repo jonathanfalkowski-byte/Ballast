@@ -27,6 +27,63 @@ public static class LookBackTests
         TodayIsNotHindsight();
         TheSameTradeIsNotShownTwice();
         AnHonestNothingToShow();
+        NoBotTradeEverReachesTheCard();
+    }
+
+    /// <summary>
+    /// "dont post any trades in this window if they are from a bot"
+    ///
+    /// The row's own Automated flag cannot do this alone. It is stamped when
+    /// the trade is written, from the account's setting at that moment, so an
+    /// account that becomes a bot afterwards leaves a trail of rows marked
+    /// hand-traded. Sim110 has twenty rows in his journal and exactly two are
+    /// flagged; the other fifteen were written before he ticked it, and every
+    /// one of them was eligible for this card.
+    ///
+    /// The card asks "would you take it again", which is not a question about a
+    /// trade nobody chose.
+    /// </summary>
+    static void NoBotTradeEverReachesTheCard()
+    {
+        T.S("no bot trade ever reaches the card");
+
+        // A rewarded mistake on the bot account - exactly what this card hunts
+        // for, and exactly what it must not show. Unflagged, as his really are.
+        BallastTrade bot = Tr(2, 900, BallastJournal.Verdict_Chased, "Cooldown", 3, 1);
+        bot.AccountName = "Sim110";
+        bot.Automated = false;
+
+        List<BallastTrade> book = new List<BallastTrade>();
+        book.Add(bot);
+
+        T.Ok(LookBack.Pick(book, Now, 5, 15, null) != null,
+             "unfiltered, the bot's trade is picked - which is the bug");
+
+        List<string> bots = new List<string>();
+        bots.Add("Sim110");
+        T.Ok(LookBack.Pick(book, Now, 5, 15, null, bots) == null,
+             "named as a bot account, it is not offered at all");
+
+        // Case-insensitively, because account names come from the broker.
+        List<string> shouty = new List<string>();
+        shouty.Add("SIM110");
+        T.Ok(LookBack.Pick(book, Now, 5, 15, null, shouty) == null,
+             "and the match does not care about case");
+
+        // A hand-traded account beside it is still offered, and is the one
+        // chosen once the bot is out of the way.
+        BallastTrade his = Tr(2, 400, BallastJournal.Verdict_Chased, "Cooldown", 3, 1);
+        his.AccountName = "APEX-11325-105";
+        book.Add(his);
+
+        LookBackPick pick = LookBack.Pick(book, Now, 5, 15, null, bots);
+        T.Ok(pick != null, "his own trade still comes through");
+        T.Eq(pick.Trade.AccountName, "APEX-11325-105", "and it is his, not the bot's");
+        T.Near(pick.Trade.Pnl, 400, 0.01, "even though the bot's was the bigger one");
+
+        // An empty list changes nothing.
+        T.Ok(LookBack.Pick(book, Now, 5, 15, null, new List<string>()) != null,
+             "an empty skip list is not a filter");
     }
 
     static readonly DateTime Now = new DateTime(2026, 8, 10, 8, 0, 0);

@@ -62,6 +62,14 @@ namespace Ballast
         public const int Days = 10;
 
         /// <summary>Identifies a trade across restarts without needing an id on it.</summary>
+        private static bool Skip(List<string> accounts, string name)
+        {
+            if (accounts == null || string.IsNullOrEmpty(name)) return false;
+            for (int i = 0; i < accounts.Count; i++)
+                if (string.Equals(accounts[i], name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         public static string KeyOf(BallastTrade e)
         {
             if (e == null) return "";
@@ -78,6 +86,30 @@ namespace Ballast
                                         int maxTrades, int cooldownMinutes,
                                         List<string> alreadyShown)
         {
+            return Pick(source, now, maxTrades, cooldownMinutes, alreadyShown, null);
+        }
+
+        /// <summary>
+        /// As above, ignoring any account in `skipAccounts` entirely.
+        ///
+        /// "dont post any trades in this window if they are from a bot"
+        ///
+        /// The row-level Automated flag cannot do this on its own. It is stamped
+        /// when the trade is written, from the account's setting AT THAT MOMENT
+        /// - so an account that becomes a bot afterwards leaves a trail of rows
+        /// marked hand-traded. Sim110 has twenty rows in his journal and exactly
+        /// two of them are flagged; the other fifteen were written before he
+        /// ticked it. Every one of those was eligible for this card.
+        ///
+        /// And the card is the wrong place for them whichever way they are
+        /// flagged. It asks "would you take it again", which is not a question
+        /// about a trade nobody chose.
+        /// </summary>
+        public static LookBackPick Pick(List<BallastTrade> source, DateTime now,
+                                        int maxTrades, int cooldownMinutes,
+                                        List<string> alreadyShown,
+                                        List<string> skipAccounts)
+        {
             if (source == null) return null;
 
             DateTime from = now.Date.AddDays(-Days);
@@ -91,6 +123,8 @@ namespace Ballast
             {
                 BallastTrade e = book[i];
                 if (e == null) continue;
+
+                if (skipAccounts != null && Skip(skipAccounts, e.AccountName)) continue;
 
                 // Today is not hindsight, it is this morning. A trade needs to
                 // have been slept on before looking at it teaches anything.
