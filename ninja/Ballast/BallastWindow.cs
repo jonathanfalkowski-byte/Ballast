@@ -331,6 +331,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private ComboBox profileBox;
         private TextBlock profileDetail;
         private TextBox tbRiskPerTrade;
+        private TextBox tbFirmFloor;
         private TextBox tbLastPayout;
         private TextBox tbPayoutsTaken;
         private TextBlock payoutTerms;
@@ -2626,6 +2627,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             // journal. That is the right answer for an account nobody has
             // withdrawn from, and it is the answer that errs towards showing a
             // TIGHTER ceiling rather than a looser one.
+            acct.Children.Add(Label("Your firm's liquidation threshold from its dashboard ($) - optional"));
+
+            Grid gFloor = TwoCol();
+            tbFirmFloor = FieldIn(gFloor, 0, 0, "Firm threshold", "0");
+            acct.Children.Add(gFloor);
+
+            acct.Children.Add(Why("Why would I type in a floor Ballast already works out?",
+                "Because Ballast's is an estimate of yours and the firm's is yours.\n\n"
+              + "A trailing drawdown hangs off your account's high-water mark. Your firm computes "
+              + "that on its own servers on every tick. Ballast computes it from the balances "
+              + "NinjaTrader hands it, which is not every tick - so if your account peaked between "
+              + "two of those, Ballast never saw the peak, its floor sits too low, and it tells you "
+              + "there is more room than there is.\n\n"
+              + "That is not a rounding error. On APEX-11325-106 it was $644: Rithmic put the "
+              + "threshold at $244,246 and Ballast at $243,602, so Ballast was offering room that "
+              + "did not exist. A floor that is too low is the one direction this software must "
+              + "never be wrong in.\n\n"
+              + "Ballast asks NinjaTrader for the firm's own figure on every tick and uses it when "
+              + "it arrives. On Rithmic accounts it does not arrive. So type it here instead - it "
+              + "is the Auto Liquidate Threshold Value in R|Trader, or whatever your firm calls the "
+              + "level it closes you at.\n\n"
+              + "Ballast always uses the HIGHER of this and its own, so this can only ever make it "
+              + "more careful, never less. Leave it at 0 and nothing changes. It goes stale as your "
+              + "high-water mark rises, which is safe - a stale figure is simply overtaken by "
+              + "Ballast's own - but re-reading it now and then is worth the ten seconds."));
+
             acct.Children.Add(Label("Last approved payout on this account (YYYY-MM-DD, blank = never)"));
 
             Grid gPay = TwoCol();
@@ -5134,7 +5161,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     cushionText = Money(s.Input.CushionToFloor)
                                 + (s.Input.FirmFloorProviderConfirmed ? "  firm" : "")
-                                + (s.Input.FloorLocked ? "  fixed" : "");
+                                + (s.Input.FloorLocked ? "  fixed" : "")
+
+                                // Whose number this is. Marked when it is the
+                                // firm's own, so its absence means the floor is
+                                // Ballast's estimate of the firm's - which is
+                                // the lower of the two whenever they differ,
+                                // and so reports room that may not be there.
+                                + (s.Input.FloorIsTheFirmsOwn ? "  firm" : "");
                     cushionCol = s.Input.CushionToFloor < 400 ? ColRed : ColMuted;
                 }
                 g.Children.Add(Num(cushionText, cushionCol, 5, FontWeights.Normal));
@@ -5463,6 +5497,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tbRiskPerTrade != null)
                 tbRiskPerTrade.Text = c.StopPerContract.ToString(CultureInfo.InvariantCulture);
 
+            if (tbFirmFloor != null)
+                tbFirmFloor.Text = c.FirmFloorLevel.ToString(CultureInfo.InvariantCulture);
+
             if (tbLastPayout != null)
                 tbLastPayout.Text = c.LastPayoutOn == DateTime.MinValue.Date
                     ? ""
@@ -5612,6 +5649,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             c.BaseMaxContracts    = c.MaxContracts;
             c.LockFloorAt         = ParseD(tbLockAt, c.LockFloorAt);
             c.StopPerContract     = ParseD(tbRiskPerTrade, c.StopPerContract);
+
+            c.FirmFloorLevel = ParseD(tbFirmFloor, c.FirmFloorLevel);
 
             // A date that cannot be read is left alone rather than defaulted.
             // Silently becoming 1 January would move the whole consistency

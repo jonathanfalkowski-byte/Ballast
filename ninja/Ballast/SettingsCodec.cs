@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 29;
+        public const int CurrentFieldCount = 30;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -70,7 +70,8 @@ namespace Ballast
                 c.LastPayoutOn == DateTime.MinValue.Date                            // 27
                     ? ""
                     : c.LastPayoutOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
-                I(c.PayoutsTaken)                                                   // 28
+                I(c.PayoutsTaken),                                                  // 28
+                D(c.FirmFloorLevel)                                                 // 29
             });
         }
 
@@ -196,6 +197,13 @@ namespace Ballast
             }
             if (f.Length >= 29 && int.TryParse(f[28], out n) && n >= 0)
                 c.PayoutsTaken = n;
+
+            // Field 30 is the firm's own liquidation threshold, typed off its
+            // dashboard. Absent means Ballast falls back to its own estimate,
+            // which is what every file before this one did.
+            if (f.Length >= 30 && double.TryParse(f[29], NumberStyles.Any,
+                                                  CultureInfo.InvariantCulture, out d) && d >= 0)
+                c.FirmFloorLevel = d;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.

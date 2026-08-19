@@ -19,6 +19,99 @@ public static class ProviderFloorTests
         RuleFallbackRemainsConservative();
         EndOfDayProviderFloorOverridesOnlyUpward();
         ApexPaProfilesResolveWithoutNumberEntry();
+        HisOwn106AgainstRithmic();
+    }
+
+    /// <summary>
+    /// "the account says it is at for apex 106 it is at 245782.34 and the
+    /// account in the ballast on the chart says i have 2184 is that
+    /// correct?...i feel i should have less room but maybe not?"
+    ///
+    /// He was right. Rithmic put the threshold at 244,246.02 and Ballast at
+    /// 243,602.04 - $644 of room that did not exist, in the one direction this
+    /// software must never be wrong in.
+    ///
+    /// Neither figure was miscalculated. A trailing floor hangs off the
+    /// account's high-water mark; the firm computes that on every tick and
+    /// Ballast computes it from what NinjaTrader hands it. The firm caught a
+    /// peak of 250,746.02 that Ballast never saw, and a missed peak always
+    /// means a floor too low, which always means too much room.
+    ///
+    /// These are his real numbers, to the cent.
+    /// </summary>
+    static void HisOwn106AgainstRithmic()
+    {
+        T.S("his 106 against what Rithmic says");
+
+        DateTime now = new DateTime(2026, 8, 19, 10, 5, 0);
+
+        TrackerConfig c = new TrackerConfig();
+        c.StartingBalance = 250000;
+        c.TrailingDrawdown = 6500;
+        c.DrawdownType = DrawdownType.Intraday;
+        c.LockFloorAt = 265000;
+        c.TrustAccountRealised = false;
+
+        BallastTracker t = new BallastTracker();
+        t.Config = c;
+        t.EnsureSession(now.Date.AddHours(9), 0, 250000);
+
+        // The peak Ballast actually saw, then the balance it is at now.
+        t.OnEquity(250102.04, 0, 250102.04);
+        t.OnEquity(245782.34, -1379.36, 245782.34);
+
+        DisciplineInput own = t.BuildInput(now);
+        T.Near(own.FloorLevel, 243602.04, 0.01, "Ballast's own floor is peak less the drawdown");
+        T.Near(own.CushionToFloor, 2180.30, 0.01, "which is the $2,184 he was shown");
+        T.Ok(!own.FloorIsTheFirmsOwn, "and it is not marked as the firm's number, because it is not");
+
+        // Now the figure off R|Trader.
+        c.FirmFloorLevel = 244246.02;
+        DisciplineInput firm = t.BuildInput(now);
+        T.Near(firm.FloorLevel, 244246.02, 0.01, "the firm's threshold is used");
+        T.Near(firm.CushionToFloor, 1536.32, 0.01, "and the room is what Rithmic says: 1,536.32");
+        T.Ok(firm.FloorIsTheFirmsOwn, "marked as the firm's own on the row");
+        T.Near(own.CushionToFloor - firm.CushionToFloor, 643.98, 0.01,
+               "the difference is the $644 of room that was never there");
+
+        // It can only ever make Ballast MORE careful. A stale figure below
+        // Ballast's own is simply overtaken.
+        c.FirmFloorLevel = 243000;
+        DisciplineInput stale = t.BuildInput(now);
+        T.Near(stale.FloorLevel, 243602.04, 0.01, "a stale low figure loses to Ballast's own");
+        T.Ok(!stale.FloorIsTheFirmsOwn, "and the row stops claiming it is the firm's");
+
+        // Nonsense is refused rather than believed. Below the account's
+        // starting floor cannot be a threshold for this account.
+        c.FirmFloorLevel = 100;
+        T.Near(t.BuildInput(now).FloorLevel, 243602.04, 0.01, "an impossible figure is ignored");
+
+        // Above the level the drawdown stops trailing is clamped to it.
+        c.FirmFloorLevel = 999999;
+        T.Near(t.BuildInput(now).FloorLevel, 243602.04, 0.01,
+               "and one beyond the lock level cannot invent a floor either");
+
+        // Zero means what it always meant.
+        c.FirmFloorLevel = 0;
+        T.Near(t.BuildInput(now).FloorLevel, 243602.04, 0.01, "zero is 'not supplied'");
+
+        // ---- it has to come back after a restart, or he types it every day
+        c.FirmFloorLevel = 244246.02;
+        string key;
+        TrackerConfig back = SettingsCodec.Deserialise(
+            SettingsCodec.Serialise("APEX-11325-106", c), out key);
+        T.Near(back.FirmFloorLevel, 244246.02, 0.005, "the typed threshold survives a restart");
+
+        // And a settings file written before this field existed still loads.
+        string old29 = string.Join("|", new string[] {
+            "APEX-11325-106", "250000", "6500", "0", "2", "2000", "1400", "5", "4",
+            "265000", "", "0", "0", "0", "4", "0", "0", "570", "750", "5", "27",
+            "15000", "0", "1", "0", "0", "0", "", "0"
+        });
+        TrackerConfig older = SettingsCodec.Deserialise(old29, out key);
+        T.Ok(older != null, "an older settings line still loads");
+        T.Near(older.FirmFloorLevel, 0, 0.005, "with no firm threshold, as it had none");
+        T.Near(older.TrailingDrawdown, 6500, 0.01, "and everything it did know intact");
     }
 
     static TrackerConfig Current50K(DrawdownType type)

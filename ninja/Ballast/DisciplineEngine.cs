@@ -92,6 +92,17 @@ namespace Ballast
         public double CurrentEquity;
         public bool FloorLocked;         // true once the drawdown has stopped trailing
         public bool FirmFloorProviderConfirmed; // threshold came directly from the account provider
+
+        /// <summary>
+        /// True when the floor being shown IS the firm's own number rather than
+        /// Ballast's estimate of it.
+        ///
+        /// The distinction is the whole point. Ballast's floor follows the
+        /// highest equity it has seen; the firm's follows the highest there
+        /// actually was. When they differ, Ballast's is the lower of the two
+        /// and reports room that is not there.
+        /// </summary>
+        public bool FloorIsTheFirmsOwn;
         public int BaseMaxContracts;     // size before the drawdown throttle
         public bool SizeThrottled;       // true when the throttle has cut the advised size
 

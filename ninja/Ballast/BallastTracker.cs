@@ -88,6 +88,33 @@ namespace Ballast
         /// </summary>
         public int PayoutsTaken = 0;
 
+        /// <summary>
+        /// The firm's own liquidation threshold for this account, in dollars,
+        /// as read off the firm's dashboard. 0 = not supplied.
+        ///
+        /// "the account says it is at for apex 106 it is at 245782.34 and the
+        /// account in the ballast on the chart says i have 2184 is that
+        /// correct?...i feel i should have less room but maybe not?"
+        ///
+        /// It was not correct. Rithmic put his floor at 244,246.02 and Ballast
+        /// at 243,602.04 - $644 of room that did not exist, and $644 in the one
+        /// direction this software must never be wrong in.
+        ///
+        /// Neither figure was miscalculated. Ballast's trailing floor hangs off
+        /// the highest equity IT HAS SEEN, and it only sees what NinjaTrader
+        /// pushes it. The firm computes the same high-water mark server-side on
+        /// every tick, so it caught a peak of 250,746.02 that Ballast never
+        /// saw. A missed peak always means a floor that is too low, and a floor
+        /// that is too low always means too much room.
+        ///
+        /// ObserveProviderTrailingRoom exists to take the firm's number
+        /// directly and is called on every tick, but it needs NinjaTrader to
+        /// report AccountItem.TrailingMaxDrawdown, and on his Rithmic accounts
+        /// it never arrives - AuthoritativeFirmFloor is 0 on all six. So this
+        /// is the same figure, typed.
+        /// </summary>
+        public double FirmFloorLevel = 0;
+
         /// <summary>Percentage of the trailing drawdown intended per trade.</summary>
         public double RiskPctOfDrawdown = 0;
 
@@ -595,6 +622,28 @@ namespace Ballast
             FirmFloorProviderConfirmed = true;
             FirmFloorConfirmedAt = when;
             return true;
+        }
+
+        /// <summary>
+        /// The threshold he typed off his firm's dashboard, if it is believable
+        /// for the account it is on.
+        ///
+        /// Set rather than ratcheted, unlike the observed one, so a typo can be
+        /// corrected. It cannot make Ballast generous either way: the floor
+        /// used is always the HIGHER of this and Ballast's own, so a stale low
+        /// figure is ignored and a stale high one only ever reports less room.
+        /// </summary>
+        private double ValidTypedFirmFloor()
+        {
+            if (Config == null || Config.FirmFloorLevel <= 0) return 0;
+
+            double level = Config.FirmFloorLevel;
+            if (!IsPlausibleEquity(level)) return 0;
+
+            double initialFloor = Config.StartingBalance - Config.TrailingDrawdown;
+            if (level < initialFloor - 5) return 0;
+            if (Config.LockFloorAt > 0 && level > Config.LockFloorAt + 5) return 0;
+            return Config.LockFloorAt > 0 && level > Config.LockFloorAt ? Config.LockFloorAt : level;
         }
 
         private double ValidAuthoritativeFirmFloor()
@@ -1756,8 +1805,18 @@ namespace Ballast
                     CurrentEquity, drawdownAnchor, Config.DrawdownType, Config.LockFloorAt);
 
                 double firmFloor = ValidAuthoritativeFirmFloor();
+                double typedFloor = ValidTypedFirmFloor();
+                bool fromFirm = false;
+
+                if (typedFloor > firmFloor) { firmFloor = typedFloor; fromFirm = true; }
+                else if (firmFloor > 0) fromFirm = true;
+
                 if (firmFloor > i.FloorLevel) i.FloorLevel = firmFloor;
-                i.FirmFloorProviderConfirmed = firmFloor > 0 && FirmFloorProviderConfirmed;
+                else if (firmFloor > 0 && firmFloor < i.FloorLevel) fromFirm = false;
+
+                i.FirmFloorProviderConfirmed = firmFloor > 0
+                    && (FirmFloorProviderConfirmed || typedFloor > 0);
+                i.FloorIsTheFirmsOwn = fromFirm && i.FloorLevel <= firmFloor + 0.005;
 
                 i.CushionToFloor = CurrentEquity - i.FloorLevel;
 
