@@ -602,6 +602,25 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void Say(string text, Brush ink, Brush back, double scale, TextPosition where)
         {
+            // Never let the scale push a line wider than the panel.
+            //
+            // This has now bitten twice. The first time it was the count line
+            // at 1.0 - "43% wider than the panel, so it wrapped, and the second
+            // half landed on top of NinjaTrader's own copyright line". The
+            // second was the cooldown banner, a longer sentence than any of the
+            // breaker titles this 1.4 was sized for, wrapping and clipping at
+            // the bottom of the strip.
+            //
+            // Shortening the sentence fixes the sentence. This fixes the next
+            // one, whoever writes it. It only ever SHRINKS - a line that
+            // already fits is untouched, and nothing here can make text bigger
+            // than the caller asked for.
+            if (!string.IsNullOrEmpty(text) && scale > 1.0)
+            {
+                double widest = FitsAcrossPanel / (double)text.Length;
+                if (scale > widest) scale = widest < 1.0 ? 1.0 : widest;
+            }
+
             int baseSize = TextSize < 8 ? 8 : (TextSize > 72 ? 72 : TextSize);
             int size = (int)Math.Round(baseSize * scale);
             if (size < 11) size = 11;
@@ -776,6 +795,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 st.Locked ? 1.4 : 1.0,
                 where);
         }
+
+        /// <summary>
+        /// Roughly how many characters fit across the panel at scale 1.0. The
+        /// count line runs to about eighty and sits on one line, which is where
+        /// this comes from. Approximate on purpose: it is a ceiling that stops
+        /// a banner running off the edge, not a layout engine.
+        /// </summary>
+        private const double FitsAcrossPanel = 80.0;
 
         private static string Money(double v)
         {

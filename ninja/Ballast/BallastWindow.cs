@@ -1278,9 +1278,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     hard = true;
                     block = true;
+                    // Short, because this one goes on the chart at 1.4x and the
+                    // panel is only so wide. "of your 5-minute cooldown" is
+                    // said on the row and in the window; across a desk what he
+                    // needs is the reason and the clock.
                     hardLine = "Too soon after a loss - "
                              + DisciplineEngine.Countdown(s.Input.CooldownSecondsLeft)
-                             + " left of your " + s.Input.CooldownMinutes + "-minute cooldown.";
+                             + " left.";
                 }
 
                 PublishLockSticky(s.AccountName, hard, hardLine, block, now);
