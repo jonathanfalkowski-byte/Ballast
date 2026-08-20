@@ -29,6 +29,7 @@ public static class LessonTests
         SimulatedMoneyIsNeverAddedToRealMoney();
         TheHeadlineIsFactsBeforeAnyExplanation();
         LastSessionIsTheLastDayHeTraded();
+        TwoRightNumbersAboutTheSameDay();
         TheDayAgreesWithTheAccountsToTheCent();
     }
 
@@ -223,6 +224,79 @@ public static class LessonTests
         double total = 0;
         for (int i = 0; i < split.Count; i++) total += split[i].Net;
         T.Near(total, 88.9, 0.005, "the planned split adds up to the same 88.90");
+    }
+
+    /// <summary>
+    /// "that is the day are you referring to today or yesterday? i believe it
+    /// was positive yesterday and this one doesnt equal the day p&l above so im
+    /// not sure what it is referring too"
+    ///
+    /// Today, and both figures were right. That is what made it unreadable.
+    ///
+    /// His 19 August, to the cent: three prop trades netting -$1,378.96 and
+    /// five sim trades netting -$1,289.24. The card said "3 trades, 1 green,
+    /// -$1,379" - the prop accounts exactly. The stat directly above it said
+    /// "DAY P&L, ALL ACCOUNTS -$2,668" - both sets. Nothing said the two were
+    /// counting different things.
+    ///
+    /// This pins the arithmetic. The wording that names the scope lives in the
+    /// window and the stub suite cannot see it, but the two numbers it has to
+    /// reconcile are right here.
+    /// </summary>
+    static void TwoRightNumbersAboutTheSameDay()
+    {
+        T.S("two right numbers about the same day");
+
+        List<string> sims = new List<string>();
+        sims.Add("Sim101");
+        sims.Add("Sim103");
+
+        List<BallastTrade> day = new List<BallastTrade>();
+        day.Add(Acct("APEX-11325-105", -67.5, 1.3));
+        day.Add(Acct("Sim103",        -510.0, 8.72));
+        day.Add(Acct("APEX-11325-106", -1375.0, 4.36));
+        day.Add(Acct("Sim103",          230.0, 4.36));
+        day.Add(Acct("Sim103",         -725.0, 8.72));
+        day.Add(Acct("APEX-11325-105",   70.5, 1.3));
+        day.Add(Acct("Sim101",          460.0, 8.72));
+        day.Add(Acct("Sim101",         -705.0, 8.72));
+
+        List<BallastTrade> prop = BallastJournal.FromAccounts(day, sims, false);
+        List<BallastTrade> sim  = BallastJournal.FromAccounts(day, sims, true);
+
+        T.Eq(prop.Count, 3, "three trades on the prop accounts");
+        T.Eq(sim.Count, 5, "five on the sims");
+
+        string propLesson = BallastJournal.DayLesson(prop);
+        T.Ok(propLesson.IndexOf("3 trades") >= 0, "the card counts three: " + propLesson);
+        T.Ok(propLesson.IndexOf("1 green") >= 0, "one of them green");
+        T.Ok(propLesson.IndexOf("$1,379") >= 0, "and -$1,379, which is what he saw");
+
+        // The whole day is a different number, and also correct.
+        double all = 0;
+        for (int i = 0; i < day.Count; i++) all += day[i].Net;
+        T.Near(all, -2668.20, 0.01, "all eight trades come to the -$2,668 in the stat above");
+
+        double propNet = 0;
+        for (int i = 0; i < prop.Count; i++) propNet += prop[i].Net;
+        T.Near(propNet, -1378.96, 0.01, "and the prop three come to the card's figure");
+        T.Near(all - propNet, -1289.24, 0.01, "the gap between them is the sims, exactly");
+
+        // A day with nothing on the sims has nothing to disambiguate, which is
+        // why the scope is only named when there is something to name.
+        List<BallastTrade> propOnly = new List<BallastTrade>();
+        propOnly.Add(Acct("APEX-11325-105", 70.5, 1.3));
+        T.Eq(BallastJournal.Countable(
+                 BallastJournal.FromAccounts(propOnly, sims, true)).Count, 0,
+             "no sim trades that day, so 'the day' is unambiguous");
+    }
+
+    static BallastTrade Acct(string account, double pnl, double commission)
+    {
+        BallastTrade e = Tr(pnl, BallastJournal.Verdict_ByTheBook, "A", "");
+        e.AccountName = account;
+        e.Commission = commission;
+        return e;
     }
 
     static BallastTrade At(BallastTrade e, DateTime when)

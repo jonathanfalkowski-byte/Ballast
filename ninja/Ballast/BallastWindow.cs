@@ -7583,8 +7583,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                         reviewLast = "closing";
                         reviewHead.Text = "THAT IS THE DAY";
                         HideLookBack();
+                        // Whatever LessonFor named, not a hardcoded guess at
+                        // it. This said "On your sim accounts" regardless, so
+                        // the moment the prop branch started naming itself it
+                        // would have said the wrong one.
                         reviewBody.Text = where.Length > 0
-                            ? "On your sim accounts: " + lesson
+                            ? Capitalise(where.Trim()) + ": " + lesson
                             : lesson;
                         reviewBorder.Visibility = Visibility.Visible;
                         return;
@@ -7905,19 +7909,58 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// labelled, so a number that cannot be lost is never read as one that
         /// can.
         /// </summary>
+        /// <summary>
+        /// The day's lesson, and WHICH accounts it is about.
+        ///
+        /// "that is the day are you referring to today or yesterday? i believe
+        /// it was positive yesterday and this one doesnt equal the day p&l
+        /// above so im not sure what it is referring too"
+        ///
+        /// Today, and both figures were right. The card read "3 trades, 1
+        /// green, -$1,379", which is his two prop accounts to the cent. The
+        /// stat directly above it read "DAY P&L, ALL ACCOUNTS -$2,668", which
+        /// is those plus the five sim trades. Nothing on screen said the two
+        /// were counting different things, so the only available reading was
+        /// that one of them was broken.
+        ///
+        /// The sim branch has always named itself. The prop branch never did,
+        /// and the silent one is the one that needed it - a card headed "THAT
+        /// IS THE DAY" sitting under a number labelled ALL ACCOUNTS is making a
+        /// claim about the whole day whether it means to or not.
+        ///
+        /// Only said when there is something it is NOT talking about. On a day
+        /// he only traded prop accounts, the day IS the day, and naming it
+        /// would be noise.
+        /// </summary>
         private string LessonFor(List<BallastTrade> day, List<string> sims, out string where)
         {
             where = "";
 
-            string real = BallastJournal.DayLesson(
-                BallastJournal.FromAccounts(day, sims, false));
-            if (real.Length > 0) return real;
+            List<BallastTrade> propDay = BallastJournal.FromAccounts(day, sims, false);
+            List<BallastTrade> simDay = BallastJournal.FromAccounts(day, sims, true);
 
-            string sim = BallastJournal.DayLesson(
-                BallastJournal.FromAccounts(day, sims, true));
+            string real = BallastJournal.DayLesson(propDay);
+            if (real.Length > 0)
+            {
+                // "prop", not "funded" - his are evaluations, and calling an
+                // eval a funded account is the kind of small lie that makes a
+                // trader stop trusting the big numbers.
+                if (BallastJournal.Countable(simDay).Count > 0)
+                    where = " on your prop accounts";
+                return real;
+            }
+
+            string sim = BallastJournal.DayLesson(simDay);
             if (sim.Length > 0) { where = " on your sim accounts"; return sim; }
 
             return "";
+        }
+
+        /// <summary>"on your prop accounts" -> "On your prop accounts".</summary>
+        private static string Capitalise(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return char.ToUpperInvariant(s[0]) + s.Substring(1);
         }
 
         /// <summary>Which of the watched accounts are simulated. See IsSimAccount.</summary>
