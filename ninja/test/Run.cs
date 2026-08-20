@@ -37,6 +37,7 @@ public static class Program
         GapTests.Run();
         ExecutionTests.Run();
         SetupTests.Run();
+        PlanSizeTests.Run();
         PersistenceTests.Run();
         RuleUpdateTests.Run();
         ProviderFloorTests.Run();

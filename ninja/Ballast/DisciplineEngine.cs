@@ -66,6 +66,22 @@ namespace Ballast
         public int OpenContracts;
 
         /// <summary>
+        /// The size the trader said they would actually trade, which is not the
+        /// same thing as the cap.
+        ///
+        /// The cap is what the account can survive. The plan is what the setup
+        /// was tested at. Four contracts on a 250K account survives fine, so the
+        /// cap has nothing to say about it - but if the plan was one, then four
+        /// is a different strategy being traded under the old strategy's name,
+        /// and no edge measured on the first one applies to the second.
+        ///
+        /// The gap between cap and plan is where a green day gets handed back,
+        /// which is why both are needed and neither can stand in for the other.
+        /// 0 means the trader has not said, and nothing is inferred from silence.
+        /// </summary>
+        public int PlanContracts;
+
+        /// <summary>
         /// The most today may still earn before today itself becomes the
         /// account's windfall day and defers the next payout. 0 means no
         /// ceiling is in play - either the firm publishes no consistency rule,
@@ -585,6 +601,28 @@ namespace Ballast
 
                 signals.Add(new RiskSignal("over_size", Severity.Medium,
                     "You're holding " + i.OpenContracts + " contracts - over your " + i.MaxContracts + why));
+            }
+
+            // Bigger than the plan, on a day that is already green.
+            //
+            // This is not the cap being breached, and that is the whole point:
+            // the cap cannot see it. A journal of 167 hand-traded trades had 11
+            // taken off-plan while already up on the day, 10 of them above the
+            // planned size and every one of them inside the configured cap of
+            // four. Those 11 lost more than all four setups made - one win in
+            // eleven - while the same trader's tagged setups made money.
+            //
+            // The notes he left on them say what it is: "Afraid to miss it",
+            // "Invincible". Not the account in trouble - the account doing well
+            // and the size creeping up to match the mood. Every other wall in
+            // Ballast watches a day go wrong; this one watches a day go right
+            // and get spent.
+            if (i.PlanContracts > 0 && i.OpenContracts > i.PlanContracts && i.DailyPnl > 0)
+            {
+                signals.Add(new RiskSignal("green_size", Severity.High,
+                    "Up " + Money(i.DailyPnl) + " and holding " + i.OpenContracts
+                    + " contracts against a plan of " + i.PlanContracts
+                    + ". Size creeping on a good day is what gives the day back."));
             }
 
             // Fires before any position is on, so the size is known BEFORE the

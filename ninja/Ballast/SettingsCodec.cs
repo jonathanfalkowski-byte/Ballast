@@ -26,7 +26,7 @@ namespace Ballast
         /// Field count as of this build. Older files are shorter and that is fine;
         /// each block below checks the length it needs before reading.
         /// </summary>
-        public const int CurrentFieldCount = 30;
+        public const int CurrentFieldCount = 31;
 
         /// <summary>
         /// The field count that existed before the trading window, cooldown and
@@ -71,7 +71,8 @@ namespace Ballast
                     ? ""
                     : c.LastPayoutOn.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
                 I(c.PayoutsTaken),                                                  // 28
-                D(c.FirmFloorLevel)                                                 // 29
+                D(c.FirmFloorLevel),                                                // 29
+                I(c.PlanContracts)                                                  // 30
             });
         }
 
@@ -204,6 +205,14 @@ namespace Ballast
             if (f.Length >= 30 && double.TryParse(f[29], NumberStyles.Any,
                                                   CultureInfo.InvariantCulture, out d) && d >= 0)
                 c.FirmFloorLevel = d;
+
+            // Field 31 is the planned size - what the trader said they trade,
+            // not what the account can stand. Absent means unsaid, which is
+            // what every file written before this one meant, and an unsaid plan
+            // simply switches off the warning that needs it rather than guessing
+            // a number the trader never gave.
+            if (f.Length >= 31 && int.TryParse(f[30], out n) && n >= 0)
+                c.PlanContracts = n;
 
             // A throttle with no base size to count down from would cut against
             // the already-throttled number every tick, ratcheting size to 1.

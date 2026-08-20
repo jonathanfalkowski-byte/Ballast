@@ -40,6 +40,15 @@ namespace Ballast
         public double ProfitTarget = 0;
         public int MaxTrades = 4;
         public int MaxContracts = 1;
+
+        /// <summary>
+        /// The size the trader said they would trade, as opposed to the most the
+        /// account can stand. 0 means unsaid, and nothing is assumed from that -
+        /// a trader who has not told Ballast their plan size simply does not get
+        /// the warning that depends on it.
+        /// </summary>
+        public int PlanContracts = 0;
+
         public int CooldownMinutes = 5;
 
         /// <summary>
@@ -1788,6 +1797,7 @@ namespace Ballast
             i.MaxLossesBeforeStop = Config.MaxLossesBeforeStop;
             i.MaxTrades = Config.MaxTrades;
             i.OpenContracts = OpenContracts;
+            i.PlanContracts = Config.PlanContracts;
 
             i.DrawdownType = Config.DrawdownType;
             i.HasValidEquity = HasValidEquity;
