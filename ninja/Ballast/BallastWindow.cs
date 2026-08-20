@@ -279,7 +279,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock reviewShotLabel, reviewExitLabel;
         private Button reviewShotBtn, reviewExitBtn;
         private string reviewShotPath = "", reviewExitPath = "";
-        private Button reviewRevealBtn;
+        private Button reviewRevealBtn, reviewSkipBtn;
+
+        /// <summary>
+        /// The lesson line on its own, before the look-back question was
+        /// appended to it. Skipping a trade re-picks, and the new question
+        /// has to replace the old one rather than pile up underneath it.
+        /// </summary>
+        private string reviewBodyBase = "";
         private LookBackPick lookBack;
 
         /// <summary>
@@ -7351,6 +7358,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             reviewShotBtn.Visibility = Visibility.Collapsed;
             s.Children.Add(reviewShotBtn);
 
+            // "ok the daily chart is showing again.... it shouldnt be there."
+            //
+            // The picker that took that screenshot is fixed, but a picture that
+            // was already taken of the wrong chart cannot be retaken - the bars
+            // it should have caught are gone. And "Not now" deliberately does
+            // not spend the trade, so a look-back with an unreadable picture
+            // came back every morning, forever.
+            //
+            // This retires that one trade and picks another. It is the only
+            // button on the card that admits the picture is useless, which is
+            // why it says so rather than saying "skip".
+            reviewSkipBtn = QuietButton("Wrong chart - show me another",
+                                        delegate { OnSkipLookBack(); });
+            reviewSkipBtn.Margin = new Thickness(0, 0, 0, 10);
+            reviewSkipBtn.Visibility = Visibility.Collapsed;
+            s.Children.Add(reviewSkipBtn);
+
             reviewShotHint = new TextBlock();
             reviewShotHint.Text = "The picture is far bigger than this card - open it to read the bars.";
             reviewShotHint.Foreground = ColFaint;
@@ -7635,12 +7659,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                                          BotAccounts());
                 if (lookBack == null) { HideLookBack(); return; }
 
+                // Held so a re-pick can put the lesson back the way it was.
+                if (reviewBody != null) reviewBodyBase = reviewBody.Text;
+
                 reviewBody.Text += "\n\n" + LookBack.Question(lookBack,
                                        c != null ? c.MaxTrades : 0,
                                        c != null ? c.CooldownMinutes : 0);
 
                 ShowShot(lookBack.Trade.EntryImage);
                 if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Visible;
+
+                // Only offered when there is a picture to complain about. With
+                // no picture there is nothing wrong to skip past.
+                if (reviewSkipBtn != null)
+                    reviewSkipBtn.Visibility =
+                        (reviewShot != null && reviewShot.Visibility == Visibility.Visible)
+                        ? Visibility.Visible : Visibility.Collapsed;
             }
             catch { HideLookBack(); }
         }
@@ -7689,8 +7723,40 @@ namespace NinjaTrader.NinjaScript.AddOns
                 SaveLookBackSeen();
 
                 if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
+                if (reviewSkipBtn != null) reviewSkipBtn.Visibility = Visibility.Collapsed;
                 lookBack = null;
                 lookBackRevealed = true;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Retire this trade and offer a different one.
+        ///
+        /// Spending it is the point - a picture of the wrong chart is no more
+        /// use tomorrow than it is today, and "Not now" would hand it back.
+        /// If nothing else qualifies the card keeps its lesson and loses the
+        /// picture, which is still better than showing an unreadable one.
+        /// </summary>
+        private void OnSkipLookBack()
+        {
+            try
+            {
+                if (lookBack == null) return;
+
+                string key = LookBack.KeyOf(lookBack.Trade);
+                if (!lookBackShown.Contains(key)) lookBackShown.Add(key);
+                SaveLookBackSeen();
+
+                // HideLookBack inside ShowLookBack clears the pictures and the
+                // buttons; the lesson line has to be put back by hand, or the
+                // second question lands underneath the first one.
+                if (reviewBody != null && reviewBodyBase.Length > 0)
+                    reviewBody.Text = reviewBodyBase;
+
+                DateTime now;
+                try { now = Core.Globals.Now; } catch { now = DateTime.Now; }
+                ShowLookBack(now);
             }
             catch { }
         }
@@ -7805,6 +7871,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             reviewShotPath = "";
             reviewExitPath = "";
             if (reviewRevealBtn != null) reviewRevealBtn.Visibility = Visibility.Collapsed;
+            if (reviewSkipBtn != null) reviewSkipBtn.Visibility = Visibility.Collapsed;
         }
 
         private string LookBackPath()
