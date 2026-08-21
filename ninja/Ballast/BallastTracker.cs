@@ -361,6 +361,16 @@ namespace Ballast
         public bool ResetSuspected;
 
         /// <summary>
+        /// Which of the two tests in LooksReset raised the suspicion: true when
+        /// the account landed back on its configured starting figure, false when
+        /// only the base moved and nothing has been observed about where it
+        /// landed. The row's question is worded from this, because a question
+        /// that is visibly wrong about the number printed beside it is one
+        /// nobody answers twice.
+        /// </summary>
+        public bool ResetAtStartingFigure;
+
+        /// <summary>
         /// When the trader last said "this account was reset, start it over".
         /// Journal rows that closed before this belong to the erased day and are
         /// not counted back in on restart.
@@ -1114,6 +1124,7 @@ namespace Ballast
                 DayOpenBalance = 0;          // relearned from the new day's first reading
                 resetPending = false;
                 ResetSuspected = false;
+                ResetAtStartingFigure = false;
                 TradesToday = 0;
                 LossStreak = 0;
                 DailyPnl = 0;
@@ -1440,7 +1451,13 @@ namespace Ballast
             // Ballast was closed is caught the moment it reopens.
             if (DayOpenBalance > 0 && IsPlausibleEquity(balanceNow)
                 && Math.Abs((balanceNow - realisedNow) - DayOpenBalance) > noise)
+            {
+                // This test only knows the base moved. It never looks at the
+                // starting figure, so the question must not claim the account
+                // is sitting on it.
+                ResetAtStartingFigure = false;
                 return true;
+            }
 
             // The balance moved and no fill did it, AND it has landed back at the
             // account's starting figure. This catches a plain reset, where the
@@ -1491,7 +1508,10 @@ namespace Ballast
                 && Math.Abs(realisedNow) <= Exact
                 && (TradesToday > 0 || DailyLossLimitHit
                     || PeakDailyPnl != 0 || WorstDailyPnl != 0 || DailyPnl != 0))
+            {
+                ResetAtStartingFigure = true;
                 return true;
+            }
 
             return false;
         }
@@ -1505,6 +1525,7 @@ namespace Ballast
         {
             if (IsPlausibleEquity(balanceNow)) DayOpenBalance = balanceNow - realisedNow;
             resetPending = false;
+            ResetAtStartingFigure = false;
         }
 
         /// <summary>Restore the day's opening base read back from the session file.</summary>
@@ -1557,6 +1578,7 @@ namespace Ballast
             resetPending = false;
             RestartedAt = now;
             ResetSuspected = false;
+            ResetAtStartingFigure = false;
         }
 
         /// <summary>Restore a restart time read back from the session file.</summary>

@@ -1,0 +1,307 @@
+<title>Where The Money Went</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root{
+    --ground:#EDF0F3; --surface:#F7F9FB; --raise:#FFFFFF;
+    --ink:#141A21; --muted:#5A6572; --faint:#8B95A1;
+    --rule:#CDD5DD; --rule-soft:#DDE3E9;
+    --accent:#3D5A80; --accent-soft:#3D5A8022;
+    --loss:#9C3B32; --loss-soft:#9C3B321A;
+    --gain:#2F6E52;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E1217; --surface:#151B22; --raise:#1B222B;
+      --ink:#E2E8EE; --muted:#8892A0; --faint:#6B7683;
+      --rule:#232B35; --rule-soft:#1D242C;
+      --accent:#7FA3C9; --accent-soft:#7FA3C922;
+      --loss:#D07668; --loss-soft:#D076681A;
+      --gain:#6BB08C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E1217; --surface:#151B22; --raise:#1B222B;
+    --ink:#E2E8EE; --muted:#8892A0; --faint:#6B7683;
+    --rule:#232B35; --rule-soft:#1D242C;
+    --accent:#7FA3C9; --accent-soft:#7FA3C922;
+    --loss:#D07668; --loss-soft:#D076681A;
+    --gain:#6BB08C;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Source Serif 4",Georgia,serif; font-size:18px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 28px 96px;}
+  .col{max-width:68ch;}
+  h1,h2,h3,.eyebrow,th,.tag{font-family:Archivo,"Helvetica Neue",Arial,sans-serif;}
+
+  header{padding:72px 0 0;}
+  .eyebrow{font-size:12px; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 20px;}
+  h1{font-size:clamp(38px,6vw,62px); font-weight:700; line-height:1.02;
+    letter-spacing:-.025em; margin:0 0 24px; text-wrap:balance;}
+  .standfirst{font-size:21px; line-height:1.55; color:var(--muted); margin:0;}
+  .standfirst strong{color:var(--ink); font-weight:600;}
+
+  .meta{display:flex; flex-wrap:wrap; gap:0 34px; margin:40px 0 0; padding:20px 0 0;
+    border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12.5px; color:var(--muted);}
+  .meta b{display:block; color:var(--ink); font-weight:600; font-size:15px;
+    font-variant-numeric:tabular-nums; margin-top:3px;}
+  .meta b.loss{color:var(--loss);}
+  .meta b.gain{color:var(--gain);}
+
+  section{margin-top:64px;}
+  h2{font-size:13px; font-weight:600; letter-spacing:.15em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 22px; padding-bottom:12px;
+    border-bottom:1px solid var(--rule);}
+  h3{font-size:19px; font-weight:600; letter-spacing:-.01em; margin:34px 0 10px;}
+  p{margin:0 0 18px;}
+  code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.86em;
+    background:var(--accent-soft); padding:.12em .38em; border-radius:3px;}
+
+  .headline{
+    background:var(--surface); border:1px solid var(--rule);
+    border-left:3px solid var(--loss); padding:26px 30px; margin:34px 0 0;
+  }
+  .headline p{margin:0; font-size:19px;}
+  .headline p + p{margin-top:14px;}
+
+  figure{margin:36px 0 0;}
+  figure svg{display:block; width:100%; height:auto;}
+  figcaption{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px;
+    line-height:1.6; color:var(--muted); margin-top:14px; max-width:74ch;}
+
+  .scroll{overflow-x:auto; margin:24px 0 0; border:1px solid var(--rule); background:var(--surface);}
+  table{border-collapse:collapse; width:100%; min-width:620px;}
+  th,td{padding:9px 14px; text-align:right; white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;}
+  th:last-child,td:last-child{text-align:left;}
+  thead th{font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--muted); border-bottom:1px solid var(--rule); background:var(--raise);}
+  tbody td{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:13px;
+    font-variant-numeric:tabular-nums; border-bottom:1px solid var(--rule-soft);}
+  tbody tr:last-child td{border-bottom:none;}
+  tr.win td{background:var(--accent-soft);}
+  .neg{color:var(--loss);} .pos{color:var(--gain);} .dim{color:var(--faint);}
+  .feel{font-style:italic; color:var(--loss);}
+
+  ul{margin:0 0 18px; padding-left:0; list-style:none;}
+  ul li{position:relative; padding-left:22px; margin-bottom:12px;}
+  ul li::before{content:""; position:absolute; left:2px; top:.62em; width:7px; height:7px;
+    border:1.5px solid var(--accent); border-radius:50%;}
+
+  footer{margin-top:72px; padding-top:22px; border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; color:var(--faint);
+    line-height:1.8;}
+  @media (max-width:640px){ body{font-size:17px} header{padding-top:48px} }
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <p class="eyebrow">Ballast journal &middot; 167 live trades &middot; to 2026-08-19</p>
+  <h1>Where the money went</h1>
+  <p class="standfirst">
+    It was never the setups. <strong>Eleven trades &mdash; seven percent of the
+    total &mdash; cost $9,250</strong>, and every one of them was taken on a day
+    that was already green.
+  </p>
+  <div class="meta">
+    <div>Real trades<b>167</b></div>
+    <div>Tagged setups<b class="gain">+$3,242</b></div>
+    <div>Untagged<b class="loss">&minus;$8,834</b></div>
+    <div>Net<b class="loss">&minus;$5,592</b></div>
+  </div>
+</header>
+
+<section class="col">
+  <div class="headline">
+    <p><strong>Your setups make money.</strong> All four of them, tagged, across 128
+    trades: <strong>+$3,242</strong>.</p>
+    <p>The 39 trades you took that were not any setup at all lost
+    <strong>&minus;$8,834</strong>, at a 35.9% win rate. That is the account.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col"><h2>The same 167 trades, minus the ones that were not a setup</h2></div>
+  <figure>
+    <svg viewBox="0 0 960 300" role="img" aria-label="Bar chart comparing actual result of minus 5,592 dollars against two counterfactuals: plus 3,242 without untagged trades and plus 3,658 without eleven trades">
+      <line x1="595" y1="34" x2="595" y2="240" stroke="var(--ink)" stroke-width="1.5"></line>
+      <text x="595" y="26" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--muted)">break even</text>
+
+      <rect x="335.4" y="52" width="259.6" height="42" fill="var(--loss)"></rect>
+      <rect x="595" y="122" width="150.5" height="42" fill="var(--gain)"></rect>
+      <rect x="595" y="192" width="169.9" height="42" fill="var(--gain)"></rect>
+
+      <g font-family="Archivo, sans-serif" font-size="14" font-weight="600" fill="var(--ink)" text-anchor="end">
+        <text x="250" y="70">What happened</text>
+        <text x="250" y="140">Without the 39</text>
+        <text x="250" y="210">Without 11 of them</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--faint)" text-anchor="end">
+        <text x="250" y="87">all 167 trades</text>
+        <text x="250" y="157">untagged trades</text>
+        <text x="250" y="227">untagged, while up</text>
+      </g>
+
+      <g font-family="IBM Plex Mono, monospace" font-size="16" font-weight="600">
+        <text x="323" y="79" text-anchor="end" fill="var(--loss)">&minus;$5,592</text>
+        <text x="757" y="149" fill="var(--gain)">+$3,242</text>
+        <text x="777" y="219" fill="var(--gain)">+$3,658</text>
+      </g>
+    </svg>
+    <figcaption>
+      Same trades, same setups, same market. The only change is removing trades that
+      carried no setup tag. Fifteen &ldquo;reconstructed&rdquo; rows &mdash; gap-fill records
+      Ballast wrote for periods when it was closed, with no direction, size or setup, four of
+      them sharing a single timestamp &mdash; are excluded throughout. They are not trades.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="col">
+    <h2>The eleven</h2>
+    <p>
+      Every untagged trade taken while the day was already up more than $100.
+      <strong>Ten losses, one win.</strong> The rightmost column is your own note,
+      recorded at entry.
+    </p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>Entry</th><th>Dir</th><th>Size</th><th>Up by</th><th>Result</th><th>Felt</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>07-31 09:40</td><td>Short</td><td>2</td><td>$987</td><td class="neg">&minus;$1,924</td><td class="feel">Afraid to miss it</td></tr>
+        <tr><td>08-03 09:45</td><td>Long</td><td>2</td><td>$1,166</td><td class="neg">&minus;$1,924</td><td class="feel">Afraid to miss it</td></tr>
+        <tr><td>08-10 10:32</td><td>Long</td><td>4</td><td>$663</td><td class="neg">&minus;$1,322</td><td class="feel">Confident</td></tr>
+        <tr><td>08-06 11:37</td><td>Short</td><td>1</td><td>$873</td><td class="neg">&minus;$1,264</td><td class="feel">Invincible</td></tr>
+        <tr><td>07-31 09:50</td><td>Long</td><td>2</td><td>$1,081</td><td class="neg">&minus;$1,009</td><td class="feel">Afraid to miss it</td></tr>
+        <tr><td>08-03 11:12</td><td>Short</td><td>4</td><td>$1,018</td><td class="neg">&minus;$931</td><td class="feel">Afraid to miss it</td></tr>
+        <tr><td>08-11 09:39</td><td>Short</td><td>2</td><td>$223</td><td class="neg">&minus;$839</td><td class="feel">Invincible</td></tr>
+        <tr><td>08-19 10:42</td><td>Short</td><td>2</td><td>$449</td><td class="neg">&minus;$714</td><td class="feel">Impatient</td></tr>
+        <tr><td>08-04 10:51</td><td>Short</td><td>2</td><td>$918</td><td class="neg">&minus;$674</td><td class="feel">Bored</td></tr>
+        <tr><td>08-07 10:42</td><td>Long</td><td>2</td><td>$915</td><td class="neg">&minus;$44</td><td class="feel">Anxious</td></tr>
+        <tr class="win"><td>07-31 09:44</td><td>Short</td><td>2</td><td>$1,397</td><td class="pos">+$1,396</td><td class="dim">&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p style="margin-top:20px">
+      This is the cleaned figure. An earlier pass counted fifteen reconstructed rows as
+      trades. Removing them made the pattern <em>stronger</em>: <strong>t = &minus;3.03</strong>,
+      the most statistically solid number produced anywhere in this project, backtests
+      included.
+    </p>
+    <p>
+      Note the sizes. Your plan is one contract. <strong>Ten of these eleven were two or
+      four</strong>, and those ten alone account for &minus;$7,986 of the &minus;$9,250.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <h2>It is not revenge trading. It is the opposite.</h2>
+    <p>
+      The obvious story would be tilt after losses. The journal says the reverse &mdash;
+      you trade your setups <em>best</em> when you are behind.
+    </p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Day's P&amp;L before the trade</th><th>n</th><th>Win rate</th><th>Per trade</th><th>Total</th></tr></thead>
+      <tbody>
+        <tr><td>Untagged &middot; already <strong>up</strong></td><td>11</td><td class="neg">9.1%</td><td class="neg">&minus;$840.93</td><td class="neg">&minus;$9,250</td></tr>
+        <tr><td>Untagged &middot; flat</td><td>20</td><td>55.0%</td><td class="pos">+$169.17</td><td class="pos">+$3,383</td></tr>
+        <tr><td>Untagged &middot; already down</td><td>8</td><td class="neg">25.0%</td><td class="neg">&minus;$370.83</td><td class="neg">&minus;$2,967</td></tr>
+        <tr><td>Tagged &middot; already up</td><td>41</td><td>51.2%</td><td class="neg">&minus;$23.75</td><td class="neg">&minus;$974</td></tr>
+        <tr><td>Tagged &middot; flat</td><td>64</td><td>65.6%</td><td class="neg">&minus;$8.17</td><td class="neg">&minus;$523</td></tr>
+        <tr class="win"><td>Tagged &middot; already <strong>down</strong></td><td>23</td><td class="pos">65.2%</td><td class="pos">+$206.00</td><td class="pos">+$4,738</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p style="margin-top:20px">
+      Your single best bucket in 167 trades is <strong>trading your setup while
+      down</strong>: 65.2% and +$206 a trade. Your worst by an enormous margin is
+      <strong>trading off-setup while up</strong>: 9.1% and &minus;$841 a trade, at
+      <strong>t = &minus;3.03</strong>.
+    </p>
+    <p>
+      Off-setup trading is poor everywhere &mdash; it loses while flat-ish and while down
+      too. But while <em>up</em> it is catastrophic. Losing does not break your discipline
+      nearly as badly as <strong>winning</strong> does. The notes say it plainly &mdash;
+      <em>Afraid to miss it</em> four times, <em>Invincible</em> twice.
+    </p>
+  </div>
+</section>
+
+<section class="col">
+  <h2>Why Ballast did not stop it</h2>
+  <p>
+    The give-back guard is already switched on &mdash; <code>*TILT*|1|1</code> in your
+    settings, which is tilt enabled and give-back enabled. It still did not catch these.
+  </p>
+  <p>
+    The reason is a timing gap rather than a bug. A give-back wall watches the day fall
+    away from its peak, so it fires <em>after</em> the damage. These seventeen trades are
+    not the aftermath of a give-back &mdash; they <em>are</em> the give-back. By the time
+    the wall has something to measure, the money has gone.
+  </p>
+  <p>
+    The condition that would have caught them is different, and it is already sitting in
+    the fields Ballast records at entry:
+  </p>
+  <ul>
+    <li><code>DailyPnLBefore</code> above roughly $200</li>
+    <li>size above the one contract the plan allows</li>
+    <li>and the trade about to be taken carries no setup &mdash; which Ballast cannot know
+    beforehand, but it does not need to. Green day plus over-size catches <strong>ten of the
+    eleven</strong> on its own.</li>
+  </ul>
+  <p>
+    That is a pre-trade prompt, not a post-hoc wall: <em>you are up $900 on the day and
+    about to click four contracts &mdash; which setup is this?</em> If the honest answer is
+    "none", the question has already done its work.
+  </p>
+</section>
+
+<section class="col">
+  <h2>What this means for the dots</h2>
+  <p>
+    A whole day was spent testing whether the vol-delta dots have an edge. The answer was
+    no for setups A and B, and one Bollinger-filtered variant earned a forward test. That
+    work stands &mdash; see the
+    <a href="https://claude.ai/code/artifact/dc1107a6-7c14-4e54-a3a6-ed5a7c77e0c8">companion
+    writeup</a>.
+  </p>
+  <p>
+    But it was aimed at the wrong target. Setup A returns +$16 a trade and setup B +$24.
+    Even a genuinely good new setup would add a few dollars a trade against a leak running
+    at <strong>&minus;$841</strong>. No indicator fixes this. No filter, no vendor pack, no
+    better dot.
+  </p>
+  <p>
+    Ten years, a few hundred accounts, and the thing quietly draining them was never
+    findable on a chart &mdash; because it only happens on the days that are going well.
+  </p>
+</section>
+
+<footer>
+  Source: Documents\NinjaTrader 8\ballast-journal.csv &middot; 167 real trades, 15 reconstructed rows excluded &middot; P&amp;L net of Commission<br>
+  Buckets: DailyPnLBefore, PrevWasLoss, TradeNoToday, Planned, Feeling, Contracts &mdash; all captured by Ballast at entry<br>
+  <span style="opacity:.7">Counterfactuals remove trades only; no other assumption is changed</span>
+</footer>
+
+</div>

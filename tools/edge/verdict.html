@@ -1,0 +1,604 @@
+<title>Do The Dots Work</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root{
+    --ground:#EDF0F3; --surface:#F7F9FB; --raise:#FFFFFF;
+    --ink:#141A21; --muted:#5A6572; --faint:#8B95A1;
+    --rule:#CDD5DD; --rule-soft:#DDE3E9;
+    --accent:#3D5A80; --accent-soft:#3D5A8022;
+    --neg:#9C4A3C;
+    --band:#3D5A801F; --band-edge:#3D5A8055;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E1217; --surface:#151B22; --raise:#1B222B;
+      --ink:#E2E8EE; --muted:#8892A0; --faint:#6B7683;
+      --rule:#232B35; --rule-soft:#1D242C;
+      --accent:#7FA3C9; --accent-soft:#7FA3C922;
+      --neg:#C97F6E;
+      --band:#7FA3C91F; --band-edge:#7FA3C955;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E1217; --surface:#151B22; --raise:#1B222B;
+    --ink:#E2E8EE; --muted:#8892A0; --faint:#6B7683;
+    --rule:#232B35; --rule-soft:#1D242C;
+    --accent:#7FA3C9; --accent-soft:#7FA3C922;
+    --neg:#C97F6E;
+    --band:#7FA3C91F; --band-edge:#7FA3C955;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Source Serif 4",Georgia,serif; font-size:18px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 28px 96px;}
+  .col{max-width:68ch;}
+
+  h1,h2,h3,.eyebrow,th,.tag{font-family:Archivo,"Helvetica Neue",Arial,sans-serif;}
+
+  header{padding:72px 0 0;}
+  .eyebrow{
+    font-size:12px; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 20px;
+  }
+  h1{
+    font-size:clamp(38px,6vw,62px); font-weight:700; line-height:1.02;
+    letter-spacing:-.025em; margin:0 0 24px; text-wrap:balance;
+  }
+  .standfirst{font-size:21px; line-height:1.55; color:var(--muted); margin:0 0 8px;}
+  .standfirst strong{color:var(--ink); font-weight:600;}
+
+  .meta{
+    display:flex; flex-wrap:wrap; gap:0 34px; margin:40px 0 0; padding:20px 0 0;
+    border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12.5px; color:var(--muted);
+  }
+  .meta b{display:block; color:var(--ink); font-weight:600; font-size:15px;
+    font-variant-numeric:tabular-nums; margin-top:3px;}
+
+  section{margin-top:64px;}
+  h2{
+    font-size:13px; font-weight:600; letter-spacing:.15em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 22px; padding-bottom:12px;
+    border-bottom:1px solid var(--rule);
+  }
+  h3{font-size:19px; font-weight:600; letter-spacing:-.01em; margin:34px 0 10px;}
+  p{margin:0 0 18px;}
+  a{color:var(--accent);}
+  code{
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.86em;
+    background:var(--accent-soft); padding:.12em .38em; border-radius:3px;
+  }
+
+  .verdict{
+    background:var(--surface); border:1px solid var(--rule);
+    border-left:3px solid var(--neg);
+    padding:26px 30px; margin:34px 0 0;
+  }
+  .verdict p{margin:0; font-size:19px;}
+  .verdict p + p{margin-top:14px;}
+
+  figure{margin:36px 0 0;}
+  figure svg{display:block; width:100%; height:auto;}
+  figcaption{
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:12px; line-height:1.6; color:var(--muted); margin-top:14px;
+    max-width:74ch;
+  }
+
+  .scroll{overflow-x:auto; margin:24px 0 0; border:1px solid var(--rule); background:var(--surface);}
+  table{border-collapse:collapse; width:100%; min-width:560px;}
+  th,td{padding:10px 16px; text-align:right; white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{
+    font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--muted); border-bottom:1px solid var(--rule); background:var(--raise);
+  }
+  tbody td{
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:13.5px;
+    font-variant-numeric:tabular-nums; border-bottom:1px solid var(--rule-soft);
+  }
+  tbody tr:last-child td{border-bottom:none;}
+  tr.control td{background:var(--band); font-style:italic;}
+  .bad{color:var(--neg);}
+  .dim{color:var(--faint);}
+
+  ul{margin:0 0 18px; padding-left:0; list-style:none;}
+  ul li{position:relative; padding-left:22px; margin-bottom:12px;}
+  ul li::before{
+    content:""; position:absolute; left:2px; top:.62em;
+    width:7px; height:7px; border:1.5px solid var(--accent); border-radius:50%;
+  }
+  ol{margin:0 0 18px; padding-left:22px;}
+  ol li{padding-left:6px; margin-bottom:16px;}
+
+  .tag{
+    display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.1em;
+    text-transform:uppercase; padding:3px 8px; border:1px solid var(--rule);
+    color:var(--muted); border-radius:2px; margin-right:8px; vertical-align:2px;
+  }
+  .tag.stop{color:var(--neg); border-color:var(--neg);}
+
+  footer{
+    margin-top:72px; padding-top:22px; border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; color:var(--faint);
+    line-height:1.8;
+  }
+  @media (max-width:640px){ body{font-size:17px} header{padding-top:48px} }
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <p class="eyebrow">Edge experiment &middot; NQ + MNQ &middot; Jan&ndash;Aug 2026</p>
+  <h1>Do the dots work?</h1>
+  <p class="standfirst">
+    252 sessions of MNQ <em>and</em> real NQ tick data, 1,008 configurations tested.
+    <strong>The two original setups: no.</strong> One late-arriving variant &mdash; dots
+    filtered by a Bollinger extreme &mdash; survived a sealed holdout and earned the
+    right to a forward test. It is not an edge yet.
+  </p>
+  <div class="meta">
+    <div>Sessions<b>252</b></div>
+    <div>Ticks read<b>~270M</b></div>
+    <div>Configs tested<b>1,008</b></div>
+    <div>Survived<b>1</b></div>
+  </div>
+</header>
+
+<section class="col">
+  <div class="verdict">
+    <p>Every version of Setup A and Setup B lands <strong>inside the band you would
+    get from entering at random times in a random direction.</strong></p>
+    <p>Not near it. Inside it &mdash; the strongest variant sits at
+    <em>z = +0.53</em> against the random baseline, the weakest at
+    <em>z = &minus;1.60</em>. There is no separation to find.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col"><h2>The whole finding, in one chart</h2></div>
+  <figure>
+    <svg viewBox="0 0 960 424" role="img" aria-label="Forest plot showing expectancy per trade for eight setup variants, all falling inside the random-entry 95 percent band">
+      <rect x="340.4" y="46" width="526.1" height="316" fill="var(--band)"></rect>
+      <line x1="340.4" y1="46" x2="340.4" y2="362" stroke="var(--band-edge)" stroke-width="1" stroke-dasharray="3 3"></line>
+      <line x1="866.5" y1="46" x2="866.5" y2="362" stroke="var(--band-edge)" stroke-width="1" stroke-dasharray="3 3"></line>
+      <line x1="603.4" y1="46" x2="603.4" y2="362" stroke="var(--accent)" stroke-width="1.5"></line>
+      <line x1="825.3" y1="46" x2="825.3" y2="372" stroke="var(--ink)" stroke-width="1.5"></line>
+
+      <text x="603.4" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--accent)">random mean</text>
+      <text x="825.3" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5" font-weight="500" fill="var(--ink)">breakeven</text>
+
+      <g font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--ink)">
+        <text x="210" y="75" text-anchor="end">A &middot; strong &middot; fdelta</text>
+        <text x="210" y="111" text-anchor="end">A &middot; strong &middot; delta</text>
+        <text x="210" y="147" text-anchor="end">A &middot; any &middot; delta</text>
+        <text x="210" y="183" text-anchor="end">B &middot; any &middot; fdelta</text>
+        <text x="210" y="219" text-anchor="end">A &middot; any &middot; fdelta</text>
+        <text x="210" y="255" text-anchor="end">B &middot; strong &middot; delta</text>
+        <text x="210" y="291" text-anchor="end">B &middot; strong &middot; fdelta</text>
+        <text x="210" y="327" text-anchor="end">B &middot; any &middot; delta</text>
+      </g>
+
+      <g fill="var(--neg)">
+        <circle cx="674.2" cy="70" r="6"></circle>
+        <circle cx="611.2" cy="106" r="6"></circle>
+        <circle cx="456.8" cy="142" r="6"></circle>
+        <circle cx="462.9" cy="178" r="6"></circle>
+        <circle cx="415.4" cy="214" r="6"></circle>
+        <circle cx="412.0" cy="250" r="6"></circle>
+        <circle cx="408.5" cy="286" r="6"></circle>
+        <circle cx="389.6" cy="322" r="6"></circle>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--muted)">
+        <text x="688" y="74">&minus;$1.85</text>
+        <text x="625" y="110">&minus;$2.58</text>
+        <text x="471" y="146">&minus;$4.37</text>
+        <text x="477" y="182">&minus;$4.30</text>
+        <text x="429" y="218">&minus;$4.85</text>
+        <text x="426" y="254">&minus;$4.89</text>
+        <text x="423" y="290">&minus;$4.93</text>
+        <text x="404" y="326">&minus;$5.15</text>
+      </g>
+
+      <line x1="230" y1="372" x2="920" y2="372" stroke="var(--rule)" stroke-width="1"></line>
+      <g font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--muted)" text-anchor="middle">
+        <text x="316.3" y="392">&minus;$6</text>
+        <text x="488.8" y="392">&minus;$4</text>
+        <text x="661.3" y="392">&minus;$2</text>
+        <text x="825.3" y="392">$0</text>
+        <text x="575" y="414" fill="var(--faint)">expectancy per trade, net of commission and slippage</text>
+      </g>
+    </svg>
+    <figcaption>
+      Shaded zone = 95% band from 20 independent random-entry runs (mean &minus;$2.67/trade,
+      sd $1.55, ~1,370 trades each), using the identical bracket, session window and
+      one-position-at-a-time rule. All eight signal variants fall inside it.
+    </figcaption>
+  </figure>
+</section>
+
+<section class="col">
+  <h2>What was actually tested</h2>
+  <p>
+    The dot is <strong>Quantum Vol-Delta by ninZa.co</strong>. I did not have its source,
+    so I rebuilt it from the parameters in your indicator panel: volume base
+    <code>BidAskPrice_RealVolume</code>, size filter 3&ndash;999, delta period 20, strong/moderate
+    ratio 3. That becomes <code>|bar delta| &divide; SMA(|delta|, 20)</code> &mdash; ratio &ge; 3 prints
+    strong, &ge; 1 prints moderate.
+  </p>
+  <p>
+    Your tick exports carry the bid and ask <em>at the moment of each trade</em>, so delta here
+    is real aggressor classification &mdash; trades lifting the offer versus hitting the bid &mdash;
+    not the uptick/downtick guess most backtests settle for.
+  </p>
+
+  <h3>Two checks before trusting any of it</h3>
+  <ul>
+    <li><strong>Delta sign matches bar direction 80.9% of the time.</strong> If it were 50%
+    the classification would be broken; if it were 100% the dot would just be a repaint of
+    the candle. 81% is what real order flow looks like.</li>
+    <li><strong>Random entries reproduce theory.</strong> A driftless random walk with a
+    135-tick stop and 141-tick target should win <code>135 &divide; 276 = 48.91%</code>. The random
+    control came in at 48.60%. The simulator measures what it claims to measure.</li>
+  </ul>
+</section>
+
+<section>
+  <div class="col">
+    <h2>Results, uncapped</h2>
+    <p>
+      The 2-loss daily rule is risk control, not a measurement instrument &mdash; it pins the loss
+      count at roughly <code>2 &times; sessions</code> regardless of signal quality, which flatters
+      the win rate. Everything below runs without it.
+    </p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr>
+        <th>Variant</th><th>Trades</th><th>Win rate</th><th>Per trade</th><th>z vs random</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>A &mdash; EMA cross + strong dot &middot; filtered</td><td>435</td><td>49.2%</td><td class="bad">&minus;$1.85</td><td class="dim">+0.53</td></tr>
+        <tr><td>A &mdash; EMA cross + strong dot</td><td>487</td><td>48.7%</td><td class="bad">&minus;$2.58</td><td class="dim">+0.06</td></tr>
+        <tr><td>A &mdash; EMA cross + any dot</td><td>1,237</td><td>47.4%</td><td class="bad">&minus;$4.37</td><td class="dim">&minus;1.09</td></tr>
+        <tr><td>A &mdash; EMA cross + any dot &middot; filtered</td><td>1,108</td><td>47.0%</td><td class="bad">&minus;$4.85</td><td class="dim">&minus;1.40</td></tr>
+        <tr><td>B &mdash; pivot + first strong dot</td><td>1,047</td><td>47.0%</td><td class="bad">&minus;$4.89</td><td class="dim">&minus;1.43</td></tr>
+        <tr><td>B &mdash; pivot + first strong dot &middot; filtered</td><td>1,086</td><td>47.0%</td><td class="bad">&minus;$4.93</td><td class="dim">&minus;1.46</td></tr>
+        <tr><td>B &mdash; pivot + first dot</td><td>2,457</td><td>46.8%</td><td class="bad">&minus;$5.15</td><td class="dim">&minus;1.60</td></tr>
+        <tr><td>B &mdash; pivot + first dot &middot; filtered</td><td>2,286</td><td>47.4%</td><td class="bad">&minus;$4.30</td><td class="dim">&minus;1.05</td></tr>
+        <tr class="control"><td>Random entry, coin-flip direction</td><td>~1,370</td><td>48.6%</td><td>&minus;$2.67</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p style="margin-top:20px">
+      Breakeven after costs is <strong>50.5%</strong>. Nothing reaches it &mdash; and nothing
+      distinguishes itself from a coin flip either.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <h2>The part that explains why</h2>
+    <p>
+      Remove the bracket entirely and just ask which way price goes after a signal fires.
+      Negative means the signal pointed the wrong way.
+    </p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Signal</th><th>+1 min</th><th>+5 min</th><th>+15 min</th><th>+30 min</th><th>+60 min</th></tr></thead>
+      <tbody>
+        <tr><td>A &middot; strong</td><td class="bad">&minus;5.3</td><td class="bad">&minus;6.5</td><td class="bad">&minus;24.7</td><td class="bad">&minus;25.4</td><td class="bad">&minus;29.4</td></tr>
+        <tr><td>A &middot; any</td><td class="bad">&minus;2.0</td><td class="bad">&minus;2.3</td><td class="bad">&minus;6.2</td><td class="bad">&minus;6.4</td><td class="bad">&minus;2.7</td></tr>
+        <tr><td>B &middot; strong</td><td class="bad">&minus;2.7</td><td class="bad">&minus;5.9</td><td class="bad">&minus;15.7</td><td class="bad">&minus;20.5</td><td class="bad">&minus;7.7</td></tr>
+        <tr><td>B &middot; any</td><td class="bad">&minus;1.4</td><td class="bad">&minus;2.4</td><td class="bad">&minus;1.1</td><td class="bad">&minus;3.3</td><td class="dim">+1.9</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p style="margin-top:20px">
+      Ticks moved in the signal's own direction. Negative at nearly every horizon, for every
+      variant. The strongest readings &mdash; A&middot;strong at &minus;24.7 ticks and
+      B&middot;strong at &minus;15.7 ticks at 15 minutes &mdash; carry the clearest statistical
+      signature.
+    </p>
+    <p>
+      That pattern has a plain reading: <strong>these are momentum entries arriving late.</strong>
+      A delta surge large enough to print a dot is the move already happening. Entering on it
+      means buying from the people who are finishing, and price mean-reverts against you.
+    </p>
+  </div>
+</section>
+
+<section class="col">
+  <h2>Why fading it is not the answer either</h2>
+  <p>
+    The obvious next thought is to flip every signal. I tested it, because you would have asked.
+    Best fade variant: <strong>+$1.40 per trade at t = +0.71</strong>. That is noise wearing
+    a profitable face.
+  </p>
+  <p>
+    Then I widened it &mdash; <strong>720 configurations</strong> across both setups, three bar
+    sizes, two delta series, three dot thresholds, five stop/target brackets, follow and fade:
+  </p>
+  <ul>
+    <li><strong>82 of 720 came back profitable</strong> (11.4%) &mdash; about what pure chance
+    produces when you look 720 times.</li>
+    <li><strong>Best result: t = +2.07.</strong> The Bonferroni threshold for 720 tests is
+    <strong>|t| &gt; 3.98</strong>. It is not close.</li>
+    <li><strong>Every top performer is a fade, clustered in one thin corner</strong> of the grid
+    (60-second bars, filtered delta, strong dots only, n = 249). One narrow pocket winning while
+    its neighbours lose is the signature of overfitting, not of an edge.</li>
+    <li><strong>Mean t across all 720 = &minus;2.01.</strong> Not an inverse edge &mdash; that is
+    transaction cost becoming statistically visible once the trade count gets large.</li>
+  </ul>
+  <p>
+    Chasing that fade would be the exact move this experiment exists to prevent: abandoning a
+    tested answer for an untested hunch, and resetting the sample to zero again.
+  </p>
+</section>
+
+<section>
+  <div class="col">
+    <h2>The Bollinger filter, and why it is the most useful result here</h2>
+    <p>
+      A reasonable objection: maybe the dots need <em>context</em>. Only take them at a
+      Bollinger extreme, after price has tagged the band and turned back. That is a real
+      hypothesis with a mechanism &mdash; if the dots mark exhaustion rather than continuation,
+      a band extreme is exactly where exhaustion should appear.
+    </p>
+    <p>
+      So it was tested properly: <strong>144 configurations developed on Jan&ndash;Mar only</strong>,
+      with Apr&ndash;Jun sealed off until a single configuration was locked.
+    </p>
+    <p><strong>In-sample, it looked like a discovery.</strong> Best configuration
+    <code>+$8.62</code> per trade at <code>t = +2.53</code>; one variant reached
+    <code>+$10.69</code> per trade. 57 of 144 configurations profitable. Stop reading here and
+    you have found an edge.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 344" role="img" aria-label="Slope chart showing the five best in-sample Bollinger configurations collapsing from strongly positive expectancy in-sample to negative out-of-sample">
+      <line x1="120" y1="184" x2="860" y2="184" stroke="var(--rule)" stroke-width="1"></line>
+      <text x="110" y="188" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--muted)">$0</text>
+      <text x="110" y="60" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--faint)">+$10</text>
+      <text x="110" y="268" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--faint)">&minus;$7</text>
+
+      <g stroke="var(--neg)" stroke-width="2" fill="none" opacity="0.85">
+        <line x1="300" y1="80.6" x2="660" y2="237.5"></line>
+        <line x1="300" y1="79.5" x2="660" y2="233.7"></line>
+        <line x1="300" y1="55.7" x2="660" y2="261.0"></line>
+      </g>
+      <g stroke="var(--muted)" stroke-width="2" fill="none" opacity="0.6">
+        <line x1="300" y1="122.2" x2="660" y2="179.6"></line>
+        <line x1="300" y1="130.6" x2="660" y2="188.9"></line>
+      </g>
+      <g fill="var(--neg)">
+        <circle cx="300" cy="80.6" r="5"></circle><circle cx="660" cy="237.5" r="5"></circle>
+        <circle cx="300" cy="79.5" r="5"></circle><circle cx="660" cy="233.7" r="5"></circle>
+        <circle cx="300" cy="55.7" r="5"></circle><circle cx="660" cy="261.0" r="5"></circle>
+      </g>
+      <g fill="var(--muted)">
+        <circle cx="300" cy="122.2" r="5"></circle><circle cx="660" cy="179.6" r="5"></circle>
+        <circle cx="300" cy="130.6" r="5"></circle><circle cx="660" cy="188.9" r="5"></circle>
+      </g>
+
+      <g font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--muted)">
+        <text x="286" y="59" text-anchor="end">+$10.69</text>
+        <text x="286" y="83" text-anchor="end">+$8.71</text>
+        <text x="286" y="103" text-anchor="end">+$8.62</text>
+        <text x="286" y="126" text-anchor="end">+$5.15</text>
+        <text x="286" y="145" text-anchor="end">+$4.45</text>
+        <text x="674" y="241">&minus;$4.46</text>
+        <text x="674" y="228">&minus;$4.14</text>
+        <text x="674" y="265">&minus;$6.41</text>
+        <text x="674" y="176">+$0.37</text>
+        <text x="674" y="199">&minus;$0.41</text>
+      </g>
+
+      <g font-family="Archivo, sans-serif" font-size="13" font-weight="600" fill="var(--ink)" text-anchor="middle">
+        <text x="300" y="310">IN-SAMPLE</text>
+        <text x="660" y="310">OUT-OF-SAMPLE</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--faint)" text-anchor="middle">
+        <text x="300" y="330">Jan&ndash;Mar &middot; 58 sessions &middot; chosen on</text>
+        <text x="660" y="330">Apr&ndash;Jun &middot; 58 sessions &middot; never seen</text>
+      </g>
+    </svg>
+    <figcaption>
+      The five best in-sample Bollinger configurations, carried forward to data they were not
+      fitted on. Every one gives up its entire apparent edge. This is what curve-fitting looks
+      like from the inside &mdash; and in-sample it is indistinguishable from a discovery.
+    </figcaption>
+  </figure>
+
+  <div class="col">
+    <p style="margin-top:28px">
+      <strong>Out-of-sample, all of it vanished.</strong> The locked configuration went from
+      <code>+$8.62</code> to <code>&minus;$4.46</code> per trade, its win rate falling from
+      45.4% to 30.9%. Of the top five, the best survivor managed <code>+$0.37</code> per trade
+      at <code>t = +0.13</code>.
+    </p>
+    <h3>The best defense, tested and failed</h3>
+    <p>
+      Mean-reversion setups genuinely do struggle in trends, so the fair objection is that
+      Apr&ndash;Jun was simply the wrong regime. Two checks:
+    </p>
+    <ul>
+      <li><strong>Reverse the split.</strong> Train on Apr&ndash;Jun, validate on Jan&ndash;Mar.
+      Only 2 of 5 carried over, the best at <code>t = +1.03</code> &mdash; noise. Training on
+      that half produced 39 of 144 profitable, mean <code>t = &minus;0.62</code>.</li>
+      <li><strong>Compare the regimes directly.</strong> Inside 9:30&ndash;12:00 the halves are
+      near-identical: mean net move 700 vs 636 ticks, session range 1,229 vs 1,268 ticks,
+      directional bias +78 vs +57 ticks. The contract rallied 26% over the period, but the
+      window being traded did not become meaningfully trendier.</li>
+    </ul>
+    <p>
+      There was no regime shift for the filter to be a victim of. It fit noise in one half and
+      did not transfer to the other, in both directions.
+    </p>
+    <p>
+      A filter that produces <code>+$10.69</code> per trade on the data you built it from and
+      <code>&minus;$6.41</code> on data you did not is the exact shape of every indicator pack
+      and every promising tweak that has ever looked convincing on a chart. The in-sample number
+      is real. It is just not evidence.
+    </p>
+    <p>
+      That was the verdict on MNQ. Then the NQ data arrived and the picture changed.
+    </p>
+  </div>
+</section>
+
+<section class="col">
+  <h2>The NQ rerun, and one correction</h2>
+  <p>
+    Everything above ran on MNQ because it was the only tick data available. The largest stated
+    caveat was that the dots are computed on <em>NQ</em> order flow. That caveat is now closed:
+    real NQ tick data, 142 sessions, Jan&ndash;Aug 2026.
+  </p>
+  <p>
+    <strong>A correction first.</strong> This document previously argued that the vendor's
+    <code>size &ge; 3</code> filter keeps a large share of NQ volume against only 9% of MNQ,
+    making MNQ a poor proxy. That was asserted without data, and it was wrong. NQ is
+    <em>more</em> one-lot dominated than MNQ &mdash; 96.4% of NQ trades are single contracts,
+    and the filter keeps 8.0% of NQ volume against 9.0% of MNQ. The proxy was sound.
+  </p>
+  <p>
+    <strong>Setups A and B on real NQ flow: unchanged.</strong> All eight variants land inside
+    the random band (&minus;$5.59 to +$0.85). The best of them, filtered-delta strong dots,
+    returns <code>&minus;$0.34</code> per trade at <code>t = &minus;0.09</code> &mdash; a coin
+    flip paying commission. The original verdict was not an artifact of the wrong instrument.
+  </p>
+</section>
+
+<section>
+  <div class="col">
+    <h2>The one thing that survived</h2>
+    <p>
+      The NQ export included <strong>Jul 1 &ndash; Aug 19</strong>, a block no test in this
+      project had ever touched. That made a real three-way protocol possible: search on
+      Jan&ndash;Mar, check on Apr&ndash;Jun, then spend the sealed block <em>once</em> on a
+      single locked configuration.
+    </p>
+    <p>
+      The locked configuration was <code>C1 &middot; 60s &middot; filtered delta &middot;
+      strong dots &middot; BB(20, 2.5) &middot; 100/100</code> &mdash; tag the band, close back
+      inside, take the first confirming dot.
+    </p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Block</th><th>Sessions</th><th>Trades</th><th>Win rate</th><th>Per trade</th><th>t</th></tr></thead>
+      <tbody>
+        <tr><td>Train &middot; Jan&ndash;Mar</td><td>53</td><td>94</td><td>60.6%</td><td>+$8.40</td><td>+1.66</td></tr>
+        <tr><td>Validate &middot; Apr&ndash;Jun</td><td>53</td><td>105</td><td>47.6%</td><td class="bad">&minus;$4.62</td><td class="bad">&minus;0.94</td></tr>
+        <tr><td>Holdout &middot; Jul&ndash;Aug &middot; sealed</td><td>36</td><td>83</td><td>59.0%</td><td>+$6.80</td><td>+1.25</td></tr>
+        <tr class="control"><td>Pooled</td><td>142</td><td>282</td><td>55.3%</td><td>+$3.08</td><td>+1.04</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>What argues for it</h3>
+    <ul>
+      <li><strong>Permutation test, p = 0.035.</strong> Holding entry times and trade count
+      fixed and randomising only the direction 200 times, the real result beat 193 shuffles.
+      Random direction at those same moments loses &minus;$2.26, so the direction call is
+      worth roughly +$5.34 against its proper baseline.</li>
+      <li><strong>The parameters sit on a plateau, not a spike.</strong> Band width 2.0 to 3.0
+      returns +$1.93 / +$4.33 / +$3.08 / +$4.52 / +$2.03. Band period 14 to 30 returns +$1.81
+      through +$3.19. Nothing falls off a cliff.</li>
+      <li><strong>It is bracket-invariant, which is the strongest signal here.</strong> Positive
+      at 80/80, 100/100, 120/120, 135/141, 100/150 <em>and</em> 150/100 &mdash; and the win rate
+      moves exactly as geometry demands (65.0% at 150/100, 45.2% at 100/150). That is what a
+      genuine directional tilt looks like, not a bracket that happens to fit.</li>
+    </ul>
+    <h3>What argues against it</h3>
+    <ul>
+      <li><strong>It was chosen as the best of 144.</strong> Expected number of configurations
+      reaching p &lt; 0.05 by chance alone is about 7. One was found. Bonferroni-corrected, the
+      bar is p &lt; 0.00035.</li>
+      <li><strong>Pooled t = +1.04, and the 95% confidence interval runs
+      &minus;$2.73 to +$8.89.</strong> It crosses zero.</li>
+      <li><strong>It lost money for an entire quarter.</strong> Apr&ndash;Jun at
+      &minus;$4.62 per trade is not what a stable edge does.</li>
+      <li><strong>Bar size is unstable.</strong> 30s +$1.58, 45s <em>&minus;$5.67</em>,
+      60s +$3.08, 90s &minus;$0.41, 120s &minus;$4.87. A real effect should not invert at 45
+      seconds and return at 60.</li>
+    </ul>
+    <h3>And the part nobody wants to hear</h3>
+    <p>
+      Take the result entirely at face value &mdash; assume +$3.06 per trade is real. At two
+      trades per session it needs <strong>1,056 trades to reach t = 2</strong>. That is 528
+      sessions, or roughly <strong>25 months of trading</strong>, before the edge could be
+      confirmed rather than hoped for.
+    </p>
+    <p>
+      And it pays <strong>$6.12 a session on one MNQ &mdash; about $129 a month.</strong> The
+      same edge on one full NQ is roughly $1,285 a month, but each stop then risks $500 against
+      a $6,500 trailing buffer, which is 7.7% of the account per trade.
+    </p>
+  </div>
+</section>
+
+<section class="col">
+  <h2>What could still change this</h2>
+  <ol>
+    <li>
+      <p style="margin:0"><span class="tag">Closed</span><strong>Wrong instrument.</strong>
+      Resolved. Real NQ tick data, Jan&ndash;Aug 2026, confirms the MNQ verdict on setups A and
+      B, and supplied the sealed holdout for the surviving variant.</p>
+    </li>
+    <li>
+      <p style="margin:0"><span class="tag stop">Open</span><strong>The dot is my reconstruction.</strong>
+      It passes both sanity checks and matches the dot density on your chart, but it is not
+      ninZa's formula. If the real one differs, the surviving variant is the result most likely
+      to move.</p>
+    </li>
+    <li>
+      <p style="margin:0"><span class="tag stop">Open</span><strong>Bar type.</strong> Your
+      indicator panel says <code>NQ SEP26 (30 Second)</code>; the experiment as recorded says 50
+      AlgoBars. I tested 15s through 120s. The surviving variant needs 60-second bars and
+      inverts at 45, so bar construction matters more here than anywhere else in this study.</p>
+    </li>
+  </ol>
+  <p style="margin-top:26px">
+    The honest disposition on the surviving variant is not "it works" and not "it does not." It
+    is <strong>the one candidate that earned a pre-registered forward test</strong>. The only
+    uncontaminated data left is data that has not happened yet. Lock the specification, tag it
+    in Ballast, and let the journal's edge read answer it &mdash; which is precisely the
+    machinery this experiment was built around.
+  </p>
+</section>
+
+<section class="col">
+  <h2>What this bought</h2>
+  <p>
+    The deal held. You precommitted to running one thing to a real sample and accepting the
+    verdict either way. The verdict arrived in an afternoon instead of forty live trades, and it
+    cost nothing but disk reads.
+  </p>
+  <p>
+    The durable asset is not this answer &mdash; it is the three files that produced it. Point
+    them at the next idea <em>before</em> risking an account on it, not after.
+  </p>
+</section>
+
+<footer>
+  ballast/tools/edge/extract_seconds.py &mdash; 10GB of ticks to 1-second bars with true delta, ~3 min<br>
+  ballast/tools/edge/backtest.py &mdash; bars, EMAs, dot model, pivots, second-by-second bracket resolution<br>
+  ballast/tools/edge/sweep.py &mdash; 720-configuration grid with multiple-testing correction<br>
+  ballast/tools/edge/bollinger.py + run_c.py &mdash; band-filtered setups, in-sample / out-of-sample protocol<br>
+  ballast/tools/edge/run_nq.py + run_nq_c.py &mdash; real NQ flow, three-way split with a sealed holdout<br>
+  <span style="opacity:.7">Data: MNQ 03-26/06-26 and NQ 03-26/06-26/09-26 tick exports &middot; 252 sessions &middot; 2026-01-01 to 2026-08-19 &middot; ties inside one second resolve as losses</span>
+</footer>
+
+</div>

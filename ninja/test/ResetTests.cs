@@ -37,6 +37,7 @@ public static class ResetTests
         YesterdaysLossIsNotThisMornings();
         ADayWithNoTradesHealsItself();
         ARestartMidSessionKeepsTheDay();
+        TheQuestionOnlyClaimsTheStartWhenItCheckedIt();
     }
 
     static readonly DateTime T0 = new DateTime(2026, 8, 5, 10, 0, 0);
@@ -477,6 +478,60 @@ public static class ResetTests
         T.Ok(after.ResetSuspected,
              "cash minus realised is 150,000 where it was 100,000 - the account is not "
            + "the one those figures were about");
+    }
+
+    /// <summary>
+    /// "why that keeps asking me every day when i used the account the previous
+    /// day....why doesnt it recogonize that i used it the previous day"
+    ///
+    /// Two independent tests raise this question and they observe different
+    /// things. Only the second one looks at the starting figure, but the row
+    /// printed the same sentence either way: "$252,020 ... that is its starting
+    /// figure", beside a Sim103 whose start is 250,000 and whose "to pass" line
+    /// read "2,020 of 15,000" in the same breath.
+    ///
+    /// A question that is visibly wrong about the number printed next to it is
+    /// one nobody answers twice - the same failure the old "its P&L is back to
+    /// zero" wording had beside a row reading "green $708".
+    /// </summary>
+    static void TheQuestionOnlyClaimsTheStartWhenItCheckedIt()
+    {
+        T.S("the question only claims the starting figure when it checked it");
+
+        // The test that DOES look at the start: back on it exactly, with a day
+        // to erase and no fill to explain the move.
+        BallastTracker back = Fresh();
+        Trade(back, T0, 0, 2726);
+        back.OnEquity(100000, 0);
+        back.OnEquity(100000, 0);
+        T.Ok(back.ResetSuspected, "the account is back on its start with no fill behind it");
+        T.Ok(back.ResetAtStartingFigure,
+             "and that test checked the starting figure, so the row may say so");
+
+        // The test that does NOT: only the base moved. It never reads
+        // Config.StartingBalance at all.
+        TrackerConfig bigger = new TrackerConfig();
+        bigger.StartingBalance = 150000;
+        bigger.TrailingDrawdown = 5000;
+        bigger.TrustAccountRealised = false;
+
+        BallastTracker moved = new BallastTracker();
+        moved.Config = bigger;
+        moved.EnsureSession(T0.AddHours(1), 2726, 152726);
+        moved.SeedDayOpen(100000);
+        moved.SeedSession(T0.Date, 0, 152726, 2726, 0, false, 152726, 152726, 0, false);
+        moved.OnEquity(152726, 2726, 152726);
+        moved.OnEquity(152726, 2726, 152726);
+
+        T.Ok(moved.ResetSuspected, "the base moved, so the question is still asked");
+        T.Ok(!moved.ResetAtStartingFigure,
+             "but 152,726 is not the 150,000 start, and nothing here checked whether it "
+           + "was - so the row must not call it the starting figure");
+
+        // Being told "no" takes the wording away with the question.
+        moved.AnchorDayOpen(2726, 152726);
+        moved.ResetSuspected = false;
+        T.Ok(!moved.ResetAtStartingFigure, "and answering clears the wording flag too");
     }
 
     /// <summary>
