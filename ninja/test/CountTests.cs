@@ -167,6 +167,74 @@ public static class CountTests
         T.Eq(ChartSnapshot.AccountChartIndex(mixed, neither, "Sim103", "NQ SEP26", secondFocused), 1,
              "and focus settles two of the account's other charts too");
 
+        // ── The period outranks focus ───────────────────────────────────────
+        //
+        // Focus was not enough, and the same daily chart came back. On 11 August
+        // the Daily NQ chart WAS the focused window at the moment of entry, so it
+        // won the tie above fairly - and a fifty-five second scalp was filed with
+        // two months of daily candles. The files gave it away: 23 KB, against
+        // 850 KB for the chart he actually traded.
+        //
+        // A context chart is very often the one just clicked. So focus can no
+        // longer promote a daily over the chart he trades from.
+        List<bool> dailyIsFirst  = new List<bool> { true, false };   // index 0 is the Daily
+        List<bool> dailyIsSecond = new List<bool> { false, true };
+
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26",
+                                             firstFocused, dailyIsFirst), 1,
+             "a focused daily loses to the intraday chart he trades from");
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26",
+                                             secondFocused, dailyIsSecond), 0,
+             "and the other way round");
+
+        // Focus still decides between two charts of the same kind.
+        List<bool> neitherDaily = new List<bool> { false, false };
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26",
+                                             secondFocused, neitherDaily), 1,
+             "two intraday charts are still settled by the one he is looking at");
+        List<bool> bothDaily = new List<bool> { true, true };
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26",
+                                             secondFocused, bothDaily), 1,
+             "and so are two dailies, when a daily is all he has");
+
+        // A period Ballast could not read must never cost a chart the picture.
+        T.Eq(ChartSnapshot.AccountChartIndex(twoSame, sameInstr, "Sim103", "NQ SEP26",
+                                             secondFocused, null), 1,
+             "knowing nothing about the periods behaves exactly as before");
+        T.Ok(!ChartSnapshot.IsHigherTimeframe(""),
+             "an unreadable period counts as intraday, never as a daily");
+        T.Ok(!ChartSnapshot.IsHigherTimeframe("Range"), "range bars are intraday");
+        T.Ok(!ChartSnapshot.IsHigherTimeframe("Minute"), "so are minutes");
+        T.Ok(!ChartSnapshot.IsHigherTimeframe("Tick"), "and ticks");
+        T.Ok(ChartSnapshot.IsHigherTimeframe("Day"), "a daily chart is too coarse for an entry");
+        T.Ok(ChartSnapshot.IsHigherTimeframe("week"), "and a weekly, whatever its casing");
+        T.Ok(ChartSnapshot.IsHigherTimeframe("Month"), "and a monthly");
+
+        // The instrument still outranks everything. A daily chart of the RIGHT
+        // instrument beats an intraday chart of the wrong one, because a picture
+        // of the wrong market teaches the wrong lesson.
+        T.Eq(ChartSnapshot.AccountChartIndex(mixed, esFirst, "Sim103", "NQ SEP26",
+                                             firstFocused, dailyIsSecond), 1,
+             "a focused intraday ES chart still does not win an NQ trade");
+
+        // ── The same rule, in the fallback selector ─────────────────────────
+        //
+        // BestChartIndex runs when no chart's Chart Trader names the account, so
+        // it had the identical flaw and needed the identical fix.
+        T.Eq(ChartSnapshot.BestChartIndex(sameInstr, "NQ SEP26", firstFocused, dailyIsFirst), 1,
+             "the fallback also refuses to photograph the focused daily");
+        T.Eq(ChartSnapshot.BestChartIndex(sameInstr, "NQ SEP26", firstFocused, neitherDaily), 0,
+             "and still follows focus between two intraday charts");
+        T.Eq(ChartSnapshot.BestChartIndex(sameInstr, "NQ SEP26", firstFocused, null), 0,
+             "and the old three-argument call is unchanged");
+
+        // An exact instrument match on a daily must still beat a shared-root
+        // match on an intraday: 100 beats 50 + 20, by design.
+        List<string> rootThenExact = new List<string> { "NQ", "NQ SEP26" };
+        List<bool> secondIsDaily = new List<bool> { false, true };
+        T.Eq(ChartSnapshot.BestChartIndex(rootThenExact, "NQ SEP26", null, secondIsDaily), 1,
+             "the exactly-right instrument wins even as a daily");
+
         // ── Colour by how close, not by whether the day is red ──────────────
         //
         // "Down three dollars" and "two of three losses with $374 of a $3,000

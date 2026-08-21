@@ -344,17 +344,42 @@ namespace Ballast
             return BestChartIndex(chartInstruments, tradedInstrument, null);
         }
 
+        public static int BestChartIndex(List<string> chartInstruments, string tradedInstrument,
+                                         List<bool> isActive)
+        {
+            return BestChartIndex(chartInstruments, tradedInstrument, isActive, null);
+        }
+
         /// <summary>
         /// Pick the chart to photograph.
         ///
-        /// Instrument match decides it, and where several charts show the same
-        /// instrument the ACTIVE one wins - the trader's own point: the chart you
-        /// clicked to place the order is the one you were looking at, so it is the
-        /// one worth a picture. Two NQ charts on different timeframes are no
-        /// longer a coin toss.
+        /// Instrument match decides it. Where several charts show the same
+        /// instrument, the chart's BAR PERIOD decides next, and only then does
+        /// being the active window break what is left.
+        ///
+        /// FOCUS USED TO BE THE TIEBREAK, AND IT WAS WRONG.
+        ///
+        /// "if you notice this states a daily trade but no trade and the funny
+        /// part that chart should have 2 tabs which it doesnt so that is very
+        /// weird"
+        ///
+        /// He runs a Daily NQ chart for context beside the range chart he trades
+        /// from. Both say NQ SEP26, both have Chart Trader on the same account,
+        /// so every earlier test tied and focus settled it - and a context chart
+        /// is very often the one just clicked. On 11 August the daily was in
+        /// front at the moment of entry and a fifty-five second scalp was filed
+        /// with two months of daily candles. The files gave it away: 23 KB,
+        /// against 850 KB for the chart he actually traded.
+        ///
+        /// A daily chart cannot show what an intraday entry looked like, whether
+        /// or not it was in front. So the period outranks focus - +20 against
+        /// +10 - while both stay far below the fifty points between a shared
+        /// ticker root and an exact instrument match, because photographing the
+        /// WRONG INSTRUMENT is still the worst outcome of all and nothing here
+        /// may reorder that.
         /// </summary>
         public static int BestChartIndex(List<string> chartInstruments, string tradedInstrument,
-                                         List<bool> isActive)
+                                         List<bool> isActive, List<bool> isHigherTimeframe)
         {
             int best = -1, bestScore = 0;
             if (chartInstruments == null) return -1;
@@ -364,13 +389,71 @@ namespace Ballast
                 int score = MatchScore(chartInstruments[i], tradedInstrument);
                 if (score <= 0) continue;
 
-                // Active charts get a decisive bump, but never enough to beat a
-                // real instrument match with a non-matching one.
+                // An intraday chart outranks a daily/weekly/monthly one. A chart
+                // whose period could not be read is treated as intraday, so an
+                // unreadable period can never cost a chart the picture.
+                bool higher = isHigherTimeframe != null
+                           && i < isHigherTimeframe.Count
+                           && isHigherTimeframe[i];
+                if (!higher) score += 20;
+
+                // Active charts get a bump, but never enough to beat a real
+                // instrument match with a non-matching one - nor, now, to put a
+                // daily chart ahead of the chart he traded from.
                 if (isActive != null && i < isActive.Count && isActive[i]) score += 10;
 
                 if (score > bestScore) { bestScore = score; best = i; }
             }
             return best;
+        }
+
+        /// <summary>
+        /// The chart's bar period as NinjaTrader names it - "Minute", "Range",
+        /// "Tick", "Day" - or "" when it cannot be read.
+        ///
+        /// Reflection, like every other NinjaTrader touch in this file: a direct
+        /// reference to a type that moved between versions would take the whole
+        /// add-on down, and the cushion figure a trader is relying on mid-session
+        /// is worth more than a screenshot.
+        /// </summary>
+        public static string PeriodOf(object chartWindow)
+        {
+            string[] paths = new string[]
+            {
+                "ActiveChartControl.BarsPeriod.BarsPeriodType",
+                "ChartControl.BarsPeriod.BarsPeriodType",
+                "ActiveChartControl.Bars.BarsPeriod.BarsPeriodType",
+                "ChartControl.Bars.BarsPeriod.BarsPeriodType",
+                "BarsPeriod.BarsPeriodType"
+            };
+
+            for (int i = 0; i < paths.Length; i++)
+            {
+                string v = ReadPath(chartWindow, paths[i]);
+                if (!string.IsNullOrEmpty(v)) return v;
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// Whether a bar period is too coarse to show what an intraday entry
+        /// looked like.
+        ///
+        /// An unknown or unreadable period answers FALSE. Everything a trader
+        /// actually scalps from - minute, second, tick, volume, range, renko -
+        /// is intraday, so "not one of the four coarse ones" is the safe
+        /// default, and a chart Ballast could not interrogate is left exactly
+        /// where it was rather than quietly demoted.
+        /// </summary>
+        public static bool IsHigherTimeframe(string periodName)
+        {
+            if (string.IsNullOrEmpty(periodName)) return false;
+
+            string p = periodName.Trim();
+            return string.Equals(p, "Day", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p, "Week", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p, "Month", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p, "Year", StringComparison.OrdinalIgnoreCase);
         }
 
         // ── Rendering ────────────────────────────────────────────────────────
@@ -575,10 +658,24 @@ namespace Ballast
         public static void FindCharts(out List<string> instruments, out List<FrameworkElement> visuals,
                                       out List<bool> active, out List<string> accounts)
         {
+            List<bool> ignoredPeriods;
+            FindCharts(out instruments, out visuals, out active, out accounts, out ignoredPeriods);
+        }
+
+        /// <summary>
+        /// As above, and which of them are daily/weekly/monthly charts - the one
+        /// fact that stops a context chart being photographed instead of the
+        /// chart he traded from.
+        /// </summary>
+        public static void FindCharts(out List<string> instruments, out List<FrameworkElement> visuals,
+                                      out List<bool> active, out List<string> accounts,
+                                      out List<bool> higherTimeframe)
+        {
             instruments = new List<string>();
             visuals = new List<FrameworkElement>();
             active = new List<bool>();
             accounts = new List<string>();
+            higherTimeframe = new List<bool>();
 
             try
             {
@@ -601,6 +698,7 @@ namespace Ballast
                         visuals.Add(w);
                         active.Add(IsActiveWindow(w));
                         accounts.Add(ChartTraderAccountOf(w));
+                        higherTimeframe.Add(IsHigherTimeframe(PeriodOf(w)));
                     }
                     catch { }
                 }
@@ -965,19 +1063,40 @@ namespace Ballast
         /// daily chart with no trade on it and one tab ended up in a card asking
         /// him whether he would take the entry again.
         ///
-        /// Focus is the tiebreak, because it is the only one available that
-        /// means anything: the chart he is looking at when the fill lands is the
-        /// chart he traded from, far more often than the first one Windows
-        /// happens to hand back. It is a tiebreak only - a focused chart on the
-        /// WRONG account or instrument still loses to an unfocused right one.
+        /// Focus was made the tiebreak here, because it looked like the only one
+        /// available that meant anything. It was not enough, and the same daily
+        /// chart came back on 11 August: a context chart is very often the one
+        /// just clicked, so on that entry the daily WAS the focused window and
+        /// won the tie fairly. A fifty-five second scalp was filed with two
+        /// months of daily candles.
+        ///
+        /// So the bar period now sits above focus. A daily chart cannot show what
+        /// an intraday entry looked like whether or not it is in front, and
+        /// focus decides only between charts of the same kind.
         /// </summary>
         public static int AccountChartIndex(List<string> chartAccounts, List<string> instruments,
                                             string account, string instrument, List<bool> active)
         {
+            return AccountChartIndex(chartAccounts, instruments, account, instrument, active, null);
+        }
+
+        /// <summary>
+        /// As above, knowing which charts are daily/weekly/monthly.
+        ///
+        /// With no period information every chart counts as intraday, so this
+        /// behaves exactly as the five-argument form always did.
+        /// </summary>
+        public static int AccountChartIndex(List<string> chartAccounts, List<string> instruments,
+                                            string account, string instrument, List<bool> active,
+                                            List<bool> isHigherTimeframe)
+        {
             if (chartAccounts == null || string.IsNullOrEmpty(account)) return -1;
 
-            int withInstrument = -1, withInstrumentCount = 0, withInstrumentActive = -1;
-            int accountOnly = -1, accountOnlyCount = 0, accountOnlyActive = -1;
+            // Per group: the first intraday-and-focused, the first intraday, the
+            // first focused, and the first of any kind. Read in that order, which
+            // is the whole rule.
+            int withCount = 0, withIntradayActive = -1, withIntraday = -1, withActive = -1, withAny = -1;
+            int onlyCount = 0, onlyIntradayActive = -1, onlyIntraday = -1, onlyActive = -1, onlyAny = -1;
 
             for (int i = 0; i < chartAccounts.Count; i++)
             {
@@ -985,24 +1104,60 @@ namespace Ballast
 
                 bool focused = active != null && i < active.Count && active[i];
 
-                accountOnlyCount++;
-                if (accountOnly < 0) accountOnly = i;
-                if (focused && accountOnlyActive < 0) accountOnlyActive = i;
+                // A chart whose period could not be read counts as intraday, so
+                // an unreadable period never costs a chart the picture.
+                bool higher = isHigherTimeframe != null
+                           && i < isHigherTimeframe.Count
+                           && isHigherTimeframe[i];
+
+                onlyCount++;
+                if (onlyAny < 0) onlyAny = i;
+                if (focused && onlyActive < 0) onlyActive = i;
+                if (!higher && onlyIntraday < 0) onlyIntraday = i;
+                if (!higher && focused && onlyIntradayActive < 0) onlyIntradayActive = i;
 
                 if (instruments != null && i < instruments.Count
                     && MatchScore(instruments[i], instrument) > 0)
                 {
-                    withInstrumentCount++;
-                    if (withInstrument < 0) withInstrument = i;
-                    if (focused && withInstrumentActive < 0) withInstrumentActive = i;
+                    withCount++;
+                    if (withAny < 0) withAny = i;
+                    if (focused && withActive < 0) withActive = i;
+                    if (!higher && withIntraday < 0) withIntraday = i;
+                    if (!higher && focused && withIntradayActive < 0) withIntradayActive = i;
                 }
             }
 
-            if (withInstrumentCount == 1) return withInstrument;
-            if (withInstrumentCount > 1)
-                return withInstrumentActive >= 0 ? withInstrumentActive : withInstrument;
-            if (accountOnlyCount == 1) return accountOnly;
-            if (accountOnlyCount > 1 && accountOnlyActive >= 0) return accountOnlyActive;
+            // One chart of this account showing this instrument is not a choice.
+            // Even a daily one beats refusing, because there is nothing else of
+            // his to photograph.
+            if (withCount == 1) return withAny;
+
+            if (withCount > 1)
+            {
+                if (withIntradayActive >= 0) return withIntradayActive;
+                if (withIntraday >= 0) return withIntraday;
+                if (withActive >= 0) return withActive;
+                return withAny;
+            }
+
+            if (onlyCount == 1) return onlyAny;
+
+            if (onlyCount > 1)
+            {
+                if (onlyIntradayActive >= 0) return onlyIntradayActive;
+
+                // The focused one is a daily and he has an intraday chart on this
+                // account: take the intraday. Neither shows the instrument, so
+                // this is already a fallback - but it is still no reason to hand
+                // back the coarsest chart on screen.
+                if (onlyActive >= 0 && onlyIntraday >= 0) return onlyIntraday;
+
+                if (onlyActive >= 0) return onlyActive;
+
+                // Unchanged: several of his charts, nothing focused, none showing
+                // the instrument. Silence beats a guess.
+                return -1;
+            }
 
             return -1;
         }
@@ -1024,7 +1179,8 @@ namespace Ballast
                 List<FrameworkElement> visuals;
                 List<bool> active;
                 List<string> chartAccounts;
-                FindCharts(out names, out visuals, out active, out chartAccounts);
+                List<bool> higher;
+                FindCharts(out names, out visuals, out active, out chartAccounts, out higher);
 
                 if (names.Count == 0)
                 {
@@ -1042,9 +1198,10 @@ namespace Ballast
                 // chart's Chart Trader is pointed at. This outranks everything
                 // else, because it is the only signal that can tell three charts
                 // of the same instrument apart - and being focused is not it.
-                if (idx < 0) idx = AccountChartIndex(chartAccounts, names, account, instrument, active);
+                if (idx < 0) idx = AccountChartIndex(chartAccounts, names, account, instrument,
+                                                     active, higher);
 
-                if (idx < 0) idx = BestChartIndex(names, instrument, active);
+                if (idx < 0) idx = BestChartIndex(names, instrument, active, higher);
 
                 // Nothing matched by instrument, but exactly one chart is active -
                 // that is the one being traded on.
