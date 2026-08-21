@@ -460,9 +460,9 @@ namespace Ballast
         /// The setup's own name, on its own field.
         ///
         /// It used to be glued onto the front of Verdict and split back apart on
-        /// " - " by the window - which worked until a trader named a setup
-        /// "C - bollinger bands and dot forms going direction of the bar". Then
-        /// the row showed "C" and the rest of his own name ran into the verdict
+        /// " - " by the window - which worked until a trader named a setup with a
+        /// " - " of its own in it, e.g. "C - band tag, then back inside". Then the
+        /// row showed "C" and the rest of his own name ran into the verdict
         /// underneath it. Two facts in one string is one fact too many.
         /// </summary>
         public string Setup = "";

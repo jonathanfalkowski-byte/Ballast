@@ -124,7 +124,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private const string NoTypeChosen = "Leave these figures as they are...";
         private readonly RuleBook ruleBook = new RuleBook();
-        private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt;
+        private TextBox tbBalance, tbDrawdown, tbMaxLosses, tbDailyLoss, tbTarget, tbMaxTrades, tbMaxContracts, tbLockAt, tbPlanContracts;
         private TextBox tbWindowStart, tbWindowEnd, tbTradingDayReset;
         private TextBlock windowClock;
         private CheckBox windowAnyTimeBox;
@@ -322,6 +322,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         private CheckBox watchedOnlyBox;
         private TextBox tbSetups;
         private TextBlock setupsNote;
+
+        /// <summary>
+        /// The greyed example drawn over an empty setups box. Display only - it is
+        /// never read back, so an example can never become a trader's setup.
+        /// </summary>
+        private TextBlock setupsHint;
 
         /// <summary>
         /// The trader's playbook. Held here rather than rebuilt from the text box
@@ -2330,10 +2336,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             list.Children.Add(SectionHeader("MY SETUPS"));
 
-            list.Children.Add(Note("One per line. These appear on every trade in the journal so you can "
-                + "say which plan you were running - and then find out which of them is actually "
-                + "making money. Call them A, B and C, or name them; Ballast never invents one, "
-                + "because a list you do not recognise is a list you will not tag honestly."));
+            list.Children.Add(Note("One per line - a letter or short name, then what it is. These appear "
+                + "on every trade in the journal so you can say which plan you were running - and then "
+                + "find out which of them is actually making money. Call them A, B and C, or name them; "
+                + "Ballast never invents one, because a list you do not recognise is a list you will "
+                + "not tag honestly. The greyed lines below are an example, not your setups - they "
+                + "vanish as soon as you type and are never saved."));
 
             tbSetups = new TextBox();
             tbSetups.AcceptsReturn = true;
@@ -2364,10 +2372,44 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbSetups.TextChanged += delegate
             {
                 setupsDirty = true;
+                RefreshSetupsHint();
                 RefreshSetupsNote();
             };
             tbSetups.LostFocus += delegate { SaveSetups(); };
-            list.Children.Add(tbSetups);
+
+            // THE EXAMPLE, AND WHY IT IS PAINTED ON RATHER THAN TYPED IN.
+            //
+            // A trader opening this page for the first time sees an empty box and
+            // no way to know what a line is supposed to look like. The obvious fix
+            // - putting two example setups IN the box - is the wrong one, and
+            // quietly so: the first Save writes whatever is in the box to
+            // ballast-setups.txt, so the examples silently become his playbook.
+            // He would then be tagging real trades with setups he never chose,
+            // and the edge numbers underneath would be measuring someone else's
+            // idea. Ballast never invents a setup; that rule has to survive its
+            // own help text.
+            //
+            // So the example is not content. It is a label drawn over an empty
+            // box: SaveSetups never reads it, SetupBook never sees it, nothing
+            // reaches the file. It is hit-test invisible so a click lands in the
+            // box beneath it, and it disappears on the first keystroke.
+            setupsHint = new TextBlock();
+            setupsHint.Text = "A - EMA cross, first pullback"
+                     + "\n" + "B - opening range break";
+            setupsHint.Foreground = ColFaint;
+            setupsHint.FontSize = 13;
+            setupsHint.FontStyle = FontStyles.Italic;
+            setupsHint.IsHitTestVisible = false;
+            setupsHint.VerticalAlignment = VerticalAlignment.Top;
+            setupsHint.HorizontalAlignment = HorizontalAlignment.Left;
+            // Border (1) plus the box's own padding (8, 6), so the example sits
+            // exactly where the trader's first character will land.
+            setupsHint.Margin = new Thickness(9, 7, 9, 7);
+
+            Grid setupsBox = new Grid();
+            setupsBox.Children.Add(tbSetups);
+            setupsBox.Children.Add(setupsHint);
+            list.Children.Add(setupsBox);
 
             StackPanel setupBtns = new StackPanel();
             setupBtns.Orientation = Orientation.Horizontal;
@@ -2585,7 +2627,25 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             Grid g4 = TwoCol();
             tbMaxContracts = FieldIn(g4, 0, 0, "Max contracts", "1");
+            tbPlanContracts = FieldIn(g4, 0, 1, "Plan contracts (0 = not set)", "0");
             acct.Children.Add(g4);
+
+            acct.Children.Add(Why("Why two contract numbers?",
+                "They answer different questions, and collapsing them back into one is what let "
+              + "eleven trades through unremarked.\n\n"
+              + "MAX CONTRACTS is the most the account can stand - a ceiling set by the drawdown. "
+              + "PLAN CONTRACTS is the size the setup was actually tested at. Four contracts on a "
+              + "250K account survives fine, which is why the cap has nothing to say about it. But "
+              + "if the plan was one, four is a different strategy being traded under the old "
+              + "strategy's name, and no edge measured on the first one applies to the second.\n\n"
+              + "Ballast asks about size above plan only while the day is GREEN. Trading bigger "
+              + "when behind is a different problem with a different wall in front of it. Bigger "
+              + "when ahead is the one that hands a good day back, and it is the one this number "
+              + "makes visible.\n\n"
+              + "Zero means unsaid. Nothing is inferred from silence - leave it at zero and the "
+              + "warning simply does not run, which is exactly what every settings file written "
+              + "before this field existed already meant. Setting it above your cap is allowed and "
+              + "does nothing, because the cap stops you first."));
 
             // ── The trading window ───────────────────────────────────────────
             //
@@ -3948,6 +4008,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 int shown = c.BaseMaxContracts > 0 ? c.BaseMaxContracts : c.MaxContracts;
                 if (ParseI(tbMaxContracts, shown) != shown) return true;
 
+                if (ParseI(tbPlanContracts, c.PlanContracts) != c.PlanContracts) return true;
+
                 if (ParseD(tbBalance, c.StartingBalance) != c.StartingBalance) return true;
                 if (ParseD(tbDrawdown, c.TrailingDrawdown) != c.TrailingDrawdown) return true;
                 if (ParseD(tbLockAt, c.LockFloorAt) != c.LockFloorAt) return true;
@@ -4189,11 +4251,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (tracker == null) return;
                     double cash = SafeGet(account, AccountItem.CashValue);
                     double unreal = SafeGet(account, AccountItem.UnrealizedProfitLoss);
+                    double realised = SafeGet(account, AccountItem.RealizedProfitLoss);
                     double equity = cash + unreal;
                     if (equity > 0)
                     {
-                        tracker.OnEquity(equity,
-                            SafeGet(account, AccountItem.RealizedProfitLoss), cash);
+                        // Roll the trading day before judging the balance, the
+                        // same as every other equity path does. Without it this
+                        // one measured a new day's cash against the PREVIOUS
+                        // day's DayOpenBalance: NinjaTrader zeroes realised
+                        // overnight while cash keeps the profit, so yesterday's
+                        // whole P&L read as a balance that moved with no fill
+                        // behind it. That is why Ballast asked whether the
+                        // account had been reset every morning after a day that
+                        // made more than the $500 noise floor.
+                        tracker.EnsureSession(Core.Globals.Now, realised, equity);
+                        tracker.OnEquity(equity, realised, cash);
                         tracker.ObserveProviderTrailingRoom(e.Value, equity, Core.Globals.Now);
                     }
                 }));
@@ -5235,10 +5307,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                         // beside a row reading "green $708", and a question that
                         // is visibly wrong about the thing it is asking about is
                         // one nobody answers twice.
-                        rq.Text = "this account's balance moved to "
-                                + Money(rst.CurrentEquity) + " with no trade behind it - "
-                                + "that is its starting figure. Was it reset? "
-                                + "Nothing has been cleared.";
+                        // Two tests raise this, and they observe different
+                        // things. Only one of them has checked the starting
+                        // figure, so only one may mention it.
+                        rq.Text = rst.ResetAtStartingFigure
+                                ? "this account's balance moved to "
+                                  + Money(rst.CurrentEquity) + " with no trade behind it - "
+                                  + "that is its starting figure. Was it reset? "
+                                  + "Nothing has been cleared."
+                                : "this account's balance moved to "
+                                  + Money(rst.CurrentEquity) + " and no fill explains it. "
+                                  + "Was it reset? Nothing has been cleared.";
                         rq.Foreground = ColAmber;
                         rq.FontSize = 11;
                         rq.TextWrapping = TextWrapping.Wrap;
@@ -5481,6 +5560,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             tbMaxTrades.Text    = c.MaxTrades.ToString(CultureInfo.InvariantCulture);
             tbMaxContracts.Text = (c.BaseMaxContracts > 0 ? c.BaseMaxContracts : c.MaxContracts)
                                     .ToString(CultureInfo.InvariantCulture);
+            tbPlanContracts.Text = c.PlanContracts.ToString(CultureInfo.InvariantCulture);
             tbLockAt.Text       = c.LockFloorAt.ToString(CultureInfo.InvariantCulture);
             if (automatedBox != null) automatedBox.IsChecked = c.IsAutomated;
             if (trustRealisedBox != null) trustRealisedBox.IsChecked = c.TrustAccountRealised;
@@ -5654,6 +5734,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             // A hand-typed size replaces the profile's base, or the throttle would
             // keep counting down from a number the trader has already overridden.
             c.BaseMaxContracts    = c.MaxContracts;
+            // Not clamped against the cap. A plan above the cap is inert rather
+            // than wrong, and silently rewriting a number the trader typed is the
+            // failure this field exists to avoid.
+            c.PlanContracts       = ParseI(tbPlanContracts, c.PlanContracts);
             c.LockFloorAt         = ParseD(tbLockAt, c.LockFloorAt);
             c.StopPerContract     = ParseD(tbRiskPerTrade, c.StopPerContract);
 
@@ -5800,6 +5884,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     SafeGet(a, AccountItem.CashValue));
 
                 t.ResetSuspected = false;
+                t.ResetAtStartingFigure = false;
                 SaveSessionState();
                 OnTick(null, null);
             }
@@ -6946,7 +7031,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // a freshly loaded list looking like unsaved work.
                 setupsDirty = false;
                 setupsSavedLine = "";
+                RefreshSetupsHint();
                 RefreshSetupsNote();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Show the example only while the box is genuinely empty.
+        ///
+        /// A trader who has cleared his list to start again should see the format
+        /// again, so this keys off the box being empty rather than off whether a
+        /// file exists. Whitespace counts as empty - a box holding two blank lines
+        /// has nothing in it to read, and SetupBook drops them anyway.
+        /// </summary>
+        private void RefreshSetupsHint()
+        {
+            try
+            {
+                if (setupsHint == null) return;
+
+                bool empty = tbSetups == null
+                          || tbSetups.Text == null
+                          || tbSetups.Text.Trim().Length == 0;
+
+                setupsHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
             }
             catch { }
         }
