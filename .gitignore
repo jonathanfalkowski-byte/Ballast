@@ -15,3 +15,11 @@ _to_delete/
 
 # TypeScript's incremental build cache. A machine-local artefact.
 *.tsbuildinfo
+
+# The edge rig's raw tick extracts: nq_seconds.csv is 156 MB and mnq_seconds.csv
+# 139 MB, both over GitHub's 100 MB per-file limit, and both regenerable from
+# the NinjaTrader exports by extract_seconds.py. The scripts are the work worth
+# keeping; the data they chew is not.
+tools/edge/*.csv
+__pycache__/
+*.pyc
